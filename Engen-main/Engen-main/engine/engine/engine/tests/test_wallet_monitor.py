@@ -21,7 +21,7 @@ class WalletMonitorTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         db_path = Path(self.temp_dir.name) / "monitor.db"
         self.store = SignatureStore(db_path=db_path)
-        self.wallet = "test_public_wallet"
+        self.wallet = "11111111111111111111111111111111"
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -32,7 +32,7 @@ class WalletMonitorTests(unittest.TestCase):
         response.read.return_value = json.dumps({
             "jsonrpc": "2.0",
             "id": 1,
-            "result": [{"signature": "older-signature"}],
+            "result": [{"signature": "1111111111111111111111111111111111111111111111111111111111111112"}],
         }).encode("utf-8")
 
         result = get_wallet_signatures(
@@ -45,7 +45,7 @@ class WalletMonitorTests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            [{"signature": "older-signature"}],
+            [{"signature": "1111111111111111111111111111111111111111111111111111111111111112"}],
         )
 
         request = mock_urlopen.call_args.args[0]
@@ -125,8 +125,8 @@ class WalletMonitorTests(unittest.TestCase):
         mock_get_signatures,
     ):
         mock_get_signatures.return_value = [
-            {"signature": "old_A"},
-            {"signature": "old_B"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111113"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111114"},
         ]
 
         result = get_and_store_new_wallet_signatures(
@@ -136,15 +136,15 @@ class WalletMonitorTests(unittest.TestCase):
 
         self.assertEqual(result, [])
         self.assertTrue(self.store.has_baseline(self.wallet))
-        self.assertTrue(self.store.has_seen(self.wallet, "old_A"))
-        self.assertTrue(self.store.has_seen(self.wallet, "old_B"))
+        self.assertTrue(self.store.has_seen(self.wallet, "1111111111111111111111111111111111111111111111111111111111111113"))
+        self.assertTrue(self.store.has_seen(self.wallet, "1111111111111111111111111111111111111111111111111111111111111114"))
 
         self.assertEqual(
-            self.store.get_status(self.wallet, "old_A"),
+            self.store.get_status(self.wallet, "1111111111111111111111111111111111111111111111111111111111111113"),
             "processed",
         )
         self.assertEqual(
-            self.store.get_status(self.wallet, "old_B"),
+            self.store.get_status(self.wallet, "1111111111111111111111111111111111111111111111111111111111111114"),
             "processed",
         )
 
@@ -180,7 +180,7 @@ class WalletMonitorTests(unittest.TestCase):
         self.store.mark_baseline(self.wallet)
 
         mock_get_signatures.return_value = [
-            {"signature": "new_A"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111115"},
         ]
 
         result = get_and_store_new_wallet_signatures(
@@ -190,10 +190,10 @@ class WalletMonitorTests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            [{"signature": "new_A"}],
+            [{"signature": "1111111111111111111111111111111111111111111111111111111111111115"}],
         )
         self.assertEqual(
-            self.store.get_status(self.wallet, "new_A"),
+            self.store.get_status(self.wallet, "1111111111111111111111111111111111111111111111111111111111111115"),
             "pending",
         )
 
@@ -204,7 +204,7 @@ class WalletMonitorTests(unittest.TestCase):
     ):
         self.store.mark_baseline(self.wallet)
         mock_get_signatures.return_value = [
-            {"signature": "new_A"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111115"},
         ]
 
         first_result = get_and_store_new_wallet_signatures(
@@ -217,12 +217,12 @@ class WalletMonitorTests(unittest.TestCase):
             store=self.store,
         )
 
-        expected = [{"signature": "new_A"}]
+        expected = [{"signature": "1111111111111111111111111111111111111111111111111111111111111115"}]
 
         self.assertEqual(first_result, expected)
         self.assertEqual(second_result, expected)
         self.assertEqual(
-            self.store.get_status(self.wallet, "new_A"),
+            self.store.get_status(self.wallet, "1111111111111111111111111111111111111111111111111111111111111115"),
             "pending",
         )
 

@@ -1,4 +1,5 @@
 
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -50,14 +51,31 @@ class SignatureStore:
                     ).fetchall()
                 }
 
-                if "status" not in columns:
-                    connection.execute(
-                        """
-                        ALTER TABLE seen_signatures
-                        ADD COLUMN status TEXT NOT NULL
-                        DEFAULT 'processed'
-                        """
+                migrations = {
+                    "status": "TEXT NOT NULL DEFAULT 'processed'",
+                    "attempts": "INTEGER NOT NULL DEFAULT 0",
+                    "last_checked_at": "TEXT",
+                    "error_stage": "TEXT",
+                    "error_code": "TEXT",
+                    "error_message": "TEXT",
+                }
+                for column, definition in migrations.items():
+                    if column not in columns:
+                        connection.execute(
+                            "ALTER TABLE seen_signatures ADD COLUMN "
+                            + column + " " + definition
+                        )
+
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS transaction_records (
+                        wallet_address TEXT NOT NULL,
+                        signature TEXT NOT NULL,
+                        raw_transaction_json TEXT,
+                        processing_status TEXT NOT NULL,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (wallet_address, signature)
                     )
+                """)
 
     @staticmethod
     def _validate_wallet(wallet_address):

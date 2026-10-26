@@ -1,8 +1,6 @@
 """Read-only monitoring of public Solana wallet signatures."""
 
-import json
-import urllib.error
-import urllib.request
+from engine.rpc_policy import post_json_rpc
 from contextlib import nullcontext
 
 from engine.solana_public import (
@@ -45,7 +43,7 @@ def get_wallet_signatures(
     if before is not None:
         options["before"] = before
 
-    payload = json.dumps({
+    payload = {
         "jsonrpc": "2.0",
         "id": 1,
         "method": "getSignaturesForAddress",
@@ -53,14 +51,7 @@ def get_wallet_signatures(
             wallet_address,
             options,
         ],
-    }).encode("utf-8")
-
-    request = urllib.request.Request(
-        rpc_url,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    }
 
     timer = (
         latency_recorder.measure("wallet.signature_fetch")
@@ -69,23 +60,13 @@ def get_wallet_signatures(
     )
     try:
         with timer:
-            with urllib.request.urlopen(
-                request,
+            data = post_json_rpc(
+                payload,
+                rpc_url=rpc_url,
                 timeout=timeout,
-            ) as response:
-                data = json.loads(
-                    response.read().decode("utf-8")
-                )
-    except (
-        urllib.error.URLError,
-        TimeoutError,
-        OSError,
-        ValueError,
-    ) as exc:
-        # Do not expose the configured RPC URL or credentials in error text.
-        raise SolanaRPCError(
-            "Failed to fetch wallet signatures from the configured RPC endpoint."
-        ) from None
+            )
+    except RuntimeError as exc:
+        raise SolanaRPCError(str(exc)) from None
 
     if not isinstance(data, dict):
         raise SolanaRPCError(

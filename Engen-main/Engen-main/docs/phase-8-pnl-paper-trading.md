@@ -24,7 +24,7 @@
 - Default simulated trading fee is 10 basis points of gross quote value; simulated network cost is a separately supplied fixed amount in USD.
 - Stale/missing/mismatched prices, provider/RPC failures, insufficient balances, and costs exceeding proceeds reject the order without creating a fill.
 - The database stores orders, fills, price source/time/age, reference/execution prices, slippage, trading fee and network cost. Restart tests ensure balances, fills and duplicate protection survive.
-- The dashboard's `/api/paper-simulation` endpoint opens the simulation database read-only and never creates it. The dashboard shows virtual balances and fills in a panel explicitly separated from real wallet balances.
+- The dashboard's `/api/paper-simulation` endpoint opens the simulation database read-only and never creates it. It replays persisted fills in insertion order to calculate realized average-cost P&L; the dashboard shows realized P&L, virtual balances, orders and fills in a panel explicitly separated from real wallet balances. Unrealized P&L is shown as unavailable until a verified fresh price provider is connected.
 - No simulated P&L is presented as real-wallet P&L. A market-price feed must be independently configured and verified before trusting valuation results.
 
 ## Verification

@@ -7,15 +7,15 @@
 
 ## Verified CI evidence
 
-GitHub Actions run: https://github.com/santosreemangal-lgtm/Engen/actions/runs/40379016960
+GitHub Actions run: https://github.com/santosreemangal-lgtm/Engen/actions/runs/40379359034
 
-On commit `aadabaf33c82ae6f59ce27db68d2371cd7af9ac9`:
+On commit `f95ad31db2552b6e555d4cdd094cad24199c881a`:
 - Python compilation: passed.
-- Offline unit suite: **248 tests passed**.
+- Offline unit suite: **249 tests passed**.
 - Mock-analysis check: passed.
 - The run's job conclusion was success.
 
-The report and README documentation were updated after this run; those later edits are documentation-only. Re-run CI after any subsequent code changes.
+The README/report documentation updates were made after this code-test run; those later edits are documentation-only. Re-run CI after any subsequent code changes.
 
 ## Phase 10 checklist evidence
 
@@ -43,7 +43,7 @@ The report and README documentation were updated after this run; those later edi
 | 290 Unit tests for configuration/classification/storage/P&L | Implemented in test suite | Included in the 248-test passing offline suite; tests are not a guarantee of production correctness. |
 | 291 RPC/monitoring/API integration tests | Partial | Offline integration-style tests exist and pass; production RPC and deployed-environment integration are not certified by this run. |
 | 292 Regression tests for confirmed bugs | Partial | Security/API regression tests were added; cannot certify every historical bug has a regression test. |
-| 293 Full suite and failure review | Passed for recorded commit | 248 unit tests, compilation, and mock-analysis check passed in the linked run. |
+| 293 Full suite and failure review | Passed for recorded commit | 249 unit tests, compilation, and mock-analysis check passed in the linked run. |
 | 294 Startup/shutdown/restart recovery | Partial | Component-level persistence/shutdown tests exist; full process crash/restart recovery rehearsal remains. |
 | 295 Dashboard/backend integration | Partial | Automated API/dashboard checks exist; no user deployment environment was tested. |
 | 296 Dependencies/vulnerabilities/deployment | Partial | Current requirements use Python standard library; automated dependency vulnerability scanning and deployment review remain. |

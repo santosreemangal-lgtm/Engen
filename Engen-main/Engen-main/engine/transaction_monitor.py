@@ -128,14 +128,15 @@ def process_new_signatures(
             pending_result = {
                 **result,
                 "available": False,
-                "metadata_status": result.get(
-                    "metadata_status", "incomplete_metadata"
-                ),
-                "error": result.get(
-                    "error", "Transaction metadata is incomplete; retrying."
-                ),
                 "retryable": True,
             }
+            if result.get("metadata_complete") is False:
+                pending_result["metadata_status"] = result.get(
+                    "metadata_status", "incomplete_metadata"
+                )
+                pending_result["error"] = result.get(
+                    "error", "Transaction metadata is incomplete; retrying."
+                )
             if (
                 wallet_address is not None
                 and store is not None

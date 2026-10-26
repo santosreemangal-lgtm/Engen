@@ -48,7 +48,7 @@ class MonitorService:
             try:
                 last_success = datetime.fromisoformat(successful)
                 age = (datetime.now(timezone.utc) - last_success).total_seconds()
-                if age > self._interval * 2 and snapshot.get("state") != "error":
+                if self._interval > 0 and age > self._interval * 2 and snapshot.get("state") != "error":
                     snapshot["state"] = "stale"
             except (TypeError, ValueError):
                 snapshot["state"] = "stale"

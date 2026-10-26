@@ -99,6 +99,27 @@ def process_new_signatures(
                 error_result["processing_status"] = failure["status"]
             results.append(_include_signature_observation(error_result, item))
             continue
+        except Exception as exc:
+            error_result = {
+                "signature": signature,
+                "available": False,
+                "metadata_complete": False,
+                "metadata_status": "interpretation_error",
+                "error": "Transaction interpretation failed; retry scheduled.",
+                "retryable": True,
+            }
+            if (
+                wallet_address is not None
+                and store is not None
+                and is_valid_transaction_signature(signature)
+            ):
+                failure = store.record_failure(
+                    wallet_address, signature, "interpretation",
+                    type(exc).__name__, "Transaction interpretation failed.",
+                )
+                error_result["processing_status"] = failure["status"]
+            results.append(_include_signature_observation(error_result, item))
+            continue
 
         if (
             result.get("available") is False

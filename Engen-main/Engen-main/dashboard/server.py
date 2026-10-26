@@ -21,6 +21,7 @@ from dashboard.monitor_service import MonitorService
 from engine.logger import redact
 
 WALLETS_FILE = ROOT / "wallets.json"
+PAPER_SIMULATOR_DB = Path(os.environ.get("PAPER_SIMULATOR_DB", str(PROJECT_ROOT / "data" / "paper_simulator.db")))
 HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT = 8000
 
@@ -82,6 +83,55 @@ def save_wallets(wallets):
     temporary.replace(WALLETS_FILE)
 
 
+
+def load_paper_simulation_report():
+    """Read the paper-simulator database only; never create or mutate it."""
+    base = {
+        "mode": "PAPER_SIMULATION",
+        "simulated": True,
+        "real_wallet_balances_included": False,
+        "real_trading": False,
+        "transaction_broadcast": False,
+        "database_available": PAPER_SIMULATOR_DB.is_file(),
+        "balances": {},
+        "orders": [],
+        "fills": [],
+    }
+    if not PAPER_SIMULATOR_DB.is_file():
+        return base
+    try:
+        import sqlite3
+        with sqlite3.connect("file:" + str(PAPER_SIMULATOR_DB.resolve()) + "?mode=ro", uri=True) as db:
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if not {"simulator_balances", "simulated_orders", "simulated_fills"}.issubset(tables):
+                base["error"] = "Simulation database schema is not initialized."
+                return base
+            base["balances"] = {mint: amount for mint, amount in db.execute(
+                "SELECT mint, amount FROM simulator_balances ORDER BY mint")}
+            base["orders"] = [
+                {"order_id": row[0], "signal_id": row[1], "side": row[2],
+                 "asset_mint": row[3], "quantity": row[4], "quote_mint": row[5],
+                 "status": row[6], "reason": row[7], "created_at": row[8]}
+                for row in db.execute("""SELECT order_id,signal_id,side,asset_mint,quantity,
+                    quote_mint,status,reason,created_at FROM simulated_orders ORDER BY created_at DESC LIMIT 100""")
+            ]
+            base["fills"] = [
+                {"fill_id": row[0], "order_id": row[1], "asset_mint": row[2],
+                 "quantity": row[3], "reference_price": row[4], "execution_price": row[5],
+                 "gross_quote": row[6], "fee": row[7], "network_cost": row[8],
+                 "net_quote": row[9], "currency": row[10], "price_source": row[11],
+                 "price_timestamp": row[12], "price_age_seconds": row[13],
+                 "slippage_bps": row[14], "created_at": row[15]}
+                for row in db.execute("""SELECT fill_id,order_id,asset_mint,quantity,reference_price,
+                    execution_price,gross_quote,fee,network_cost,net_quote,currency,price_source,
+                    price_timestamp,price_age_seconds,slippage_bps,created_at
+                    FROM simulated_fills ORDER BY created_at DESC LIMIT 100""")
+            ]
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        base["error"] = "Simulation report unavailable (" + type(exc).__name__ + ")."
+    return base
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -120,6 +170,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/monitor":
             self.send_json(200, monitor_service.status())
+            return
+
+        if path == "/api/paper-simulation":
+            self.send_json(200, load_paper_simulation_report())
             return
 
         return super().do_GET()

@@ -67,12 +67,25 @@ class TransactionAnalysisTests(unittest.TestCase):
                     }],
                 },
             },
-            "meta": {"err": None, "fee": 5000},
+            "meta": {
+                "err": None,
+                "fee": 5000,
+                "innerInstructions": [{
+                    "index": 0,
+                    "instructions": [{
+                        "programIdIndex": 1,
+                        "parsed": {"type": "checked_transfer"},
+                        "stackHeight": 2,
+                    }],
+                }],
+            },
         }
         result = analyze_transaction(transaction)
         self.assertEqual(result["program_ids"], ["TOKEN_PROGRAM"])
         self.assertEqual(result["instructions"][0]["program_id"], "TOKEN_PROGRAM")
         self.assertEqual(result["instructions"][0]["parsed_type"], "transfer")
+        self.assertEqual(result["instructions"][1]["source"], "inner")
+        self.assertEqual(result["instructions"][1]["parsed_type"], "checked_transfer")
 
     def test_missing_metadata_returns_unavailable(self):
         result = analyze_transaction({"slot": 123})

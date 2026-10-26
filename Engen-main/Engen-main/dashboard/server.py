@@ -46,7 +46,7 @@ def is_valid_solana_address(value):
     decoded.reverse()
 
     leading_ones = len(value) - len(value.lstrip("1"))
-    decoded = bytearray(b"\\x00" * leading_ones) + decoded
+    decoded = bytearray(leading_ones) + decoded
     return len(decoded) == 32
 
 

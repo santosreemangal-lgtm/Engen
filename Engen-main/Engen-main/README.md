@@ -8,7 +8,8 @@ Engen is a read-only monitoring and research project for public Solana wallet ac
 
 - **Engine overview:** read-only mode, monitor status, last successful scan, and RPC health.
 - **Wallet watchlist:** add/remove public addresses; address input is validated and the saved list is bounded.
-- **Destination profiles:** manage public destination addresses, source-wallet associations, and profile-specific settings.
+- **Independent wallet profiles:** each profile stores its own public wallet address, monitored-trader list, settings, stored balance observations, transaction history, and read-only monitor lifecycle.
+- **Profile paper ledger:** when the paper-only runner is started with a saved profile ID, that profile uses its own persistent virtual balances and paper-trade history; configured position-size and open-position limits are enforced by the simulator.
 - **Transaction history:** paginated records with classification, status, and token-mint filters.
 - **Paper simulation:** separate simulated balances, orders, fills, and realized P&L; the report reads its database without creating or mutating it.
 - **Failure handling:** backend/API failures are surfaced to the UI; no stale transaction-history results should be treated as fresh after a failed request.
@@ -47,9 +48,11 @@ Architecture boundaries, data conventions, API behavior, the threat model, accep
 | GET | `/api/profiles` | Read destination profiles |
 | POST | `/api/profiles` | Create/update/delete profiles, settings, and source-wallet associations |
 | GET | `/api/profile-transactions` | Read filtered, paginated transaction history |
-| GET | `/api/paper-simulation` | Read the paper-simulation report |
+| GET | `/api/paper-simulation` | Read the legacy paper-simulation report; add `?profile_id=<UUID>` for one profile's isolated paper ledger |
+| GET | `/api/profile-monitor?profile_id=<UUID>` | Read one profile's monitor status |
+| POST | `/api/profile-monitor` | Start/stop read-only monitoring for one active profile |
 
-API write operations update local profile/watchlist data or monitor state. They do not enable live trading. JSON request bodies are bounded; public addresses and profile settings are validated by the backend. Browser security headers, optional bearer authentication, same-origin write checks, and loopback-only binding provide defense in depth. Per-user/per-profile authorization is not implemented; use this as a single-user local dashboard only.
+API write operations update local profile/watchlist data or monitor state. They do not enable live trading. Profile history, monitor lifecycle, and paper ledger requests are scoped by a canonical profile UUID. The paper-only runner requires an existing active profile and a monitored public wallet associated with that profile, and stores its virtual ledger under `data/profiles/<profile-id>/` by default. Profile settings may contain a `paper_trading` object with `initial_quote_balance`, `max_position_pct` (1–100), and `max_open_positions` (1–100); only these keys are supported by the runner. These limits are simulation controls, not financial advice or guarantees. JSON request bodies are bounded; public addresses and profile settings are validated by the backend. Browser security headers, optional bearer authentication, same-origin write checks, and loopback-only binding provide defense in depth. This remains a single-user localhost dashboard: a shared bearer token is not a multi-user identity system and does not separate different people's accounts.
 
 ## Validation
 
@@ -67,7 +70,7 @@ The GitHub Actions workflow checks compilation, offline unit tests, and the mock
 
 ## Important limitations
 
-- The dashboard backend supports optional single shared bearer-token authentication, but does not implement user identities or multi-user/per-profile authorization.
+- The dashboard backend supports optional single shared bearer-token authentication. Profile-scoped data and monitor APIs are implemented for one trusted local user, but user identities and cross-user authorization are not implemented.
 - Unrealized P&L must remain unavailable unless a verified, fresh market-price source exists.
 - Transaction fee fields must not be fabricated when the stored schema does not supply verified fee data.
 - Backup/restore, HTTPS, secret management, and access control need deployment-specific testing.

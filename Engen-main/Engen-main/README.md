@@ -29,6 +29,12 @@ An optional API bearer token can be configured with the `DASHBOARD_AUTH_TOKEN` e
 
 State-changing browser requests with a mismatched `Origin` are rejected. Request bodies are capped at 10,000 bytes, write requests must use JSON, and the API applies an in-memory limit of 120 requests per client IP per 60 seconds. This rate limiter is process-local; deployments with multiple workers or reverse proxies need a proxy/shared-store limit and load testing. These controls are defense in depth, not a substitute for a properly configured authenticated HTTPS proxy when remote access is required. Monitoring is opt-in; check status before starting and stop it when finished.
 
+## Configuration and architecture
+
+The safe example settings are in [`.env.example`](.env.example); the application does not automatically load a `.env` file, so configure variables in your shell or Codespaces environment. The public RPC endpoint can be overridden with `ENGEN_RPC_URL`; remote endpoints must use HTTPS. Invalid RPC URLs, timeouts, retry counts, and pacing values are rejected or bounded before requests are sent. Never commit provider credentials.
+
+Architecture boundaries, data conventions, API behavior, the threat model, acceptance criteria, and open decisions are documented in the repository-root [`ARCHITECTURE_DECISIONS.md`](../../ARCHITECTURE_DECISIONS.md). It explicitly lists requirements that are defined but not yet implemented or certified.
+
 ## API reference
 
 | Method | Endpoint | Purpose |

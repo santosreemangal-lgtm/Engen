@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,14 +33,27 @@ def rpc(method, params):
     }).encode("utf-8")
     request = urllib.request.Request(
         RPC_URL, data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "User-Agent": "Engen-read-only-validator/1.0"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        body = json.loads(response.read().decode("utf-8"))
-    if not isinstance(body, dict) or body.get("error") is not None or "result" not in body:
-        raise RuntimeError(f"RPC call failed: {method}")
-    return body["result"]
+    # Public Solana RPC endpoints can rate-limit bursts. Retry 429 and
+    # transient server errors with bounded exponential backoff.
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                body = json.loads(response.read().decode("utf-8"))
+            if not isinstance(body, dict) or body.get("error") is not None or "result" not in body:
+                raise RuntimeError(f"RPC call failed: {method}")
+            return body["result"]
+        except urllib.error.HTTPError as exc:
+            retryable = exc.code == 429 or 500 <= exc.code < 600
+            if not retryable or attempt == 4:
+                raise
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == 4:
+                raise
+        time.sleep(2 ** (attempt + 1))
+    raise RuntimeError(f"RPC call failed after retries: {method}")
 
 
 def main():
@@ -104,7 +118,7 @@ def main():
                 "error_type": type(exc).__name__,
                 "error": str(exc)[:300],
             })
-        time.sleep(0.2)
+        time.sleep(0.5)
 
     report = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),

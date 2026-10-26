@@ -44,6 +44,26 @@ class PaperMonitorRunnerTests(unittest.TestCase):
                     "https://api.mainnet-beta.solana.com"
                 )
 
+    def test_interrupted_storage_startup_exits_before_monitoring(self):
+        argv = [
+            "paper_monitor_runner",
+            "--wallet", TEST_WALLET,
+            "--quote-mint", USDT_MINT,
+        ]
+        with (
+            patch("sys.argv", argv),
+            patch.object(
+                runner,
+                "SignatureStore",
+                side_effect=KeyboardInterrupt,
+            ),
+            patch.object(runner, "PaperTrader") as trader_mock,
+            redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(runner.main(), 130)
+
+        trader_mock.assert_not_called()
+
     def test_unsafe_startup_stops_before_database_initialization(self):
         with tempfile.TemporaryDirectory() as directory:
             paper_db = Path(directory) / "paper.db"

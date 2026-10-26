@@ -37,6 +37,14 @@
 - Transaction history must remain filtered and paginated with bounded page sizes. Stable unique signatures prevent duplicate transaction records.
 - Frontend state must not retain stale history as fresh after a failed fetch. Simulated orders/fills and paper P&L must be labeled as simulation.
 
+## User-count scope and authorization decision (Task 055 / 273)
+
+- Current supported scope: one trusted user on localhost. The checklist's “approximately 1–5 users” is a target to evaluate, not current verified capacity.
+- Do not expose this application as a multi-user service. The optional shared bearer token authenticates possession of one shared secret; it does not establish user identity, profile ownership, or role-based permissions.
+- A future 1–5-user release must define identity/session management, profile ownership, who can read/update/delete profiles and history, administrative roles if any, audit events, session revocation, and concurrency limits.
+- Acceptance tests must prove that user A cannot read, update, delete, or enumerate user B's profile, settings, source-wallet associations, transaction history, or simulation records by guessing/changing identifiers. Every route must enforce authorization server-side.
+- Task 060 approval is pending: this document is a proposal baseline, not evidence of owner approval. Record the approved revision and date only after explicit review.
+
 ## Threat model and deployment
 
 - Primary risks: malicious browser-origin writes, unauthorized local/network API access, oversized or malformed requests, rate abuse, secret leakage in logs/config, malicious RPC responses, duplicate processing, stale market data, and accidental transition into live execution.
@@ -55,6 +63,19 @@
 7. Dashboard write endpoints validate inputs, reject mismatched browser origins, bound request sizes, and remain loopback-only.
 8. No change enables signing, transaction broadcast, or live trading.
 9. A release is not production-ready until external deployment controls, access-control requirements, restart recovery, and a broader security review have been independently verified.
+
+## Task-specific release gates (055, 059, 060, 069, 273, 294, 296, 298–300)
+
+- 055: Decide whether this release remains single-user or must support 1–5 concurrent users. The current release remains single-user until identity and authorization tests pass.
+- 059: Maintain this architecture decision record for consequential choices; distinguish accepted decisions from open questions.
+- 060: Obtain explicit owner approval for the stable implementation plan; approval is not inferred from code edits or passing CI.
+- 069: .env.example must contain placeholders only, and root .gitignore must exclude real environment files and secret material. A separate repository-history secret scan is still required to establish that credentials were not previously committed.
+- 273: Do not mark complete until profile ownership is enforced on every relevant API route and negative cross-profile tests pass.
+- 294: A unit test that reconstructs a store is not equivalent to a full process crash/restart rehearsal. Test restart with active monitoring and persisted paper-simulation data.
+- 296: Record a dated dependency vulnerability scan and deployment-security review, including transitive dependencies and remediation.
+- 298: Production readiness requires independent evidence for security, access control, restart recovery, integration, and deployment controls.
+- 299: Live mode remains unimplemented and unauthorized. Any future change needs a separate review and explicit approval for the exact commit and environment.
+- 300: The final report must cite the exact commit and successful current CI run, describe what was actually exercised, list unresolved risks, and state deployment status. Do not use “all 300 complete” while any mandatory gate remains open.
 
 ## Open decisions / not yet certified
 

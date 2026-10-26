@@ -238,7 +238,7 @@ class WalletMonitorTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             SolanaRPCError,
-            "Failed to fetch wallet signatures from the configured RPC endpoint\\.",
+            "Public Solana RPC request failed\\.",
         ) as context:
             get_wallet_signatures(
                 wallet_address=self.wallet,

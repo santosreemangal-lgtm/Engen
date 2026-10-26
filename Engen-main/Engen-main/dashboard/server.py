@@ -574,6 +574,8 @@ if __name__ == "__main__":
             "For remote access, use a trusted HTTPS reverse proxy with "
             "authentication and keep this backend bound to localhost."
         )
+    if DASHBOARD_AUTH_TOKEN and len(DASHBOARD_AUTH_TOKEN) < 32:
+        raise SystemExit("DASHBOARD_AUTH_TOKEN must contain at least 32 characters.")
 
     server = ThreadingHTTPServer((HOST, PORT), DashboardHandler)
 

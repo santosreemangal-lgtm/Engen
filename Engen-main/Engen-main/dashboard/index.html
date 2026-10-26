@@ -1221,6 +1221,7 @@
 
     function renderProfiles() {
       profileList.replaceChildren();
+      profileSelectOptions();
       if (!profiles.length) {
         addText(profileList, "No destination profiles yet. Create one above; it will start disabled.", "p", "empty");
         return;
@@ -1308,8 +1309,7 @@
             await postProfile({action: "update", profile_id: profile.profile_id,
               name: nameInput.value.trim(),
               destination_public_address: destination || undefined,
-              status: statusSelect.value});
-            await postProfile({action: "settings", profile_id: profile.profile_id, settings});
+              status: statusSelect.value, settings});
             profileMessage.textContent = "Profile details and settings saved.";
             await loadProfiles();
           } catch (error) {
@@ -1391,7 +1391,7 @@
         deleteButton.disabled = !backendReady;
         deleteButton.addEventListener("click", async () => {
           const confirmed = window.confirm(
-            "Soft-delete profile '" + profile.name + "'?\\n\\n" +
+            "Soft-delete profile '" + profile.name + "'?\n\n" +
             "The profile will be hidden from this list. Stored transaction and balance history is preserved."
           );
           if (!confirmed) {

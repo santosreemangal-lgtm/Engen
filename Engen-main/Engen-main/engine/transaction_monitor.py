@@ -2,6 +2,7 @@
 
 from engine.solana_public import DEFAULT_RPC_URL, SolanaRPCError
 from engine.signature_store import SignatureStore
+from engine.solana_validation import is_valid_transaction_signature
 from engine.transaction_analysis import classify_token_balance_changes
 from engine.transaction_processor import process_transaction_signature
 from engine.wallet_monitor import get_and_store_new_wallet_signatures
@@ -78,21 +79,43 @@ def process_new_signatures(
             }, item))
             continue
         except SolanaRPCError as exc:
-            results.append(_include_signature_observation({
+            error_result = {
                 "signature": signature,
                 "available": False,
                 "metadata_complete": False,
                 "metadata_status": "rpc_error",
                 "error": str(exc),
                 "retryable": True,
-            }, item))
+            }
+            if (
+                wallet_address is not None
+                and store is not None
+                and is_valid_transaction_signature(signature)
+            ):
+                failure = store.record_failure(
+                    wallet_address, signature, "rpc_fetch",
+                    "rpc_error", str(exc),
+                )
+                error_result["processing_status"] = failure["status"]
+            results.append(_include_signature_observation(error_result, item))
             continue
 
         if result.get("available") is False:
-            results.append(_include_signature_observation({
-                **result,
-                "retryable": True,
-            }, item))
+            pending_result = {**result, "retryable": True}
+            if (
+                wallet_address is not None
+                and store is not None
+                and is_valid_transaction_signature(signature)
+            ):
+                failure = store.record_failure(
+                    wallet_address, signature, "rpc_fetch",
+                    result.get("metadata_status", "incomplete_metadata"),
+                    result.get("error", "Transaction data is incomplete."),
+                )
+                pending_result["processing_status"] = failure["status"]
+                if failure["status"] == "needs_review":
+                    pending_result["retryable"] = False
+            results.append(_include_signature_observation(pending_result, item))
             continue
 
         # Preserve provider observation metadata separately from transaction
@@ -154,6 +177,23 @@ def process_new_signatures(
                         wallet_address,
                     ),
                 }
+
+        if (
+            wallet_address is not None
+            and store is not None
+            and is_valid_transaction_signature(signature)
+        ):
+            record_status = (
+                "incomplete" if result.get("metadata_complete") is False
+                else "failed" if result.get("status") == "failed"
+                else "observed"
+            )
+            store.save_transaction_record(
+                wallet_address,
+                signature,
+                result.get("raw_transaction"),
+                processing_status=record_status,
+            )
 
         # When deferred, the paper-trading runner is responsible for
         # marking the signature processed after handling the result.

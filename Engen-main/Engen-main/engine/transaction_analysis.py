@@ -535,5 +535,115 @@ def classify_token_balance_changes(token_balance_changes, wallet_address):
     )
 
 
+def classify_transaction(transaction, wallet_address, balance_changes=None):
+    """Classify conservatively and return auditable evidence and confidence.
+
+    BUY_CANDIDATE and SELL_CANDIDATE are analytical hints, not execution
+    instructions. Unknown or failed transactions must never be promoted to a
+    trade candidate solely from a token receipt or SOL balance delta.
+    """
+    meta = transaction.get("meta") if isinstance(transaction, Mapping) else None
+    if isinstance(meta, Mapping) and meta.get("err") is not None:
+        return {
+            "classification": "FAILED_TRANSACTION",
+            "confidence": "high",
+            "reason": "The chain metadata reports a failed transaction; no swap candidate is emitted.",
+            "asset_mints": [],
+            "quote_mints": [],
+            "evidence": {
+                "transaction_error": meta.get("err"),
+                "fee_lamports": meta.get("fee"),
+                "balance_changes_used": False,
+            },
+        }
+
+    base_changes = balance_changes
+    if base_changes is None and isinstance(meta, Mapping):
+        base_changes = analyze_token_balance_changes(meta)
+        if isinstance(transaction, Mapping):
+            base_changes.extend(analyze_native_sol_balance_changes(transaction))
+
+    signal = classify_token_balance_changes(base_changes, wallet_address)
+    instructions = []
+    fee = None
+    if isinstance(meta, Mapping):
+        fee = meta.get("fee")
+    if isinstance(transaction, Mapping):
+        tx_data = transaction.get("transaction")
+        message = tx_data.get("message") if isinstance(tx_data, Mapping) else None
+        if isinstance(message, Mapping):
+            outer = message.get("instructions", [])
+            if isinstance(outer, list):
+                for index, instruction in enumerate(outer):
+                    if not isinstance(instruction, Mapping):
+                        continue
+                    parsed = instruction.get("parsed")
+                    instructions.append({
+                        "index": index,
+                        "program": instruction.get("program"),
+                        "program_id": instruction.get("programId"),
+                        "parsed_type": parsed.get("type") if isinstance(parsed, Mapping) else None,
+                        "source": "message",
+                    })
+        if isinstance(meta, Mapping):
+            inner_groups = meta.get("innerInstructions", [])
+            if isinstance(inner_groups, list):
+                for group in inner_groups:
+                    if not isinstance(group, Mapping):
+                        continue
+                    inner = group.get("instructions", [])
+                    if not isinstance(inner, list):
+                        continue
+                    for inner_index, instruction in enumerate(inner):
+                        if not isinstance(instruction, Mapping):
+                            continue
+                        parsed = instruction.get("parsed")
+                        instructions.append({
+                            "outer_index": group.get("index"),
+                            "inner_index": inner_index,
+                            "program": instruction.get("program"),
+                            "program_id": instruction.get("programId"),
+                            "parsed_type": parsed.get("type") if isinstance(parsed, Mapping) else None,
+                            "source": "inner",
+                        })
+
+    owned_changes = [
+        {
+            "owner": item.get("owner"),
+            "mint": item.get("mint"),
+            "raw_delta_amount": item.get("delta_amount"),
+            "decimals": item.get("decimals"),
+            "source": item.get("source", "spl_token"),
+            "raw_pre_amount": item.get("pre_amount"),
+            "raw_post_amount": item.get("post_amount"),
+            "fee_adjusted": item.get("fee_adjusted", False),
+        }
+        for item in (base_changes if isinstance(base_changes, list) else [])
+        if isinstance(item, Mapping) and item.get("owner") == wallet_address
+    ]
+    candidate = signal.get("classification") in ("BUY_CANDIDATE", "SELL_CANDIDATE")
+    signal.update({
+        "confidence": "medium" if candidate else "low",
+        "evidence": {
+            "wallet_address": wallet_address,
+            "wallet_balance_changes": owned_changes,
+            "instruction_context": instructions,
+            "fee_lamports": fee,
+            "classification_basis": "wallet-owned raw balance deltas plus available instruction context",
+            "limitations": [
+                "Balance deltas do not prove an economic swap.",
+                "Native SOL deltas can include transfers, rent, account creation, and other SOL uses.",
+                "Unknown token owners are not attributed to the monitored wallet.",
+                "Raw amounts are retained; decimals are metadata and no market-value estimate is made.",
+            ],
+        },
+    })
+    if candidate and not instructions:
+        signal["reason"] += " No instruction context was available, so confidence remains medium."
+    elif not candidate:
+        signal["reason"] += " Evidence is insufficient or ambiguous; preserve UNKNOWN."
+    return signal
+
+
 if __name__ == "__main__":
     print("Transaction analysis module loaded successfully.")

@@ -102,7 +102,7 @@ class MonitorServiceTests(unittest.TestCase):
             self.assertEqual(wallet["state"], "error")
             self.assertEqual(
                 wallet["last_error"],
-                "temporary RPC failure",
+                "Monitoring scan failed; sensitive error details are hidden.",
             )
             self.assertIsNotNone(wallet["last_scan"])
 

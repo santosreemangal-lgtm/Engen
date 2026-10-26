@@ -82,6 +82,17 @@ def process_new_signatures(
             })
             continue
 
+        # Preserve provider observation metadata separately from transaction
+        # metadata; a signature-list observation is not itself transaction proof.
+        observation_fields = {
+            "slot": item.get("slot"),
+            "confirmation_status": item.get("confirmationStatus"),
+            "signature_error": item.get("err"),
+            "block_time": item.get("blockTime"),
+        }
+        if any(value is not None for value in observation_fields.values()):
+            result = {**result, "signature_observation": observation_fields}
+
         # Keep only token and native SOL changes attributed to the
         # monitored wallet. Unknown owners are not attributed to it.
         if wallet_address is not None:
@@ -107,8 +118,21 @@ def process_new_signatures(
             and isinstance(result.get("token_balance_changes"), list)
         ):
             signers = result.get("signers")
+            confirmation = item.get("confirmationStatus")
 
-            if (
+            if confirmation not in ("confirmed", "finalized"):
+                result = {
+                    **result,
+                    "trade_signal": _unknown_signer_signal() | {
+                        "reason": (
+                            "Transaction confirmation is insufficient; "
+                            "no buy/sell candidate was created."
+                        ),
+                    },
+                    "confirmation_sufficient": False,
+                    "retryable": True,
+                }
+            elif (
                 not isinstance(signers, list)
                 or wallet_address not in signers
             ):
@@ -132,7 +156,8 @@ def process_new_signatures(
             and store is not None
             and not defer_processed
         ):
-            store.mark_processed(wallet_address, signature)
+            if result.get("retryable") is not True:
+                store.mark_processed(wallet_address, signature)
 
         results.append(result)
 

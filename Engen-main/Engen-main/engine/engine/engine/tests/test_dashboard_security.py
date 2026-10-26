@@ -51,10 +51,6 @@ class DashboardWalletValidationTests(unittest.TestCase):
                 self.assertEqual(server.load_wallets(), [valid])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class DashboardSecurityHeaderTests(unittest.TestCase):
     def setUp(self):
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), server.DashboardHandler)
@@ -105,3 +101,7 @@ class DashboardSecurityHeaderTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as caught:
             urlopen(request, timeout=2)
         self.assertEqual(caught.exception.code, 400)
+
+
+if __name__ == "__main__":
+    unittest.main()

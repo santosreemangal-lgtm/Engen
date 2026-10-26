@@ -459,6 +459,18 @@
       Saved addresses remain available after refreshing the page.
     </p>
 
+    <section class="panel" aria-labelledby="api-access-heading">
+      <h2 id="api-access-heading">Dashboard API access</h2>
+      <p class="muted">If the backend is configured with DASHBOARD_AUTH_TOKEN, enter that token here. It is kept only for this browser tab. Never paste a wallet seed phrase or private key.</p>
+      <label for="dashboard-api-token">API access token</label>
+      <div class="form-row">
+        <input id="dashboard-api-token" type="password" autocomplete="current-password" maxlength="256" spellcheck="false">
+        <button id="save-api-token" type="button">Use token</button>
+        <button id="clear-api-token" class="secondary-button" type="button">Clear</button>
+      </div>
+      <p id="api-token-message" class="muted" role="status" aria-live="polite">Token authentication is optional for localhost-only use.</p>
+    </section>
+
     <section class="panel" aria-labelledby="overview-heading">
       <h2 id="overview-heading">Engine Overview</h2>
       <div class="overview-grid">
@@ -699,14 +711,40 @@
     const historyPrev = document.getElementById("history-prev");
     const historyNext = document.getElementById("history-next");
     const historyPageLabel = document.getElementById("history-page-label");
+    const apiTokenInput = document.getElementById("dashboard-api-token");
+    const apiTokenMessage = document.getElementById("api-token-message");
+    const savedApiToken = sessionStorage.getItem("dashboardApiToken");
+    if (savedApiToken) apiTokenInput.value = savedApiToken;
 
+    document.getElementById("save-api-token").addEventListener("click", () => {
+      const value = apiTokenInput.value.trim();
+      if (!value) {
+        apiTokenMessage.textContent = "Enter a token, or leave authentication unconfigured on localhost.";
+        return;
+      }
+      sessionStorage.setItem("dashboardApiToken", value);
+      apiTokenMessage.textContent = "Token saved for this browser tab. Refreshing dashboard data…";
+      window.location.reload();
+    });
+    document.getElementById("clear-api-token").addEventListener("click", () => {
+      sessionStorage.removeItem("dashboardApiToken");
+      apiTokenInput.value = "";
+      apiTokenMessage.textContent = "Token cleared for this browser tab. Refreshing dashboard data…";
+      window.location.reload();
+    });
 
     async function apiRequest(path, options = {}) {
       let response;
+      const requestHeaders = { ...(options.headers || {}) };
+      const apiToken = sessionStorage.getItem("dashboardApiToken");
+      if (apiToken) {
+        requestHeaders.Authorization = "Bearer " + apiToken;
+      }
       try {
         response = await fetch(path, {
           cache: "no-store",
-          ...options
+          ...options,
+          headers: requestHeaders
         });
       } catch (_error) {
         throw new Error("Backend unavailable. Check that dashboard/server.py is running.");

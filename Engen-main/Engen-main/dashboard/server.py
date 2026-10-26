@@ -19,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
 from engine.logger import redact
+from engine.pnl import realized_pnl_from_fills
 
 WALLETS_FILE = ROOT / "wallets.json"
 PAPER_SIMULATOR_DB = Path(os.environ.get("PAPER_SIMULATOR_DB", str(PROJECT_ROOT / "data" / "paper_simulator.db")))
@@ -96,6 +97,12 @@ def load_paper_simulation_report():
         "balances": {},
         "orders": [],
         "fills": [],
+        "pnl": {
+            "cost_basis_method": "average_cost",
+            "currency": "USD",
+            "realized_by_mint": {},
+            "unrealized_status": "unavailable_no_verified_fresh_market_price",
+        },
     }
     if not PAPER_SIMULATOR_DB.is_file():
         return base
@@ -127,6 +134,16 @@ def load_paper_simulation_report():
                     price_timestamp,price_age_seconds,slippage_bps,created_at
                     FROM simulated_fills ORDER BY created_at DESC LIMIT 100""")
             ]
+            all_fills = [
+                {"side": row[0], "asset_mint": row[1], "quantity": row[2],
+                 "execution_price": row[3], "fee": row[4], "network_cost": row[5],
+                 "created_at": row[6]}
+                for row in db.execute("""SELECT o.side,f.asset_mint,f.quantity,f.execution_price,
+                    f.fee,f.network_cost,f.created_at FROM simulated_fills f
+                    JOIN simulated_orders o ON o.order_id=f.order_id
+                    ORDER BY f.created_at,f.fill_id""")
+            ]
+            base["pnl"]["realized_by_mint"] = realized_pnl_from_fills(all_fills)
     except (OSError, sqlite3.Error, ValueError) as exc:
         base["error"] = "Simulation report unavailable (" + type(exc).__name__ + ")."
     return base

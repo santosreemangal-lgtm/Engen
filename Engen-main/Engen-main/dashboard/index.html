@@ -442,7 +442,7 @@
           <p id="overview-last-success" class="overview-value">Not checked yet</p>
         </div>
         <div class="overview-item">
-          <p class="overview-label">RPC observation</p>
+          <p class="overview-label">RPC endpoint health</p>
           <p id="overview-rpc" class="overview-value" aria-live="polite">Not checked yet</p>
         </div>
       </div>
@@ -1061,27 +1061,10 @@
         overviewHealth.textContent = "STARTING / WAITING";
       }
 
-      if (!monitoredWallets.length) {
-        overviewRpc.textContent = "Not checked — no monitor results";
-      } else if (monitoredWallets.some(wallet => wallet.state === "error")) {
-        overviewRpc.textContent = "One or more scan requests failed";
-      } else if (monitoredWallets.some(wallet => wallet.state === "stale")) {
-        overviewRpc.textContent = "Stale — recent connectivity unconfirmed";
-      } else if (monitoredWallets.some(wallet => wallet.state === "connected")) {
-        overviewRpc.textContent = "Recent scan succeeded";
-      } else {
-        overviewRpc.textContent = "Waiting for first successful scan";
-      }
-
       overviewHealth.className = "overview-value " +
         (overviewHealth.textContent.startsWith("RUNNING") ? "status-ok" :
          overviewHealth.textContent.startsWith("ERROR") ? "status-error" :
          overviewHealth.textContent.startsWith("STALE") ? "status-warning" : "");
-      overviewRpc.className = "overview-value " +
-        (overviewRpc.textContent === "Recent scan succeeded" ? "status-ok" :
-         overviewRpc.textContent.includes("failed") ? "status-error" :
-         overviewRpc.textContent.startsWith("Stale") ? "status-warning" : "");
-
       monitorStatus.textContent = monitoringEnabled
         ? "Monitoring is enabled. Scans run approximately every " +
           data.interval_seconds + " seconds."
@@ -1336,6 +1319,7 @@
               status: statusSelect.value, settings});
             profileMessage.textContent = "Profile details and settings saved.";
             await loadProfiles();
+        loadRpcHealth();
           } catch (error) {
             profileMessage.textContent = "Could not save profile: " + error.message;
           } finally {
@@ -1548,6 +1532,28 @@
         historyMessage.textContent = "Transaction history unavailable: " + error.message;
         addText(historyList, "No potentially stale results are displayed after an API error.", "p", "empty");
         historyPageLabel.textContent = "Page unavailable";
+      }
+    }
+
+
+
+
+    async function loadRpcHealth() {
+      try {
+        const data = await apiRequest("/api/rpc-health");
+        if (data.mode !== "READ_ONLY" || typeof data.available !== "boolean" ||
+            typeof data.status !== "string" || typeof data.checked_at !== "string") {
+          throw new Error("RPC health response failed schema validation.");
+        }
+        overviewRpc.textContent = data.available
+          ? "Connected — getHealth: ok | checked " + data.checked_at
+          : "Unavailable — " + data.status + (data.error ? " (" + data.error + ")" : "") +
+            " | checked " + data.checked_at;
+        overviewRpc.className = "overview-value " +
+          (data.available ? "status-ok" : "status-error");
+      } catch (error) {
+        overviewRpc.textContent = "Unavailable — health probe failed: " + error.message;
+        overviewRpc.className = "overview-value status-error";
       }
     }
 
@@ -1773,6 +1779,10 @@
         loadMonitorStatus();
       }
     }, 5000);
+
+    window.setInterval(() => {
+      if (backendReady) loadRpcHealth();
+    }, 30000);
   </script>
 </body>
 </html>

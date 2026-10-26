@@ -280,14 +280,23 @@ def main(argv=None):
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
-    # Use a configurable signature database so benchmarks and tests can
-    # remain isolated from the user's existing monitoring history.
-    store = SignatureStore(db_path=args.signature_db)
+    # Initialize persistence before starting any scan. If initialization
+    # is interrupted or fails, exit without starting a background worker.
+    try:
+        store = SignatureStore(db_path=args.signature_db)
+        trader = PaperTrader(
+            {args.quote_mint: args.paper_balance},
+            db_path=args.paper_db,
+        )
+    except KeyboardInterrupt:
+        logger.info("Startup interrupted; monitoring was not started.")
+        return 130
+    except Exception:
+        logger.error(
+            "Paper monitor initialization failed; monitoring was not started."
+        )
+        return 1
 
-    trader = PaperTrader(
-        {args.quote_mint: args.paper_balance},
-        db_path=args.paper_db,
-    )
     latency_recorder = LatencyRecorder()
 
     logger.info("Paper-only monitoring started.")

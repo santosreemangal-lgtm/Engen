@@ -36,9 +36,21 @@ measurements must not be described as real trade-execution latency.
 - Do not claim a 100–200 ms end-to-end target has been met until the relevant
   end-to-end stages have been measured under representative conditions.
 
-## Current limitation
+## Current instrumentation and remaining work
 
-The engine/latency.py module provides a bounded, dependency-free timing recorder
-for local measurements and unit tests. It is not yet wired into the full monitor
-pipeline, so this document is a measurement plan rather than a claim of measured
-end-to-end performance.
+The bounded, dependency-free recorder in `engine/latency.py` is wired into the
+paper monitor pipeline. It records signature-fetch RPC time, transaction-fetch
+RPC time, local transaction analysis, full monitor-scan time, and local
+paper-decision time when those paths execute.
+
+A live, representative RPC baseline has **not** yet been collected. The
+instrumentation and mock-based unit tests do not establish real-world latency.
+A benchmark run against a public wallet and public RPC endpoint is still needed.
+A single `--once` scan can confirm connectivity and produce initial samples,
+but repeated scans and representative activity are needed for useful P50/P95/P99
+comparisons. Polling interval also contributes to detection delay and is not
+included in the duration of an individual RPC call.
+
+The paper monitor uses a persistent signature database and a persistent paper
+ledger by default. For a benchmark, use dedicated temporary database paths so
+existing monitoring history and virtual balances are not altered.

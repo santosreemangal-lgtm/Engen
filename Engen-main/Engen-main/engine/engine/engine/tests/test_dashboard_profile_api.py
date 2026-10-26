@@ -109,7 +109,7 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertFalse(report["available"])
         self.assertEqual(report["status"], "unavailable")
         self.assertEqual(report["error"], "SolanaRPCError")
-        self.assertFalse(report["transaction_broadcast")
+        self.assertFalse(report["transaction_broadcast"])
 
     def test_missing_profile_database_is_not_created_by_get_helpers(self):
         self.store = None

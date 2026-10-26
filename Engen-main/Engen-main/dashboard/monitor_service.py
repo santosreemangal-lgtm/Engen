@@ -118,13 +118,34 @@ class MonitorService:
                 return self.status()
 
     def stop(self):
-        """Request a graceful stop."""
+        """Request a graceful stop without blocking the caller."""
         with self._lifecycle_lock:
             self._stop_event.set()
 
             with self._lock:
                 self._enabled = False
                 return self.status()
+
+    def stop_and_wait(self, timeout=15):
+        """Request stop and wait a bounded time for the worker to exit."""
+        if (
+            not isinstance(timeout, (int, float))
+            or isinstance(timeout, bool)
+            or timeout <= 0
+        ):
+            raise ValueError("Shutdown timeout must be positive.")
+
+        self.stop()
+        with self._lock:
+            worker = self._thread
+
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(timeout=timeout)
+
+        return {
+            **self.status(),
+            "worker_stopped": worker is None or not worker.is_alive(),
+        }
 
     def _run(self):
         """Poll saved addresses without signing or submitting transactions."""

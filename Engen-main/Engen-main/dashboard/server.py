@@ -66,11 +66,14 @@ def load_wallets():
     if not isinstance(data, list):
         return []
 
-    return [
-        address
-        for address in data[:MAX_SAVED_WALLETS]
-        if is_valid_solana_address(address)
-    ]
+    wallets = []
+    for address in data:
+        if not is_valid_solana_address(address) or address in wallets:
+            continue
+        wallets.append(address)
+        if len(wallets) >= MAX_SAVED_WALLETS:
+            break
+    return wallets
 
 
 def save_wallets(wallets):

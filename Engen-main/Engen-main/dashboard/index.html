@@ -1203,7 +1203,10 @@
         : {};
       const pnlEntries = Object.entries(realized);
       if (pnlEntries.length === 0) {
-        addText(simulationPnl, "Realized P&L is not available yet; no simulated sales are recorded.", "p", "empty");
+        const pnlNote = pnl.cost_basis_method === "unavailable_without_verified_fill_prices"
+          ? "Realized P&L is unavailable for this profile ledger because verified execution prices are not stored."
+          : "Realized P&L is not available yet; no simulated sales are recorded.";
+        addText(simulationPnl, pnlNote, "p", "empty");
       }
       pnlEntries.forEach(([mint, item]) => {
         const value = item && item.pnl !== null && item.pnl !== undefined

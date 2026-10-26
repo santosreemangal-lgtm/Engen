@@ -8,6 +8,7 @@ from engine.solana_public import (
     SolanaRPCError,
     get_transaction,
 )
+from engine.solana_validation import is_valid_transaction_signature
 from engine.transaction_analysis import (
     analyze_transaction,
     analyze_token_balance_changes,
@@ -22,8 +23,8 @@ def process_transaction_signature(
     latency_recorder=None,
 ):
     """Fetch and analyze a transaction; incomplete provider data stays explicit."""
-    if not isinstance(signature, str) or not signature.strip():
-        raise ValueError("A transaction signature is required.")
+    if not is_valid_transaction_signature(signature):
+        raise ValueError("Invalid Solana transaction signature.")
 
     rpc_timer = (
         latency_recorder.measure("transaction.rpc_fetch")
@@ -80,6 +81,7 @@ def process_transaction_signature(
             "metadata_status": "incomplete_transaction",
             "slot": slot,
             "error": "Transaction message or account keys are unavailable.",
+            "raw_transaction": transaction,
         }
 
     metadata = transaction.get("meta")
@@ -91,6 +93,7 @@ def process_transaction_signature(
             "metadata_status": "missing",
             "slot": slot,
             "error": "Transaction metadata is unavailable.",
+            "raw_transaction": transaction,
         }
     if not isinstance(metadata, Mapping):
         return {
@@ -100,6 +103,7 @@ def process_transaction_signature(
             "metadata_status": "invalid",
             "slot": slot,
             "error": "Transaction metadata is invalid.",
+            "raw_transaction": transaction,
         }
 
     fee = metadata.get("fee")
@@ -113,6 +117,7 @@ def process_transaction_signature(
             "metadata_status": "invalid_fee",
             "slot": slot,
             "error": "Transaction fee metadata is invalid.",
+            "raw_transaction": transaction,
         }
 
     try:
@@ -148,6 +153,7 @@ def process_transaction_signature(
         "metadata_complete": not missing_fields,
         "metadata_missing_fields": missing_fields,
         "token_balance_changes": token_balance_changes,
+        "raw_transaction": transaction,
     }
 
 

@@ -32,7 +32,7 @@ class MonitorServiceTests(unittest.TestCase):
         service._interval = 0
 
         try:
-            service.start(["test_public_wallet"])
+            service.start(["11111111111111111111111111111111"])
 
             self.assertTrue(
                 recovered.wait(timeout=3),
@@ -57,9 +57,10 @@ class MonitorServiceTests(unittest.TestCase):
 
             wallet = status["wallets"][0]
 
-            self.assertEqual(wallet["address"], "test_public_wallet")
+            self.assertEqual(wallet["address"], "11111111111111111111111111111111")
             self.assertEqual(wallet["state"], "connected")
             self.assertIsNone(wallet["last_error"])
+            self.assertIsNotNone(wallet["last_successful_check"])
             self.assertEqual(
                 wallet["latest_results"][0]["signature"],
                 "test_signature",
@@ -82,7 +83,7 @@ class MonitorServiceTests(unittest.TestCase):
         service = MonitorService(failing_scan, interval=30)
 
         try:
-            service.start(["test_public_wallet"])
+            service.start(["11111111111111111111111111111111"])
 
             self.assertTrue(
                 scan_started.wait(timeout=3),
@@ -122,7 +123,7 @@ class MonitorServiceTests(unittest.TestCase):
             return []
 
         service = MonitorService(slow_scan, interval=30)
-        service.start(["test_public_wallet"])
+        service.start(["11111111111111111111111111111111"])
         self.assertTrue(scan_started.wait(timeout=2))
         release_scan.set()
 
@@ -148,6 +149,14 @@ class MonitorServiceTests(unittest.TestCase):
     def test_rejects_non_callable_scan_function(self):
         with self.assertRaises(ValueError):
             MonitorService(None)
+
+    def test_rejects_invalid_solana_wallet_address(self):
+        service = MonitorService(lambda address: [], interval=30)
+        try:
+            with self.assertRaises(ValueError):
+                service.start(["not-a-solana-address"])
+        finally:
+            service.stop()
 
     def test_rejects_non_list_wallet_addresses(self):
         service = MonitorService(lambda address: [], interval=30)
@@ -198,7 +207,7 @@ class MonitorServiceTests(unittest.TestCase):
         previous_worker = None
 
         try:
-            service.start(["test_public_wallet"])
+            service.start(["11111111111111111111111111111111"])
 
             self.assertTrue(
                 first_scan_started.wait(timeout=3),
@@ -217,7 +226,7 @@ class MonitorServiceTests(unittest.TestCase):
             release_timer.daemon = True
             release_timer.start()
 
-            service.start(["test_public_wallet"])
+            service.start(["11111111111111111111111111111111"])
 
             self.assertIsNotNone(previous_worker)
             self.assertFalse(

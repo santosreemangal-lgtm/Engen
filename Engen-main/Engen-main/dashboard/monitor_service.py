@@ -162,7 +162,7 @@ class MonitorService:
                                     }
                                 )
 
-                    except Exception as error:
+                    except Exception:
                         with self._lock:
                             if address in self._wallets:
                                 self._wallets[address].update(

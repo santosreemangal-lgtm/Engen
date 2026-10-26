@@ -13,6 +13,7 @@ from contextlib import nullcontext
 from urllib.parse import urlsplit
 from decimal import Decimal, InvalidOperation
 
+from engine.config import ConfigError, load_config
 from engine.latency import LatencyRecorder
 from engine.paper_trader import PaperTrader
 from engine.signature_store import SignatureStore
@@ -136,6 +137,16 @@ def build_parser():
 
 def validate_args(args, parser):
     """Validate command-line settings before initialization."""
+    try:
+        load_config()
+    except ConfigError:
+        # ConfigError contains only setting names and safe guidance, not
+        # environment dumps or credential values.
+        parser.error(
+            "Unsafe engine configuration. Keep ENGINE_MODE=read_only and "
+            "LIVE_TRADING_ENABLED=false."
+        )
+
     if not args.wallet.strip():
         parser.error("--wallet cannot be empty.")
 

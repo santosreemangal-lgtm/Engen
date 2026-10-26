@@ -7,6 +7,19 @@ from engine.transaction_processor import process_transaction_signature
 from engine.wallet_monitor import get_and_store_new_wallet_signatures
 
 
+def _include_signature_observation(result, item):
+    """Attach provider signature-list observations without treating them as proof."""
+    fields = {
+        "slot": item.get("slot"),
+        "confirmation_status": item.get("confirmationStatus"),
+        "signature_error": item.get("err"),
+        "block_time": item.get("blockTime"),
+    }
+    if any(value is not None for value in fields.values()):
+        return {**result, "signature_observation": fields}
+    return result
+
+
 def _unknown_signer_signal():
     """Return a conservative signal when signer ownership is unconfirmed."""
     return {
@@ -55,43 +68,36 @@ def process_new_signatures(
             result = process_transaction_signature(**processor_options)
         except ValueError:
             # Invalid signatures are rejected before any transaction RPC call.
-            results.append({
+            results.append(_include_signature_observation({
                 "signature": signature,
                 "available": False,
                 "metadata_complete": False,
                 "metadata_status": "invalid_signature",
                 "error": "Invalid transaction signature; RPC request was not sent.",
                 "retryable": False,
-            })
+            }, item))
             continue
         except SolanaRPCError as exc:
-            results.append({
+            results.append(_include_signature_observation({
                 "signature": signature,
                 "available": False,
                 "metadata_complete": False,
                 "metadata_status": "rpc_error",
                 "error": str(exc),
                 "retryable": True,
-            })
+            }, item))
             continue
 
         if result.get("available") is False:
-            results.append({
+            results.append(_include_signature_observation({
                 **result,
                 "retryable": True,
-            })
+            }, item))
             continue
 
         # Preserve provider observation metadata separately from transaction
         # metadata; a signature-list observation is not itself transaction proof.
-        observation_fields = {
-            "slot": item.get("slot"),
-            "confirmation_status": item.get("confirmationStatus"),
-            "signature_error": item.get("err"),
-            "block_time": item.get("blockTime"),
-        }
-        if any(value is not None for value in observation_fields.values()):
-            result = {**result, "signature_observation": observation_fields}
+        result = _include_signature_observation(result, item)
 
         # Keep only token and native SOL changes attributed to the
         # monitored wallet. Unknown owners are not attributed to it.

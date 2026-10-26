@@ -525,6 +525,32 @@
         const changeBox = document.createElement("div");
         changeBox.className = "token-balance-change";
 
+        const metadata = change.metadata && typeof change.metadata === "object"
+          ? change.metadata
+          : null;
+        const tokenName = metadata && typeof metadata.name === "string"
+          ? metadata.name.trim()
+          : "";
+        const tokenSymbol = metadata && typeof metadata.symbol === "string"
+          ? metadata.symbol.trim()
+          : "";
+
+        if (tokenName || tokenSymbol) {
+          addText(
+            changeBox,
+            "Token: " + [tokenName, tokenSymbol ? "(" + tokenSymbol + ")" : ""]
+              .filter(Boolean).join(" "),
+            "p"
+          );
+        } else {
+          addText(
+            changeBox,
+            "Token metadata: unavailable",
+            "p",
+            "muted"
+          );
+        }
+
         addText(
           changeBox,
           "Token mint: " + (change.mint || "unavailable"),

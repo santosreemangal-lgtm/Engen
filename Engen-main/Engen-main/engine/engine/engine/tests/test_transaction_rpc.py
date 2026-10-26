@@ -1,6 +1,7 @@
 
 import json
 import unittest
+import urllib.error
 from unittest.mock import MagicMock, patch
 
 from engine.solana_public import (
@@ -72,6 +73,27 @@ class TransactionRPCTests(unittest.TestCase):
 
         with self.assertRaises(SolanaRPCError):
             get_transaction("test_signature")
+
+
+    @patch("engine.solana_public.urllib.request.urlopen")
+    def test_network_error_does_not_expose_rpc_url_credentials(self, mock_urlopen):
+        mock_urlopen.side_effect = urllib.error.URLError(
+            "https://rpc.example/?api-key=super-secret"
+        )
+
+        with self.assertRaises(SolanaRPCError) as context:
+            get_transaction(
+                "test_signature",
+                rpc_url="https://rpc.example/?api-key=super-secret",
+            )
+
+        self.assertEqual(
+            str(context.exception),
+            "Public Solana RPC request failed.",
+        )
+        self.assertIsNone(context.exception.__cause__)
+        self.assertTrue(context.exception.__suppress_context__)
+        self.assertNotIn("super-secret", str(context.exception))
 
 
 if __name__ == "__main__":

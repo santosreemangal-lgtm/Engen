@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from engine.solana_public import DEFAULT_RPC_URL
+from engine.solana_public import DEFAULT_RPC_URL, SolanaRPCError
 from engine.transaction_monitor import (
     monitor_wallet,
     process_new_signatures,
@@ -393,6 +393,21 @@ class TransactionMonitorTests(unittest.TestCase):
         )[0]
         self.assertEqual(result["trade_signal"]["classification"], "UNKNOWN")
         self.assertFalse(result["confirmation_sufficient"])
+        self.assertTrue(result["retryable"])
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_rpc_failure_does_not_create_a_success_transaction_record(
+        self, mock_process,
+    ):
+        mock_process.side_effect = SolanaRPCError("Public Solana RPC request failed.")
+        result = process_new_signatures(
+            signatures=[{"signature": "some-signature"}],
+            wallet_address="wallet-watched",
+        )[0]
+        self.assertFalse(result["available"])
+        self.assertEqual(result["metadata_status"], "rpc_error")
+        self.assertNotIn("status", result)
+        self.assertNotIn("token_balance_changes", result)
         self.assertTrue(result["retryable"])
 
     @patch("engine.transaction_monitor.process_transaction_signature")

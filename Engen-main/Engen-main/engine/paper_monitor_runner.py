@@ -9,6 +9,7 @@ import json
 import logging
 import time
 from contextlib import nullcontext
+from urllib.parse import urlsplit
 from decimal import Decimal, InvalidOperation
 
 from engine.latency import LatencyRecorder
@@ -125,9 +126,25 @@ def validate_args(args, parser):
     if not args.signature_db.strip():
         parser.error("--signature-db cannot be empty.")
 
-    if not args.rpc_url.startswith(("https://", "http://")):
+    try:
+        parsed_rpc_url = urlsplit(args.rpc_url)
+        # Accessing .port also validates malformed port values.
+        port = parsed_rpc_url.port
+    except ValueError:
+        parser.error("--rpc-url is malformed.")
+
+    if (
+        parsed_rpc_url.scheme not in ("https", "http")
+        or not parsed_rpc_url.hostname
+        or any(character.isspace() for character in args.rpc_url)
+        or parsed_rpc_url.username is not None
+        or parsed_rpc_url.password is not None
+        or parsed_rpc_url.fragment
+        or (port is not None and not 1 <= port <= 65535)
+    ):
         parser.error(
-            "--rpc-url must start with http:// or https://"
+            "--rpc-url must be a valid HTTP(S) URL without user credentials "
+            "or a fragment."
         )
 
 

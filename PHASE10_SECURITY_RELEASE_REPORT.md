@@ -7,15 +7,24 @@
 
 ## Verified CI evidence
 
-GitHub Actions run: https://github.com/santosreemangal-lgtm/Engen/actions/runs/40380027812
+GitHub Actions run: https://github.com/santosreemangal-lgtm/Engen/actions/runs/40382166246
 
-On commit `dcfb75f2b1d6f554fe5b94c9a9b7c681a1b7a4dc`:
+On commit `98df43f6f9b21d65c1d040c7c65f9b988d77a084`:
 - Python compilation: passed.
-- Offline unit suite: **249 tests passed**.
+- Offline unit suite: **258 tests passed**.
 - Mock-analysis check: passed.
 - The run's job conclusion was success.
 
-The README and live-mode safety-gate documentation were updated after this code-test run; those later edits are documentation-only. Re-run CI after any subsequent code changes.
+After this run, architecture and README documentation were updated; these later edits are documentation-only. Re-run CI after any subsequent code changes.
+
+## Additional verified changes in the latest implementation batch
+
+- RPC endpoint validation now requires HTTPS for remote hosts; plain HTTP is accepted only for loopback. URLs containing embedded credentials and URL fragments are rejected.
+- RPC timeouts must be finite and greater than zero, with a 60-second maximum.
+- Invalid retry/pacing configuration fails clearly; retries remain bounded and backoff/pacing values have finite limits.
+- The endpoint can be configured using ENGEN_RPC_URL; the example file contains placeholders only and is not automatically loaded.
+- Added tests for unsafe RPC schemes, URL credentials/fragments, timeout bounds, invalid retry/pacing settings, and refusal before any network call.
+- Added ARCHITECTURE_DECISIONS.md covering responsibilities, data conventions, API contract, threat model, acceptance criteria, and explicitly unresolved design/deployment items.
 
 ## Phase 10 checklist evidence
 
@@ -40,14 +49,14 @@ The README and live-mode safety-gate documentation were updated after this code-
 | 287 Slippage/stale-price controls | Specified for future review | The safety gate requires maximum slippage and price-age limits; stale/missing quotes must fail closed. No live execution is enabled. |
 | 288 Emergency stop | Partial | Monitoring has stop/shutdown handling; there is no execution engine to halt. Immediate live-order blocking is not applicable until a separate live-mode design exists. |
 | 289 RPC outage cannot bypass execution safeguards | Partial | RPC outage/error handling is tested and no live execution path exists. A production execution fail-closed test is not applicable until such a path is proposed. |
-| 290 Unit tests for configuration/classification/storage/P&L | Implemented in test suite | Included in the 254-test passing offline suite; tests are not a guarantee of production correctness. |
+| 290 Unit tests for configuration/classification/storage/P&L | Implemented in test suite | Included in the 258-test passing offline suite; tests are not a guarantee of production correctness. |
 | 291 RPC/monitoring/API integration tests | Partial | Offline integration-style tests exist and pass; production RPC and deployed-environment integration are not certified by this run. |
 | 292 Regression tests for confirmed bugs | Partial | Security/API regression tests were added; cannot certify every historical bug has a regression test. |
-| 293 Full suite and failure review | Passed for recorded commit | 254 unit tests, compilation, and mock-analysis check passed in the linked run. |
+| 293 Full suite and failure review | Passed for recorded commit | 258 unit tests, compilation, and mock-analysis check passed in the linked run. |
 | 294 Startup/shutdown/restart recovery | Partial | Component-level persistence/shutdown tests exist; full process crash/restart recovery rehearsal remains. |
 | 295 Dashboard/backend integration | Partial | Automated API/dashboard checks exist; no user deployment environment was tested. |
 | 296 Dependencies/vulnerabilities/deployment | Partial | Current requirements use Python standard library; automated dependency vulnerability scanning and deployment review remain. |
-| 297 README setup/config/test/troubleshooting | Updated | README documents local run, API, authentication, network boundary, safety limitations, and validation commands. |
+| 297 README setup/config/test/troubleshooting | Updated | README documents local run, API, authentication, network boundary, RPC configuration, safety limitations, and corrected validation working directories. |
 | 298 Final security/operational readiness | **Not production-ready** | Multi-user authorization, rate limiting, deployment TLS/proxy verification, and further operational reviews remain. Live trading remains disabled. |
 | 299 Separate live readiness and explicit approval | Specified for future review | `LIVE_MODE_SAFETY_GATE.md` documents a separate threat model, exact-commit review, independent tests, and explicit owner approval; no approval is implied by this document. |
 | 300 Evidence-based project report | Drafted here | This report records verified tests, branch/PR status, limitations, and next steps; update it after future tests/deployment work. |

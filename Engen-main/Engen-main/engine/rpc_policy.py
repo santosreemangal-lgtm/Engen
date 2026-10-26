@@ -71,9 +71,12 @@ def _non_negative_int_env(name, default):
         return default
     try:
         value = int(raw)
-    except (TypeError, ValueError):
-        return default
-    return min(value, MAX_RPC_RETRIES) if value >= 0 else default
+    except (TypeError, ValueError) as exc:
+        raise ValueError("%s must be a non-negative integer." % name) from exc
+    if value < 0:
+        raise ValueError("%s must be a non-negative integer." % name)
+    # A large value is capped rather than allowed to create an unbounded retry loop.
+    return min(value, MAX_RPC_RETRIES)
 
 
 def _non_negative_float_env(name, default):
@@ -82,10 +85,10 @@ def _non_negative_float_env(name, default):
         return default
     try:
         value = float(raw)
-    except (TypeError, ValueError):
-        return default
-    if value < 0 or value != value or value == float("inf"):
-        return default
+    except (TypeError, ValueError) as exc:
+        raise ValueError("%s must be a finite number between 0 and 60." % name) from exc
+    if not math.isfinite(value) or value < 0 or value > 60:
+        raise ValueError("%s must be a finite number between 0 and 60." % name)
     return value
 
 

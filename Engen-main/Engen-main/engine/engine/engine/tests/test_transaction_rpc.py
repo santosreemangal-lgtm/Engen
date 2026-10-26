@@ -21,7 +21,7 @@ class TransactionRPCTests(unittest.TestCase):
 
         response = MagicMock()
         response.read.return_value = json.dumps(
-            {"result": transaction}
+            {"jsonrpc": "2.0", "id": 4, "result": transaction}
         ).encode("utf-8")
 
         mock_urlopen.return_value.__enter__.return_value = response
@@ -39,7 +39,7 @@ class TransactionRPCTests(unittest.TestCase):
     ):
         response = MagicMock()
         response.read.return_value = json.dumps(
-            {"result": None}
+            {"jsonrpc": "2.0", "id": 4, "result": None}
         ).encode("utf-8")
 
         mock_urlopen.return_value.__enter__.return_value = response
@@ -60,6 +60,8 @@ class TransactionRPCTests(unittest.TestCase):
     def test_rpc_error_raises_exception(self, mock_urlopen):
         response = MagicMock()
         response.read.return_value = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 4,
             "error": {
                 "code": -1,
                 "message": "Test error",
@@ -75,7 +77,7 @@ class TransactionRPCTests(unittest.TestCase):
     def test_invalid_result_is_rejected(self, mock_urlopen):
         response = MagicMock()
         response.read.return_value = json.dumps(
-            {"result": "invalid"}
+            {"jsonrpc": "2.0", "id": 4, "result": "invalid"}
         ).encode("utf-8")
 
         mock_urlopen.return_value.__enter__.return_value = response

@@ -21,7 +21,7 @@ Profiles receive generated UUIDs and start disabled. Names are bounded. Settings
 
 Transaction signatures are the primary key, so duplicate submissions are idempotent. A repeated signature cannot silently be reassigned to another source wallet. Amounts remain exact strings, token decimals are retained, and timestamps are stored as UTC ISO-8601 text. Classification evidence is persisted as JSON. Balance snapshots retain historical observations; the current marker identifies the latest observation explicitly marked current, while freshness/provenance remains visible to callers. Zero balances are retained as observations instead of deleting the token row. Missing metadata can be represented as `null` in optional transaction fields; balance snapshots require a mint and decimals.
 
-Portfolio aggregation must use current, sufficiently fresh balance observations only. Do not infer a zero balance from a missing snapshot, and do not treat a stale observation as current without an explicit freshness policy. Token metadata and display conversion belong in a separate presentation layer.
+The `portfolio_holdings` method aggregates current observations using exact decimal arithmetic and returns raw amounts, decimals, provenance, observation range, wallet count, and a nullable metadata field. An optional maximum age excludes stale snapshots. Zero balances are retained; a missing snapshot is not interpreted as zero. Token metadata lookup/display conversion belongs in a separate presentation layer.
 
 ## Update, deletion, backup and recovery (206–210)
 
@@ -31,4 +31,4 @@ Automated tests cover per-profile settings isolation, shared-source association,
 
 ## Task status
 
-Implemented in this branch: 181–185, 186–199, 200–202, 204, 206–209 (implementation/test coverage as described above). Partially implemented: 203 and 205, because reliable portfolio aggregation and UI handling for absent token metadata still need explicit integration. Task 210 remains pending until the complete test workflow and a backup/restore exercise pass. Do not mark a task complete based solely on this specification.
+Implemented in this branch: 181–185 (versioned initial schema; future schema changes need versioned migrations), 186–202, 203 (aggregation from stored current snapshots, with freshness filtering), 204, 206–209 (including SQLite online backup and restore test). Partially implemented: 205; missing metadata is represented as null by the storage API, but dashboard rendering is not yet integrated. Task 210 remains pending until the latest full test workflow passes and integrity/recovery checks are reviewed. Do not mark a task complete based solely on this specification.

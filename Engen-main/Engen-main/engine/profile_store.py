@@ -1,14 +1,35 @@
 """SQLite persistence for read-only Solana profile and portfolio data."""
 import json
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 DEFAULT_DB_PATH = Path("data/profiles.db")
 LABELS = {"BUY_CANDIDATE", "SELL_CANDIDATE", "TRANSFER", "UNKNOWN",
           "FAILED_TRANSACTION", "RENT", "LIQUIDITY_OPERATION"}
 STATUSES = {"observed", "confirmed", "failed", "pending", "unknown"}
+ADDRESS_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+
+def validate_public_address(value, field="wallet address"):
+    if not isinstance(value, str) or not ADDRESS_RE.fullmatch(value):
+        raise ValueError(f"Invalid Solana {field}.")
+    number = 0
+    for char in value:
+        number = number * 58 + BASE58.index(char)
+    decoded = bytearray()
+    while number:
+        number, remainder = divmod(number, 256)
+        decoded.append(remainder)
+    decoded.reverse()
+    decoded = bytearray(len(value) - len(value.lstrip("1"))) + decoded
+    if len(decoded) != 32:
+        raise ValueError(f"Invalid Solana {field}.")
+    return value
 
 
 def utc_now():
@@ -18,12 +39,27 @@ def utc_now():
 def exact_amount(value):
     if not isinstance(value, (str, int)) or isinstance(value, bool):
         raise ValueError("Amounts must be exact integer or decimal strings.")
-    value = str(value).strip()
-    if not value or any(c not in "0123456789.-" for c in value):
-        raise ValueError("Invalid exact amount.")
-    if value.count("-") > 1 or ("-" in value and not value.startswith("-")) or value.count(".") > 1:
-        raise ValueError("Invalid exact amount.")
+    text = str(value).strip()
+    try:
+        parsed = Decimal(text)
+    except InvalidOperation as exc:
+        raise ValueError("Invalid exact amount.") from exc
+    if not parsed.is_finite():
+        raise ValueError("Amount must be finite.")
+    return text
+
+
+def validate_timestamp(value):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Timestamp must be a non-empty ISO-8601 string.")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("Timestamp must be ISO-8601.") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("Timestamp must include a timezone.")
     return value
+
 
 
 class ProfileStore:
@@ -95,10 +131,8 @@ class ProfileStore:
     def create_profile(self, name, destination_public_address=None, settings=None):
         if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80:
             raise ValueError("Profile name must contain 1–80 characters.")
-        if destination_public_address is not None and (
-            not isinstance(destination_public_address, str) or not destination_public_address.strip()
-        ):
-            raise ValueError("Destination must be a public address string.")
+        if destination_public_address is not None:
+            validate_public_address(destination_public_address, "destination public address")
         settings = {} if settings is None else settings
         if not isinstance(settings, dict):
             raise ValueError("Settings must be an object.")
@@ -144,8 +178,7 @@ class ProfileStore:
             db.execute("UPDATE profiles SET updated_at=? WHERE profile_id=?",(now,profile_id))
 
     def associate_source_wallet(self, profile_id, wallet_address):
-        if not isinstance(wallet_address,str) or not wallet_address.strip():
-            raise ValueError("Source wallet address is required.")
+        validate_public_address(wallet_address)
         now = utc_now()
         with self.connect() as db:
             if not db.execute("SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
@@ -161,6 +194,7 @@ class ProfileStore:
                          profile_ids=(), observed_at=None):
         if not isinstance(signature,str) or not signature.strip():
             raise ValueError("Transaction signature is required.")
+        validate_public_address(source_wallet_address)
         if classification not in LABELS or status not in STATUSES:
             raise ValueError("Invalid transaction label or status.")
         if slot is not None and (not isinstance(slot,int) or isinstance(slot,bool) or slot<0):
@@ -168,8 +202,12 @@ class ProfileStore:
         if token_decimals is not None and (not isinstance(token_decimals,int) or isinstance(token_decimals,bool) or not 0<=token_decimals<=30):
             raise ValueError("Invalid token decimals.")
         amount = None if raw_amount is None else exact_amount(raw_amount)
+        if token_mint is not None:
+            validate_public_address(token_mint, "token mint")
         evidence_json = json.dumps(evidence or {},sort_keys=True,allow_nan=False)
-        now = observed_at or utc_now()
+        now = validate_timestamp(observed_at or utc_now())
+        if block_time is not None and (not isinstance(block_time, int) or isinstance(block_time, bool) or block_time < 0):
+            raise ValueError("Invalid block time.")
         with self.connect() as db:
             db.execute("INSERT OR IGNORE INTO source_wallets VALUES(?,?)",(source_wallet_address,utc_now()))
             db.execute("""INSERT OR IGNORE INTO transactions
@@ -195,13 +233,15 @@ class ProfileStore:
                                token_decimals, *, source, observed_at=None,
                                freshness_seconds=None, is_current=True):
         amount = exact_amount(raw_amount)
+        validate_public_address(wallet_address)
+        validate_public_address(token_mint, "token mint")
         if not isinstance(token_decimals,int) or isinstance(token_decimals,bool) or not 0<=token_decimals<=30:
             raise ValueError("Invalid token decimals.")
         if not isinstance(source,str) or not source.strip():
             raise ValueError("Balance source/provenance is required.")
         if freshness_seconds is not None and (not isinstance(freshness_seconds,int) or freshness_seconds<0):
             raise ValueError("Invalid freshness.")
-        sid, now = str(uuid.uuid4()), observed_at or utc_now()
+        sid, now = str(uuid.uuid4()), validate_timestamp(observed_at or utc_now())
         with self.connect() as db:
             if not db.execute("SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",(profile_id,)).fetchone():
                 raise ValueError("Profile not found.")

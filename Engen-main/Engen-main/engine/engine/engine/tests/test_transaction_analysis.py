@@ -54,6 +54,26 @@ class TransactionAnalysisTests(unittest.TestCase):
         self.assertEqual(result["account_count"], 1)
         self.assertIsNotNone(result["error"])
 
+    def test_preserves_program_and_instruction_context(self):
+        transaction = {
+            "slot": 99,
+            "transaction": {
+                "message": {
+                    "accountKeys": ["wallet_A", "TOKEN_PROGRAM"],
+                    "instructions": [{
+                        "programIdIndex": 1,
+                        "parsed": {"type": "transfer"},
+                        "stackHeight": 1,
+                    }],
+                },
+            },
+            "meta": {"err": None, "fee": 5000},
+        }
+        result = analyze_transaction(transaction)
+        self.assertEqual(result["program_ids"], ["TOKEN_PROGRAM"])
+        self.assertEqual(result["instructions"][0]["program_id"], "TOKEN_PROGRAM")
+        self.assertEqual(result["instructions"][0]["parsed_type"], "transfer")
+
     def test_missing_metadata_returns_unavailable(self):
         result = analyze_transaction({"slot": 123})
 

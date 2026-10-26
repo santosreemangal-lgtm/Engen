@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 
 import engine.paper_monitor_runner as runner
 from engine.paper_trader import PaperTrader
+from engine.profile_store import ProfileStore
 from engine.signature_store import SignatureStore
 
 
@@ -122,6 +123,64 @@ class PaperMonitorRunnerTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self._validate_rpc_url("https://rpc.example.com:99999")
 
+
+    def test_profile_mode_uses_isolated_databases_and_profile_risk_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profile_db = root / "profiles.db"
+            data_root = root / "profile-data"
+            store = ProfileStore(profile_db)
+            profile_id = store.create_profile(
+                "Wallet A",
+                settings={"paper_trading": {
+                    "initial_quote_balance": "250",
+                    "max_position_pct": 20,
+                    "max_open_positions": 3,
+                }},
+            )
+            store.update_profile(profile_id, status="active")
+            store.associate_source_wallet(profile_id, TEST_WALLET)
+
+            parser = runner.build_parser()
+            args = parser.parse_args([
+                "--wallet", TEST_WALLET,
+                "--quote-mint", USDT_MINT,
+                "--profile-id", profile_id,
+            ])
+            with patch.dict(os.environ, {
+                "PROFILE_STORE_DB": str(profile_db),
+                "PROFILE_DATA_DIR": str(data_root),
+            }):
+                runner.configure_profile_args(args, parser)
+
+            expected_dir = data_root / profile_id
+            self.assertEqual(args.paper_db, str(expected_dir / "paper_trading.db"))
+            self.assertEqual(args.signature_db, str(expected_dir / "signatures.db"))
+            self.assertEqual(args.paper_balance, "250")
+            self.assertEqual(args.profile_risk_limits, {
+                "max_position_pct": "20",
+                "max_open_positions": 3,
+            })
+
+    def test_profile_mode_rejects_wallet_not_associated_with_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profile_db = root / "profiles.db"
+            store = ProfileStore(profile_db)
+            profile_id = store.create_profile("Wallet B")
+            store.update_profile(profile_id, status="active")
+
+            parser = runner.build_parser()
+            args = parser.parse_args([
+                "--wallet", TEST_WALLET,
+                "--quote-mint", USDT_MINT,
+                "--profile-id", profile_id,
+            ])
+            with patch.dict(os.environ, {"PROFILE_STORE_DB": str(profile_db)}):
+                with self.assertRaises(SystemExit):
+                    runner.configure_profile_args(args, parser)
+
+            self.assertFalse((root / "profiles" / profile_id / "paper_trading.db").exists())
 
     def test_runner_starts_paper_only_with_persistent_usdt_balance(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -6,6 +6,7 @@ on:
     branches: ["main"]
     paths:
       - "Engen-main/Engen-main/engine/**"
+      - "Engen-main/Engen-main/tools/**"
       - ".github/workflows/rpc-benchmark.yml"
 
 permissions:
@@ -35,7 +36,6 @@ jobs:
           import os
           import time
           import urllib.request
-          import urllib.error
           from datetime import datetime, timezone
 
           endpoint = os.environ["SOLANA_RPC_URL"]
@@ -96,7 +96,6 @@ jobs:
                   "p99_ms": round(nr(0.99), 3),
               }
 
-          # Small, bounded read-only sample sizes to avoid overloading public RPC.
           for method, params, count, label in [
               ("getHealth", [], 10, "rpc.getHealth"),
               ("getSlot", [], 20, "rpc.getSlot"),
@@ -110,7 +109,6 @@ jobs:
                   time.sleep(0.15)
               summarize(label, samples)
 
-          # Fetch up to five recent transaction details, each once.
           signatures_result, _ = rpc(
               "getSignaturesForAddress",
               [wallet, {"limit": 5, "commitment": "confirmed"}],
@@ -146,11 +144,24 @@ jobs:
               raise SystemExit("Benchmark failed: no successful RPC samples.")
           PY
 
+      - name: Collect up to five real transactions for independent review (read-only)
+        working-directory: Engen-main/Engen-main
+        run: python tools/collect_wallet_transactions.py
+
       - name: Upload benchmark report
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: solana-rpc-benchmark-report
           path: rpc-benchmark-report.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload raw transaction review sample (public data only)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: solana-transaction-review-sample
+          path: Engen-main/Engen-main/transaction-validation-sample/*
           if-no-files-found: ignore
           retention-days: 14

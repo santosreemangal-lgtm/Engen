@@ -67,6 +67,22 @@ class RPCPolicyTests(unittest.TestCase):
             post_json_rpc({"method": "getHealth"}, "http://rpc.example", 2)
         mock_urlopen.assert_not_called()
 
+    def test_invalid_rpc_retry_configuration_fails_clearly(self):
+        for name, value in (
+            ("ENGEN_RPC_RETRIES", "many"),
+            ("ENGEN_RPC_RETRIES", "-1"),
+            ("ENGEN_RPC_BACKOFF_SECONDS", "NaN"),
+            ("ENGEN_RPC_MIN_INTERVAL_SECONDS", "61"),
+        ):
+            with self.subTest(name=name, value=value):
+                with patch.dict(os.environ, {name: value}):
+                    with self.assertRaises(ValueError):
+                        post_json_rpc(
+                            {"method": "getHealth"},
+                            "https://rpc.example",
+                            2,
+                        )
+
     @patch("engine.rpc_policy._pace_requests")
     @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_returns_json_rpc_response(self, mock_urlopen, _pace):

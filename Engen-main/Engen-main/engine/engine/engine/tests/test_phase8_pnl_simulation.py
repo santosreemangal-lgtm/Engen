@@ -13,8 +13,14 @@ MINT = "TOKEN_A"
 QUOTE = "USD_STABLE"
 
 
-def price(value="10", timestamp=NOW, source="test-price-feed"):
-    return MarketPrice(MINT, Decimal(value), "USD", source, timestamp)
+def price(value="10", timestamp=NOW, source="test-price-feed",
+          liquidity_usd="50000", liquidity_timestamp=NOW):
+    return MarketPrice(
+        MINT, Decimal(value), "USD", source, timestamp,
+        liquidity_usd=liquidity_usd,
+        liquidity_source="test-liquidity-feed" if liquidity_usd is not None else None,
+        liquidity_observed_at=liquidity_timestamp if liquidity_usd is not None else None,
+    )
 
 
 class PnLTests(unittest.TestCase):
@@ -167,6 +173,47 @@ class PaperSimulatorTests(unittest.TestCase):
         simulator.execute_order(order["order_id"], price(), now=NOW)
         self.assertEqual(len(simulator.fills), 1)
         self.assertEqual(len(simulator.orders), 1)
+
+    def test_missing_liquidity_is_rejected_by_default(self):
+        simulator = self.make_simulator()
+        order = self.create(simulator)
+        result = simulator.execute_order(
+            order["order_id"], price(liquidity_usd=None), now=NOW
+        )
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertIn("Liquidity data unavailable", result["reason"])
+        self.assertEqual(simulator.fills, [])
+
+    def test_stale_liquidity_is_rejected(self):
+        simulator = self.make_simulator()
+        order = self.create(simulator)
+        result = simulator.execute_order(
+            order["order_id"], price(liquidity_timestamp="2026-10-26T11:00:00Z"),
+            now=NOW,
+        )
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertIn("Liquidity data is stale", result["reason"])
+        self.assertEqual(simulator.fills, [])
+
+    def test_low_liquidity_is_rejected(self):
+        simulator = self.make_simulator()
+        order = self.create(simulator)
+        result = simulator.execute_order(
+            order["order_id"], price(liquidity_usd="9999.99"), now=NOW,
+            min_liquidity_usd="10000",
+        )
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertIn("below the configured USD minimum", result["reason"])
+        self.assertEqual(simulator.fills, [])
+
+    def test_sufficient_fresh_liquidity_allows_paper_fill(self):
+        simulator = self.make_simulator()
+        order = self.create(simulator)
+        result = simulator.execute_order(
+            order["order_id"], price(liquidity_usd="10000"), now=NOW,
+            min_liquidity_usd="10000",
+        )
+        self.assertEqual(result["status"], "FILLED")
 
     def test_insufficient_balance_is_rejected(self):
         simulator = PaperSimulator({QUOTE: "1"})

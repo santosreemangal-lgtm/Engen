@@ -23,3 +23,15 @@ These are operating-environment boundaries, not a claim that separate deployment
 - Any truthy/unknown `LIVE_TRADING_ENABLED` value is rejected. Live trading is not implemented.
 - The public RPC endpoint used by the paper runner is selected with `--rpc-url`; do not assume `SOLANA_RPC_URL` changes the runner's endpoint.
 - Never print the full environment or include credentialed RPC URLs in errors.
+
+## Public RPC retry and pacing controls
+
+The shared read-only RPC transport reads these optional process environment variables:
+
+- `ENGEN_RPC_RETRIES`: additional attempts after the first request; default `2`. Use a non-negative integer.
+- `ENGEN_RPC_BACKOFF_SECONDS`: exponential backoff base in seconds; default `0.5`. The wait grows by attempt (base, 2×base, ...).
+- `ENGEN_RPC_MIN_INTERVAL_SECONDS`: minimum process-wide gap between outbound requests; default `0.1` seconds.
+
+Invalid or negative values fall back to the safe defaults. HTTP 429 and 5xx responses, plus transport/network failures, are retried within the configured bound. Invalid JSON responses and non-retryable HTTP errors are not retried. Error messages intentionally omit the configured RPC URL. These controls reduce bursts but do not replace an RPC provider's published quota or guarantee availability.
+
+`.env.example` remains a reference only and is not automatically loaded. Set these values in the process/Codespaces environment to override defaults.

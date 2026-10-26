@@ -224,6 +224,8 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nDashboard backend stopping.")
     finally:
-        monitor_service.stop()
+        shutdown_status = monitor_service.stop_and_wait(timeout=15)
+        if not shutdown_status["worker_stopped"]:
+            print("WARNING: monitor worker did not stop within the shutdown timeout.")
         server.server_close()
         print("Dashboard backend stopped.")

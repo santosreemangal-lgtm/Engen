@@ -60,6 +60,7 @@ def process_transaction_signature(
             "metadata_complete": False,
             "metadata_status": "invalid_slot",
             "error": "Transaction slot metadata is invalid.",
+            "raw_transaction": transaction,
         }
 
     transaction_data = transaction.get("transaction")

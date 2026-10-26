@@ -26,6 +26,7 @@ def process_new_signatures(
     wallet_address=None,
     store=None,
     defer_processed=False,
+    latency_recorder=None,
 ):
     """Analyze signatures and update persistent processing status."""
 
@@ -44,11 +45,14 @@ def process_new_signatures(
             continue
 
         try:
-            result = process_transaction_signature(
-                signature=signature,
-                rpc_url=rpc_url,
-                timeout=timeout,
-            )
+            processor_options = {
+                "signature": signature,
+                "rpc_url": rpc_url,
+                "timeout": timeout,
+            }
+            if latency_recorder is not None:
+                processor_options["latency_recorder"] = latency_recorder
+            result = process_transaction_signature(**processor_options)
         except SolanaRPCError as exc:
             results.append({
                 "signature": signature,
@@ -129,6 +133,7 @@ def monitor_wallet(
     rpc_url=DEFAULT_RPC_URL,
     timeout=10,
     defer_processed=False,
+    latency_recorder=None,
 ):
     """Monitor a public wallet and retry pending transactions."""
 
@@ -146,14 +151,17 @@ def monitor_wallet(
         timeout=timeout,
     )
 
-    return process_new_signatures(
-        signatures=pending_signatures,
-        rpc_url=rpc_url,
-        timeout=timeout,
-        wallet_address=wallet_address,
-        store=store,
-        defer_processed=defer_processed,
-    )
+    monitor_options = {
+        "signatures": pending_signatures,
+        "rpc_url": rpc_url,
+        "timeout": timeout,
+        "wallet_address": wallet_address,
+        "store": store,
+        "defer_processed": defer_processed,
+    }
+    if latency_recorder is not None:
+        monitor_options["latency_recorder"] = latency_recorder
+    return process_new_signatures(**monitor_options)
 
 
 if __name__ == "__main__":

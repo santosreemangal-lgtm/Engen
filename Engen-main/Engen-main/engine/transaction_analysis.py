@@ -118,7 +118,47 @@ def analyze_transaction(transaction):
             "program": instruction.get("program"),
             "parsed_type": parsed_type if isinstance(parsed_type, str) else None,
             "stack_height": instruction.get("stackHeight"),
+            "source": "message",
         })
+
+    # Inner instructions live in transaction metadata and are grouped by the
+    # outer instruction index. Keep that context instead of flattening it away.
+    inner_groups = meta.get("innerInstructions", [])
+    if isinstance(inner_groups, list):
+        for group in inner_groups:
+            if not isinstance(group, Mapping):
+                continue
+            outer_index = group.get("index")
+            inner_items = group.get("instructions", [])
+            if not isinstance(inner_items, list):
+                continue
+            for inner_index, instruction in enumerate(inner_items):
+                if not isinstance(instruction, Mapping):
+                    continue
+                program_id = instruction.get("programId")
+                program_id_index = instruction.get("programIdIndex")
+                if (
+                    not isinstance(program_id, str)
+                    and isinstance(program_id_index, int)
+                    and not isinstance(program_id_index, bool)
+                    and 0 <= program_id_index < len(account_keys)
+                ):
+                    program_id = normalize_pubkey(account_keys[program_id_index])
+                if isinstance(program_id, str) and program_id:
+                    program_ids.append(program_id)
+                parsed = instruction.get("parsed")
+                parsed_type = (
+                    parsed.get("type") if isinstance(parsed, Mapping) else None
+                )
+                normalized_instructions.append({
+                    "index": outer_index,
+                    "inner_index": inner_index,
+                    "program_id": program_id if isinstance(program_id, str) else None,
+                    "program": instruction.get("program"),
+                    "parsed_type": parsed_type if isinstance(parsed_type, str) else None,
+                    "stack_height": instruction.get("stackHeight"),
+                    "source": "inner",
+                })
 
     return {
         "available": True,

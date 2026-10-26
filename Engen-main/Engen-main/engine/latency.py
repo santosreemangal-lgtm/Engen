@@ -55,9 +55,8 @@ class LatencyRecorder:
 
     @staticmethod
     def _percentile(sorted_samples, percentile):
-        if len(sorted_samples) == 1:
-            return sorted_samples[0]
-        index = round((len(sorted_samples) - 1) * percentile)
+        # Nearest-rank percentile: rank = ceil(p * n), converted to zero-based.
+        index = max(0, math.ceil(len(sorted_samples) * percentile) - 1)
         return sorted_samples[index]
 
     def summary(self):

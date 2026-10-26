@@ -16,6 +16,42 @@ TEST_WALLET = "PublicWalletTestAddress"
 
 class PaperMonitorRunnerTests(unittest.TestCase):
 
+    def _validate_rpc_url(self, rpc_url):
+        parser = runner.build_parser()
+        args = parser.parse_args([
+            "--wallet", TEST_WALLET,
+            "--quote-mint", USDT_MINT,
+            "--rpc-url", rpc_url,
+        ])
+        runner.validate_args(args, parser)
+
+    def test_rpc_url_accepts_valid_https_endpoint(self):
+        self._validate_rpc_url("https://api.mainnet-beta.solana.com")
+
+    def test_rpc_url_accepts_local_http_endpoint(self):
+        self._validate_rpc_url("http://127.0.0.1:8899")
+
+    def test_rpc_url_rejects_missing_host(self):
+        with self.assertRaises(SystemExit):
+            self._validate_rpc_url("https:///rpc")
+
+    def test_rpc_url_rejects_unsupported_scheme(self):
+        with self.assertRaises(SystemExit):
+            self._validate_rpc_url("ftp://rpc.example.com")
+
+    def test_rpc_url_rejects_user_credentials(self):
+        with self.assertRaises(SystemExit):
+            self._validate_rpc_url("https://user:password@rpc.example.com")
+
+    def test_rpc_url_rejects_fragments(self):
+        with self.assertRaises(SystemExit):
+            self._validate_rpc_url("https://rpc.example.com/rpc#fragment")
+
+    def test_rpc_url_rejects_invalid_port(self):
+        with self.assertRaises(SystemExit):
+            self._validate_rpc_url("https://rpc.example.com:99999")
+
+
     def test_runner_starts_paper_only_with_persistent_usdt_balance(self):
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "paper.db"

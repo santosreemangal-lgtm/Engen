@@ -311,6 +311,17 @@
       </div>
     </section>
 
+    <section class="panel" aria-labelledby="simulation-heading">
+      <h2 id="simulation-heading">Paper Trading — Simulated Only</h2>
+      <p class="muted">These virtual balances and fills are separate from real wallet balances. This panel never submits transactions.</p>
+      <div id="simulation-status" class="muted" aria-live="polite">Loading paper simulation report...</div>
+      <div id="simulation-balances"></div>
+      <h3>Recent simulated orders</h3>
+      <div id="simulation-orders"></div>
+      <h3>Recent simulated fills</h3>
+      <div id="simulation-fills"></div>
+    </section>
+
     <section class="panel">
       <h2>Your wallets</h2>
 
@@ -353,6 +364,10 @@
     const monitorResults = document.getElementById("monitor-results");
     const startButton = document.getElementById("start-monitoring");
     const stopButton = document.getElementById("stop-monitoring");
+    const simulationStatus = document.getElementById("simulation-status");
+    const simulationBalances = document.getElementById("simulation-balances");
+    const simulationOrders = document.getElementById("simulation-orders");
+    const simulationFills = document.getElementById("simulation-fills");
 
     const ADDRESS_PATTERN =
       /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -723,6 +738,62 @@
       renderMonitorResults();
     }
 
+    function renderSimulationReport(data) {
+      simulationBalances.replaceChildren();
+      simulationOrders.replaceChildren();
+      simulationFills.replaceChildren();
+
+      simulationStatus.textContent =
+        "Mode: PAPER_SIMULATION | Real trading: disabled | Transaction broadcast: disabled";
+
+      if (data.error) {
+        addText(simulationStatus, data.error);
+      }
+      if (!data.database_available) {
+        addText(simulationBalances, "No paper-simulation database exists yet.", "p", "empty");
+      } else {
+        const balances = data.balances && typeof data.balances === "object"
+          ? data.balances
+          : {};
+        const entries = Object.entries(balances);
+        if (entries.length === 0) {
+          addText(simulationBalances, "No simulated balances recorded.", "p", "empty");
+        }
+        entries.forEach(([mint, amount]) => {
+          addText(simulationBalances, mint + ": " + amount + " (simulated)", "p", "mono");
+        });
+      }
+
+      const orders = Array.isArray(data.orders) ? data.orders : [];
+      if (orders.length === 0) addText(simulationOrders, "No simulated orders.", "p", "empty");
+      orders.forEach(order => addText(
+        simulationOrders,
+        [order.side, order.quantity + " " + order.asset_mint, order.status,
+         order.reason || ""].filter(Boolean).join(" | "), "p"
+      ));
+
+      const fills = Array.isArray(data.fills) ? data.fills : [];
+      if (fills.length === 0) addText(simulationFills, "No simulated fills.", "p", "empty");
+      fills.forEach(fill => addText(
+        simulationFills,
+        [fill.quantity + " " + fill.asset_mint,
+         "reference " + fill.reference_price,
+         "execution " + fill.execution_price,
+         "fee " + fill.fee + " " + fill.currency,
+         "network cost " + fill.network_cost + " " + fill.currency,
+         "price age " + fill.price_age_seconds + "s",
+         "source " + fill.price_source].join(" | "), "p"
+      ));
+    }
+
+    async function loadSimulationReport() {
+      try {
+        renderSimulationReport(await apiRequest("/api/paper-simulation"));
+      } catch (error) {
+        simulationStatus.textContent = "Paper simulation report unavailable: " + error.message;
+      }
+    }
+
     async function loadMonitorStatus() {
       try {
         const data = await apiRequest("/api/monitor");
@@ -752,6 +823,7 @@
         message.textContent = "Connected. Saved wallet list loaded.";
 
         await loadMonitorStatus();
+        await loadSimulationReport();
       } catch (error) {
         backendReady = false;
         addButton.disabled = true;

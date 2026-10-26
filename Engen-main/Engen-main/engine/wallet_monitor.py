@@ -1,6 +1,7 @@
 """Read-only monitoring of public Solana wallet signatures."""
 
 import json
+import urllib.error
 import urllib.request
 
 from engine.solana_public import (
@@ -67,9 +68,15 @@ def get_wallet_signatures(
             data = json.loads(
                 response.read().decode("utf-8")
             )
-    except Exception as exc:
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        OSError,
+        ValueError,
+    ) as exc:
+        # Do not expose the configured RPC URL or credentials in error text.
         raise SolanaRPCError(
-            f"Failed to fetch wallet signatures: {exc}"
+            "Failed to fetch wallet signatures from the configured RPC endpoint."
         ) from exc
 
     if not isinstance(data, dict):

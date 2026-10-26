@@ -54,6 +54,7 @@ class SignatureStore:
                 migrations = {
                     "status": "TEXT NOT NULL DEFAULT 'processed'",
                     "attempts": "INTEGER NOT NULL DEFAULT 0",
+                    "slot": "INTEGER",
                     "last_checked_at": "TEXT",
                     "error_stage": "TEXT",
                     "error_code": "TEXT",
@@ -65,6 +66,15 @@ class SignatureStore:
                             "ALTER TABLE seen_signatures ADD COLUMN "
                             + column + " " + definition
                         )
+
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS wallet_positions (
+                        wallet_address TEXT PRIMARY KEY,
+                        slot INTEGER,
+                        signature TEXT,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
 
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS transaction_records (
@@ -148,19 +158,23 @@ class SignatureStore:
 
         return row[0] if row else None
 
-    def save(self, wallet_address, signature):
+    def save(self, wallet_address, signature, slot=None):
         self._validate_wallet(wallet_address)
         self._validate_signature(signature)
+        if slot is not None and (
+            not isinstance(slot, int) or isinstance(slot, bool) or slot < 0
+        ):
+            raise ValueError("Slot must be a non-negative integer.")
 
         with closing(self._connect()) as connection:
             with connection:
                 cursor = connection.execute(
                     """
                     INSERT OR IGNORE INTO seen_signatures
-                        (wallet_address, signature, status)
-                    VALUES (?, ?, 'pending')
+                        (wallet_address, signature, status, slot)
+                    VALUES (?, ?, 'pending', ?)
                     """,
-                    (wallet_address, signature),
+                    (wallet_address, signature, slot),
                 )
                 saved = cursor.rowcount == 1
 
@@ -201,6 +215,24 @@ class SignatureStore:
                        WHERE wallet_address = ? AND signature = ?""",
                     (wallet_address, signature),
                 )
+                position = connection.execute(
+                    "SELECT slot FROM seen_signatures WHERE wallet_address = ? AND signature = ?",
+                    (wallet_address, signature),
+                ).fetchone()
+                if position and position[0] is not None:
+                    connection.execute(
+                        """INSERT INTO wallet_positions (wallet_address, slot, signature)
+                           VALUES (?, ?, ?)
+                           ON CONFLICT(wallet_address) DO UPDATE SET
+                             slot = CASE
+                               WHEN wallet_positions.slot IS NULL OR excluded.slot >= wallet_positions.slot
+                               THEN excluded.slot ELSE wallet_positions.slot END,
+                             signature = CASE
+                               WHEN wallet_positions.slot IS NULL OR excluded.slot >= wallet_positions.slot
+                               THEN excluded.signature ELSE wallet_positions.signature END,
+                             updated_at = CURRENT_TIMESTAMP""",
+                        (wallet_address, position[0], signature),
+                    )
 
         return cursor.rowcount == 1
 
@@ -327,6 +359,18 @@ class SignatureStore:
             ).fetchall()
 
         return [row[0] for row in rows]
+
+
+    def get_position(self, wallet_address):
+        self._validate_wallet(wallet_address)
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT slot, signature, updated_at FROM wallet_positions WHERE wallet_address = ?",
+                (wallet_address,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {"slot": row[0], "signature": row[1], "updated_at": row[2]}
 
     def get_seen_signatures(self, wallet_address, limit=1000):
         if not isinstance(limit, int) or isinstance(limit, bool):

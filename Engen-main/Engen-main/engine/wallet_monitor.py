@@ -140,26 +140,53 @@ def get_and_store_new_wallet_signatures(
 
     # The first scan is historical baseline only; never create trade signals.
     if not store.has_baseline(wallet_address):
-        valid_signatures = [
-            item["signature"] for item in signatures
-            if isinstance(item, dict)
-            and is_valid_transaction_signature(item.get("signature"))
-        ]
-        store.save_many(wallet_address, valid_signatures)
-        for signature in valid_signatures:
+        for item in signatures:
+            if not isinstance(item, dict):
+                continue
+            signature = item.get("signature")
+            if not is_valid_transaction_signature(signature):
+                continue
+            store.save(wallet_address, signature, slot=item.get("slot"))
             store.mark_processed(wallet_address, signature)
         store.mark_baseline(wallet_address)
         return []
 
+    # Poll newest-first and page backwards until the last successfully
+    # processed signature is found. The page cap bounds provider load while
+    # allowing recovery after a short outage or a busy source wallet.
+    position = store.get_position(wallet_address)
+    anchor_signature = position.get("signature") if position else None
     records_by_signature = {}
-    for item in signatures:
-        if not isinstance(item, dict):
-            continue
-        signature = item.get("signature")
-        if not is_valid_transaction_signature(signature):
-            continue
-        records_by_signature[signature] = item
-        store.save(wallet_address, signature)
+    pages = 0
+    page = signatures
+    while True:
+        pages += 1
+        anchor_found = False
+        for item in page:
+            if not isinstance(item, dict):
+                continue
+            signature = item.get("signature")
+            if not is_valid_transaction_signature(signature):
+                continue
+            records_by_signature[signature] = item
+            store.save(wallet_address, signature, slot=item.get("slot"))
+            if anchor_signature and signature == anchor_signature:
+                anchor_found = True
+        if anchor_found or len(page) < limit or pages >= 5 or not page:
+            break
+        next_before = page[-1].get("signature") if isinstance(page[-1], dict) else None
+        if not is_valid_transaction_signature(next_before):
+            break
+        page_options = {
+            "wallet_address": wallet_address,
+            "limit": limit,
+            "rpc_url": rpc_url,
+            "timeout": timeout,
+            "before": next_before,
+        }
+        if latency_recorder is not None:
+            page_options["latency_recorder"] = latency_recorder
+        page = get_wallet_signatures(**page_options)
 
     pending_signatures = store.get_pending_signatures(
         wallet_address, limit=limit

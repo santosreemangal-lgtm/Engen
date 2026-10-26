@@ -280,6 +280,90 @@
       line-height: 1.8;
     }
 
+
+
+    textarea, select {
+      width: 100%;
+      min-width: 0;
+      padding: 12px;
+      color: var(--text);
+      background: #101114;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font: inherit;
+    }
+
+    textarea:focus-visible, select:focus-visible {
+      outline: 3px solid #c4b5fd;
+      outline-offset: 3px;
+    }
+
+    .profile-card, .history-item {
+      margin-top: 14px;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #101114;
+      min-width: 0;
+    }
+
+    .profile-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .profile-field {
+      min-width: 0;
+      margin-top: 12px;
+    }
+
+    .profile-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .profile-actions button, .pagination button {
+      min-height: 40px;
+    }
+
+    .secondary-button {
+      color: var(--text);
+      background: #30313a;
+    }
+
+    .danger-button {
+      color: #fecaca;
+      background: #321d24;
+    }
+
+    .history-meta {
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+      line-height: 1.7;
+    }
+
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    @media (max-width: 520px) {
+      .profile-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .pagination {
+        align-items: stretch;
+        flex-direction: column;
+      }
+    }
+
     @media (max-width: 520px) {
       body {
         padding: 24px 12px;
@@ -388,6 +472,87 @@
       </div>
     </section>
 
+
+    <section class="panel" aria-labelledby="profiles-heading">
+      <h2 id="profiles-heading">Destination Profiles</h2>
+      <p class="muted">Profiles store public destination addresses, source-wallet links, and isolated settings. Balance values are stored observations, not guaranteed live balances. Creating a profile does not enable monitoring or trading.</p>
+      <form id="profile-form">
+        <div class="profile-grid">
+          <div>
+            <label for="profile-name">Profile name</label>
+            <input id="profile-name" name="profile-name" maxlength="80" required>
+          </div>
+          <div>
+            <label for="profile-destination">Destination public address (optional)</label>
+            <input id="profile-destination" name="profile-destination" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+        <div class="profile-field">
+          <label for="profile-settings-json">Initial profile settings (JSON object)</label>
+          <textarea id="profile-settings-json" rows="3" required>{}</textarea>
+        </div>
+        <div class="profile-actions">
+          <button id="profile-create-button" type="submit" disabled>Create Profile</button>
+          <button id="profile-refresh-button" class="secondary-button" type="button" disabled>Refresh Profiles</button>
+        </div>
+      </form>
+      <p id="profile-message" role="status" aria-live="polite" class="muted">Loading profile storage…</p>
+      <div id="profile-list"><p class="empty">Profiles will appear here.</p></div>
+    </section>
+
+    <section class="panel" aria-labelledby="history-heading">
+      <h2 id="history-heading">Profile Transaction History</h2>
+      <p class="muted">Only stored transaction records are shown. UNKNOWN or incomplete classifications remain labeled honestly. Fee and valuation fields are not invented when the stored record does not provide them.</p>
+      <div class="profile-grid">
+        <div>
+          <label for="history-profile">Destination profile</label>
+          <select id="history-profile" disabled>
+            <option value="">No profiles available</option>
+          </select>
+        </div>
+        <div>
+          <label for="history-classification">Classification</label>
+          <select id="history-classification">
+            <option value="">All classifications</option>
+            <option value="BUY_CANDIDATE">BUY_CANDIDATE</option>
+            <option value="SELL_CANDIDATE">SELL_CANDIDATE</option>
+            <option value="TRANSFER">TRANSFER</option>
+            <option value="UNKNOWN">UNKNOWN</option>
+            <option value="FAILED_TRANSACTION">FAILED_TRANSACTION</option>
+            <option value="RENT">RENT</option>
+            <option value="LIQUIDITY_OPERATION">LIQUIDITY_OPERATION</option>
+          </select>
+        </div>
+        <div>
+          <label for="history-status">Transaction status</label>
+          <select id="history-status">
+            <option value="">All statuses</option>
+            <option value="observed">observed</option>
+            <option value="confirmed">confirmed</option>
+            <option value="failed">failed</option>
+            <option value="pending">pending</option>
+            <option value="unknown">unknown</option>
+          </select>
+        </div>
+        <div>
+          <label for="history-token-mint">Token mint filter (optional)</label>
+          <input id="history-token-mint" autocomplete="off" spellcheck="false" placeholder="Token mint public address">
+        </div>
+      </div>
+      <div class="profile-actions">
+        <button id="history-filter-button" type="button" disabled>Apply Filters</button>
+        <button id="history-reset-button" class="secondary-button" type="button">Reset Filters</button>
+      </div>
+      <p id="history-message" class="muted" role="status" aria-live="polite">Choose a profile to load history.</p>
+      <div id="history-list"><p class="empty">No transaction history loaded.</p></div>
+      <div class="pagination">
+        <button id="history-prev" class="secondary-button" type="button" disabled>Previous page</button>
+        <p id="history-page-label" class="muted" aria-live="polite">Page 0 of 0</p>
+        <button id="history-next" class="secondary-button" type="button" disabled>Next page</button>
+      </div>
+      <p class="muted">Stored transaction schema does not currently provide a verified fee value for each profile transaction. Realized P&amp;L is shown only in the separate paper-simulation panel; unrealized P&amp;L remains unavailable without a verified fresh market-price source.</p>
+    </section>
+
     <section class="panel" aria-labelledby="simulation-heading">
       <h2 id="simulation-heading">Paper Trading — Simulated Only</h2>
       <p class="muted">These virtual balances and fills are separate from real wallet balances. This panel never submits transactions.</p>
@@ -454,6 +619,30 @@
 
     const ADDRESS_PATTERN =
       /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+    let profiles = [];
+    let historyPage = 1;
+    let historyPages = 0;
+    const profileForm = document.getElementById("profile-form");
+    const profileNameInput = document.getElementById("profile-name");
+    const profileDestinationInput = document.getElementById("profile-destination");
+    const profileSettingsInput = document.getElementById("profile-settings-json");
+    const profileCreateButton = document.getElementById("profile-create-button");
+    const profileRefreshButton = document.getElementById("profile-refresh-button");
+    const profileMessage = document.getElementById("profile-message");
+    const profileList = document.getElementById("profile-list");
+    const historyProfile = document.getElementById("history-profile");
+    const historyClassification = document.getElementById("history-classification");
+    const historyStatus = document.getElementById("history-status");
+    const historyTokenMint = document.getElementById("history-token-mint");
+    const historyFilterButton = document.getElementById("history-filter-button");
+    const historyResetButton = document.getElementById("history-reset-button");
+    const historyMessage = document.getElementById("history-message");
+    const historyList = document.getElementById("history-list");
+    const historyPrev = document.getElementById("history-prev");
+    const historyNext = document.getElementById("history-next");
+    const historyPageLabel = document.getElementById("history-page-label");
+
 
     async function apiRequest(path, options = {}) {
       let response;
@@ -995,6 +1184,340 @@
       }
     }
 
+
+
+    async function postProfile(payload) {
+      return apiRequest("/api/profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+    }
+
+    function profileSelectOptions() {
+      const current = historyProfile.value;
+      historyProfile.replaceChildren();
+      if (!profiles.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No profiles available";
+        historyProfile.appendChild(option);
+        historyProfile.disabled = true;
+        historyFilterButton.disabled = true;
+        return;
+      }
+      profiles.forEach(profile => {
+        const option = document.createElement("option");
+        option.value = profile.profile_id;
+        option.textContent = profile.name + " (" + profile.status + ")";
+        historyProfile.appendChild(option);
+      });
+      historyProfile.disabled = false;
+      historyFilterButton.disabled = !backendReady;
+      if (profiles.some(profile => profile.profile_id === current)) {
+        historyProfile.value = current;
+      }
+    }
+
+    function renderProfiles() {
+      profileList.replaceChildren();
+      if (!profiles.length) {
+        addText(profileList, "No destination profiles yet. Create one above; it will start disabled.", "p", "empty");
+        return;
+      }
+      profiles.forEach(profile => {
+        const card = document.createElement("article");
+        card.className = "profile-card";
+        addText(card, profile.name || "Unnamed profile", "h3");
+        addText(card, "Profile ID: " + profile.profile_id, "p", "mono");
+        addText(card, "Status: " + (profile.status || "unknown") + " (profile status does not enable live trading)", "p", "muted");
+        addText(card, "Destination public address: " + (profile.destination_public_address || "Not configured"), "p", "mono");
+        addText(card, "Created: " + (profile.created_at || "unknown") + " | Updated: " + (profile.updated_at || "unknown"), "p", "history-meta");
+
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "Edit profile details and settings";
+        details.appendChild(summary);
+
+        const editForm = document.createElement("form");
+        editForm.className = "profile-field";
+        const nameLabel = document.createElement("label");
+        nameLabel.textContent = "Profile name";
+        const nameInput = document.createElement("input");
+        nameInput.value = profile.name || "";
+        nameInput.maxLength = 80;
+        nameInput.required = true;
+        nameLabel.appendChild(nameInput);
+        editForm.appendChild(nameLabel);
+        const destinationLabel = document.createElement("label");
+        destinationLabel.textContent = "Destination public address";
+        const destinationInput = document.createElement("input");
+        destinationInput.value = profile.destination_public_address || "";
+        destinationInput.autocomplete = "off";
+        destinationInput.spellcheck = false;
+        destinationLabel.appendChild(destinationInput);
+        editForm.appendChild(destinationLabel);
+        const settingsLabel = document.createElement("label");
+        settingsLabel.textContent = "Profile-specific settings (JSON object; no private keys or seed phrases)";
+        const settingsInput = document.createElement("textarea");
+        settingsInput.rows = 4;
+        settingsInput.value = JSON.stringify(profile.settings || {}, null, 2);
+        settingsLabel.appendChild(settingsInput);
+        editForm.appendChild(settingsLabel);
+        const statusLabel = document.createElement("label");
+        statusLabel.textContent = "Profile status";
+        const statusSelect = document.createElement("select");
+        ["disabled", "active"].forEach(status => {
+          const option = document.createElement("option");
+          option.value = status;
+          option.textContent = status;
+          statusSelect.appendChild(option);
+        });
+        statusSelect.value = profile.status === "active" ? "active" : "disabled";
+        statusLabel.appendChild(statusSelect);
+        editForm.appendChild(statusLabel);
+        const saveButton = document.createElement("button");
+        saveButton.type = "submit";
+        saveButton.textContent = "Save Profile";
+        saveButton.disabled = !backendReady;
+        editForm.appendChild(saveButton);
+        editForm.addEventListener("submit", async event => {
+          event.preventDefault();
+          if (!nameInput.value.trim() || nameInput.value.trim().length > 80) {
+            profileMessage.textContent = "Profile name must contain 1–80 characters.";
+            return;
+          }
+          const destination = destinationInput.value.trim();
+          if (destination && !ADDRESS_PATTERN.test(destination)) {
+            profileMessage.textContent = "Destination must be a valid-looking public address.";
+            return;
+          }
+          let settings;
+          try {
+            settings = JSON.parse(settingsInput.value);
+            if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+              throw new Error("Settings must be a JSON object.");
+            }
+          } catch (error) {
+            profileMessage.textContent = "Invalid settings JSON: " + error.message;
+            settingsInput.focus();
+            return;
+          }
+          saveButton.disabled = true;
+          try {
+            await postProfile({action: "update", profile_id: profile.profile_id,
+              name: nameInput.value.trim(),
+              destination_public_address: destination || undefined,
+              status: statusSelect.value});
+            await postProfile({action: "settings", profile_id: profile.profile_id, settings});
+            profileMessage.textContent = "Profile details and settings saved.";
+            await loadProfiles();
+          } catch (error) {
+            profileMessage.textContent = "Could not save profile: " + error.message;
+          } finally {
+            saveButton.disabled = !backendReady;
+          }
+        });
+        details.appendChild(editForm);
+        card.appendChild(details);
+
+        addText(card, "Source wallets", "h4");
+        if (!Array.isArray(profile.source_wallets) || profile.source_wallets.length === 0) {
+          addText(card, "No source wallets associated.", "p", "empty");
+        } else {
+          profile.source_wallets.forEach(address => addText(card, address, "p", "mono"));
+        }
+        const sourceForm = document.createElement("form");
+        sourceForm.className = "profile-field";
+        const sourceLabel = document.createElement("label");
+        sourceLabel.textContent = "Associate source public wallet";
+        const sourceInput = document.createElement("input");
+        sourceInput.autocomplete = "off";
+        sourceInput.spellcheck = false;
+        sourceInput.placeholder = "Public Solana wallet address";
+        sourceLabel.appendChild(sourceInput);
+        sourceForm.appendChild(sourceLabel);
+        const sourceButton = document.createElement("button");
+        sourceButton.type = "submit";
+        sourceButton.textContent = "Associate Source Wallet";
+        sourceButton.disabled = !backendReady;
+        sourceForm.appendChild(sourceButton);
+        sourceForm.addEventListener("submit", async event => {
+          event.preventDefault();
+          const address = sourceInput.value.trim();
+          if (!ADDRESS_PATTERN.test(address)) {
+            profileMessage.textContent = "Enter a valid-looking source wallet address.";
+            sourceInput.focus();
+            return;
+          }
+          sourceButton.disabled = true;
+          try {
+            await postProfile({action: "associate-source-wallet", profile_id: profile.profile_id, wallet_address: address});
+            profileMessage.textContent = "Source wallet association saved.";
+            await loadProfiles();
+          } catch (error) {
+            profileMessage.textContent = "Could not associate source wallet: " + error.message;
+          } finally {
+            sourceButton.disabled = !backendReady;
+          }
+        });
+        card.appendChild(sourceForm);
+
+        addText(card, "Stored observed balances", "h4");
+        addText(card, profile.balances_source || "Balance provenance unavailable", "p", "muted");
+        const balances = Array.isArray(profile.balances) ? profile.balances : [];
+        if (!balances.length) {
+          addText(card, "No balance snapshots are stored for this profile.", "p", "empty");
+        } else {
+          balances.forEach(balance => {
+            const age = balance.age_seconds === null || balance.age_seconds === undefined
+              ? "age unknown" : "observed " + balance.age_seconds + "s ago";
+            const freshness = balance.is_stale === true ? "STALE"
+              : balance.is_stale === false ? "within recorded freshness limit"
+              : "freshness limit unknown";
+            addText(card,
+              balance.amount + " token units | mint " + balance.token_mint +
+              " | wallet " + balance.wallet_address +
+              " | " + age + " | " + freshness +
+              " | source " + balance.source,
+              "p", "history-meta mono");
+          });
+        }
+
+        const deleteButton = document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.className = "danger-button";
+        deleteButton.textContent = "Archive / Soft-delete Profile";
+        deleteButton.disabled = !backendReady;
+        deleteButton.addEventListener("click", async () => {
+          const confirmed = window.confirm(
+            "Soft-delete profile '" + profile.name + "'?\\n\\n" +
+            "The profile will be hidden from this list. Stored transaction and balance history is preserved."
+          );
+          if (!confirmed) {
+            profileMessage.textContent = "Profile deletion cancelled.";
+            return;
+          }
+          deleteButton.disabled = true;
+          try {
+            await postProfile({action: "delete", profile_id: profile.profile_id});
+            profileMessage.textContent = "Profile soft-deleted. Historical records were preserved.";
+            await loadProfiles();
+          } catch (error) {
+            profileMessage.textContent = "Could not delete profile: " + error.message;
+          } finally {
+            deleteButton.disabled = !backendReady;
+          }
+        });
+        card.appendChild(deleteButton);
+        profileList.appendChild(card);
+      });
+      profileSelectOptions();
+    }
+
+    async function loadProfiles() {
+      try {
+        const data = await apiRequest("/api/profiles");
+        if (!Array.isArray(data.profiles) || typeof data.database_available !== "boolean") {
+          throw new Error("Profile API response failed schema validation.");
+        }
+        profiles = data.profiles.filter(profile =>
+          profile && typeof profile.profile_id === "string" &&
+          typeof profile.name === "string" && typeof profile.status === "string" &&
+          Array.isArray(profile.source_wallets) && Array.isArray(profile.balances)
+        );
+        renderProfiles();
+        profileCreateButton.disabled = !backendReady;
+        profileRefreshButton.disabled = !backendReady;
+        profileMessage.textContent = data.error
+          ? data.error
+          : data.database_available
+            ? "Loaded " + profiles.length + " destination profile(s)."
+            : "Profile database does not exist yet. Creating a profile will initialize it.";
+        if (profiles.length && !historyProfile.value) historyProfile.value = profiles[0].profile_id;
+        await loadProfileTransactions();
+      } catch (error) {
+        profiles = [];
+        renderProfiles();
+        profileMessage.textContent = "Profiles unavailable: " + error.message;
+        historyMessage.textContent = "Transaction history unavailable until profiles load.";
+        historyList.replaceChildren();
+        addText(historyList, "Profile API unavailable.", "p", "empty");
+      }
+    }
+
+    async function loadProfileTransactions(resetPage = false) {
+      const profileId = historyProfile.value;
+      historyList.replaceChildren();
+      if (!profileId) {
+        historyMessage.textContent = "Choose a profile to load history.";
+        historyPageLabel.textContent = "Page 0 of 0";
+        historyPrev.disabled = true;
+        historyNext.disabled = true;
+        return;
+      }
+      if (resetPage) historyPage = 1;
+      const tokenMint = historyTokenMint.value.trim();
+      if (tokenMint && !ADDRESS_PATTERN.test(tokenMint)) {
+        historyMessage.textContent = "Token mint filter must be a valid-looking public address.";
+        historyTokenMint.focus();
+        return;
+      }
+      const params = new URLSearchParams({
+        profile_id: profileId,
+        page: String(historyPage),
+        page_size: "25"
+      });
+      if (historyClassification.value) params.set("classification", historyClassification.value);
+      if (historyStatus.value) params.set("status", historyStatus.value);
+      if (tokenMint) params.set("token_mint", tokenMint);
+      historyMessage.textContent = "Loading transaction history…";
+      historyPrev.disabled = true;
+      historyNext.disabled = true;
+      try {
+        const data = await apiRequest("/api/profile-transactions?" + params.toString());
+        if (!Array.isArray(data.transactions) || !Number.isInteger(data.page) ||
+            !Number.isInteger(data.pages) || !Number.isInteger(data.total)) {
+          throw new Error("Transaction API response failed schema validation.");
+        }
+        historyPages = data.pages;
+        historyPage = data.page;
+        if (!data.transactions.length) {
+          addText(historyList, "No transactions match these filters.", "p", "empty");
+        }
+        data.transactions.forEach(tx => {
+          const card = document.createElement("article");
+          card.className = "history-item";
+          addText(card, tx.classification || "UNKNOWN / incomplete classification", "h3");
+          addText(card, "Signature: " + (tx.signature || "unavailable"), "p", "mono");
+          addText(card, "Source wallet: " + (tx.source_wallet_address || "unavailable"), "p", "mono");
+          addText(card, "Token mint: " + (tx.token_mint || "not recorded"), "p", "mono");
+          addText(card, "Amount: " + (tx.amount === null || tx.amount === undefined ? "unavailable" : tx.amount) +
+            " | raw amount: " + (tx.raw_amount ?? "not recorded") +
+            " | decimals: " + (tx.token_decimals ?? "unknown"), "p", "history-meta");
+          addText(card, "Timestamp: " + (tx.observed_at || "unknown") +
+            " | status: " + (tx.status || "unknown") +
+            " | slot: " + (tx.slot ?? "unknown"), "p", "history-meta");
+          const evidence = tx.evidence && typeof tx.evidence === "object"
+            ? JSON.stringify(tx.evidence) : "Evidence unavailable";
+          addText(card, "Classification evidence: " + evidence, "p", "history-meta");
+          addText(card, "Transaction fee: unavailable in the stored profile transaction schema.", "p", "muted");
+          addText(card, "Record source: observed transaction metadata; simulated: no", "p", "muted");
+          historyList.appendChild(card);
+        });
+        historyMessage.textContent = "Showing " + data.transactions.length + " of " + data.total +
+          " matching stored transaction(s). History is bounded to 25 records per page.";
+        historyPageLabel.textContent = "Page " + (data.pages ? data.page : 0) + " of " + data.pages;
+        historyPrev.disabled = data.page <= 1;
+        historyNext.disabled = data.page >= data.pages;
+      } catch (error) {
+        historyMessage.textContent = "Transaction history unavailable: " + error.message;
+        addText(historyList, "No potentially stale results are displayed after an API error.", "p", "empty");
+        historyPageLabel.textContent = "Page unavailable";
+      }
+    }
+
+
     async function loadWallets() {
       try {
         const data = await apiRequest("/api/wallets");
@@ -1012,6 +1535,7 @@
 
         await loadMonitorStatus();
         await loadSimulationReport();
+        await loadProfiles();
       } catch (error) {
         backendReady = false;
         addButton.disabled = true;
@@ -1023,11 +1547,87 @@
         simulationPnl.replaceChildren();
         simulationOrders.replaceChildren();
         simulationFills.replaceChildren();
+        profiles = [];
+        renderProfiles();
+        profileCreateButton.disabled = true;
+        profileRefreshButton.disabled = true;
+        historyFilterButton.disabled = true;
+        historyMessage.textContent = "Transaction history unavailable while the backend is disconnected.";
+        historyList.replaceChildren();
+        addText(historyList, "Backend unavailable.", "p", "empty");
 
         renderWallets();
         message.textContent = error.message || "Backend unavailable. Start dashboard/server.py first.";
       }
     }
+
+
+    profileForm.addEventListener("submit", async event => {
+      event.preventDefault();
+      if (!backendReady) {
+        profileMessage.textContent = "Backend is not connected.";
+        return;
+      }
+      const name = profileNameInput.value.trim();
+      const destination = profileDestinationInput.value.trim();
+      if (!name || name.length > 80) {
+        profileMessage.textContent = "Profile name must contain 1–80 characters.";
+        profileNameInput.focus();
+        return;
+      }
+      if (destination && !ADDRESS_PATTERN.test(destination)) {
+        profileMessage.textContent = "Destination must be a valid-looking public address.";
+        profileDestinationInput.focus();
+        return;
+      }
+      let settings;
+      try {
+        settings = JSON.parse(profileSettingsInput.value);
+        if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+          throw new Error("Settings must be a JSON object.");
+        }
+      } catch (error) {
+        profileMessage.textContent = "Invalid settings JSON: " + error.message;
+        profileSettingsInput.focus();
+        return;
+      }
+      profileCreateButton.disabled = true;
+      try {
+        await postProfile({action: "create", name,
+          destination_public_address: destination || null, settings});
+        profileForm.reset();
+        profileSettingsInput.value = "{}";
+        profileMessage.textContent = "Profile created disabled by default. No monitoring or trading was started.";
+        await loadProfiles();
+      } catch (error) {
+        profileMessage.textContent = "Could not create profile: " + error.message;
+      } finally {
+        profileCreateButton.disabled = !backendReady;
+      }
+    });
+
+    profileRefreshButton.addEventListener("click", loadProfiles);
+    historyProfile.addEventListener("change", () => loadProfileTransactions(true));
+    historyFilterButton.addEventListener("click", () => loadProfileTransactions(true));
+    historyResetButton.addEventListener("click", () => {
+      historyClassification.value = "";
+      historyStatus.value = "";
+      historyTokenMint.value = "";
+      loadProfileTransactions(true);
+    });
+    historyPrev.addEventListener("click", () => {
+      if (historyPage > 1) {
+        historyPage -= 1;
+        loadProfileTransactions();
+      }
+    });
+    historyNext.addEventListener("click", () => {
+      if (historyPage < historyPages) {
+        historyPage += 1;
+        loadProfileTransactions();
+      }
+    });
+
 
     form.addEventListener("submit", async event => {
       event.preventDefault();

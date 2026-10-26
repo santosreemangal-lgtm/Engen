@@ -88,6 +88,45 @@ class SignatureStoreTests(unittest.TestCase):
 
         self.assertEqual(pending, ["sig_pending"])
 
+    def test_failure_retries_are_bounded_and_reviewable(self):
+        self.store.save("wallet_A", "sig_fail")
+        for _ in range(4):
+            result = self.store.record_failure(
+                "wallet_A", "sig_fail", "rpc_fetch",
+                "temporary_rpc_error", "provider temporarily unavailable",
+            )
+            self.assertEqual(result["status"], "pending")
+        result = self.store.record_failure(
+            "wallet_A", "sig_fail", "rpc_fetch",
+            "temporary_rpc_error", "provider temporarily unavailable",
+        )
+        self.assertEqual(result, {"status": "needs_review", "attempts": 5})
+        self.assertEqual(self.store.get_pending_signatures("wallet_A"), [])
+        error = self.store.get_error_record("wallet_A", "sig_fail")
+        self.assertEqual(error["error_stage"], "rpc_fetch")
+        self.assertEqual(error["attempts"], 5)
+
+    def test_transaction_record_is_idempotent_and_preserves_public_payload(self):
+        payload = {"slot": 42, "meta": {"fee": 5000}}
+        self.store.save_transaction_record(
+            "wallet_A", "sig_public", payload, "observed"
+        )
+        self.store.save_transaction_record(
+            "wallet_A", "sig_public", None, "incomplete"
+        )
+        record = self.store.get_transaction_record("wallet_A", "sig_public")
+        self.assertEqual(record["raw_transaction"], payload)
+        self.assertEqual(record["status"], "incomplete")
+
+    def test_processed_slot_updates_wallet_position_monotonically(self):
+        self.store.save("wallet_A", "sig_newer", slot=200)
+        self.store.mark_processed("wallet_A", "sig_newer")
+        self.store.save("wallet_A", "sig_older", slot=190)
+        self.store.mark_processed("wallet_A", "sig_older")
+        position = self.store.get_position("wallet_A")
+        self.assertEqual(position["slot"], 200)
+        self.assertEqual(position["signature"], "sig_newer")
+
     def test_legacy_database_migration_marks_existing_signatures_processed(
         self,
     ):

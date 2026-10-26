@@ -7,12 +7,18 @@ Never signs or submits real Solana transactions.
 import argparse
 import json
 import logging
+import math
 import time
+from contextlib import nullcontext
+from urllib.parse import urlsplit
 from decimal import Decimal, InvalidOperation
 
+from engine.config import ConfigError, load_config
+from engine.latency import LatencyRecorder
 from engine.paper_trader import PaperTrader
 from engine.signature_store import SignatureStore
 from engine.solana_public import DEFAULT_RPC_URL
+from engine.solana_validation import is_valid_solana_address
 from engine.transaction_analysis import QUOTE_TOKEN_MINTS
 from engine.transaction_monitor import monitor_wallet
 
@@ -35,6 +41,23 @@ def positive_decimal(value):
         )
 
     return str(amount)
+
+
+def positive_timeout(value):
+    """Validate a finite, positive RPC timeout in seconds."""
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(
+            "Timeout must be a valid number of seconds."
+        ) from exc
+
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise argparse.ArgumentTypeError(
+            "Timeout must be a finite number greater than zero."
+        )
+
+    return timeout
 
 
 def build_parser():
@@ -72,6 +95,12 @@ def build_parser():
     )
 
     parser.add_argument(
+        "--signature-db",
+        default="data/signatures.db",
+        help="SQLite database for wallet signature history.",
+    )
+
+    parser.add_argument(
         "--interval",
         type=int,
         default=30,
@@ -92,6 +121,13 @@ def build_parser():
     )
 
     parser.add_argument(
+        "--timeout",
+        type=positive_timeout,
+        default=10.0,
+        help="Timeout for each RPC request in seconds; default: 10.",
+    )
+
+    parser.add_argument(
         "--once",
         action="store_true",
         help="Perform one scan and exit.",
@@ -102,8 +138,18 @@ def build_parser():
 
 def validate_args(args, parser):
     """Validate command-line settings before initialization."""
-    if not args.wallet.strip():
-        parser.error("--wallet cannot be empty.")
+    try:
+        load_config()
+    except ConfigError:
+        # ConfigError contains only setting names and safe guidance, not
+        # environment dumps or credential values.
+        parser.error(
+            "Unsafe engine configuration. Keep ENGINE_MODE=read_only and "
+            "LIVE_TRADING_ENABLED=false."
+        )
+
+    if not is_valid_solana_address(args.wallet):
+        parser.error("--wallet must be a valid Solana public address.")
 
     if args.interval < 5:
         parser.error("--interval must be at least 5 seconds.")
@@ -114,21 +160,50 @@ def validate_args(args, parser):
     if not args.paper_db.strip():
         parser.error("--paper-db cannot be empty.")
 
-    if not args.rpc_url.startswith(("https://", "http://")):
+    if not args.signature_db.strip():
+        parser.error("--signature-db cannot be empty.")
+
+    try:
+        parsed_rpc_url = urlsplit(args.rpc_url)
+        # Accessing .port also validates malformed port values.
+        port = parsed_rpc_url.port
+    except ValueError:
+        parser.error("--rpc-url is malformed.")
+
+    if (
+        parsed_rpc_url.scheme not in ("https", "http")
+        or not parsed_rpc_url.hostname
+        or any(character.isspace() for character in args.rpc_url)
+        or parsed_rpc_url.username is not None
+        or parsed_rpc_url.password is not None
+        or parsed_rpc_url.fragment
+        or (port is not None and not 1 <= port <= 65535)
+    ):
         parser.error(
-            "--rpc-url must start with http:// or https://"
+            "--rpc-url must be a valid HTTP(S) URL without user credentials "
+            "or a fragment."
         )
 
 
-def run_once(args, trader, store):
+def run_once(args, trader, store, latency_recorder=None):
     """Scan the wallet and process available transactions in paper mode."""
-    results = monitor_wallet(
-        wallet_address=args.wallet,
-        store=store,
-        limit=args.limit,
-        rpc_url=args.rpc_url,
-        defer_processed=True,
+    monitor_options = {
+        "wallet_address": args.wallet,
+        "store": store,
+        "limit": args.limit,
+        "rpc_url": args.rpc_url,
+        "timeout": args.timeout,
+        "defer_processed": True,
+    }
+    if latency_recorder is not None:
+        monitor_options["latency_recorder"] = latency_recorder
+    scan_timer = (
+        latency_recorder.measure("paper.monitor_scan")
+        if latency_recorder is not None
+        else nullcontext()
     )
+    with scan_timer:
+        results = monitor_wallet(**monitor_options)
 
     if not isinstance(results, list):
         raise RuntimeError(
@@ -157,7 +232,28 @@ def run_once(args, trader, store):
 
         # Process the transaction in paper mode first.
         # If processing raises an exception, it remains pending.
-        paper_result = trader.process(result)
+        decision_timer = (
+            latency_recorder.measure("paper.local_decision")
+            if latency_recorder is not None
+            else nullcontext()
+        )
+        try:
+            with decision_timer:
+                paper_result = trader.process(result)
+        except Exception as exc:
+            if (
+                isinstance(signature, str)
+                and signature.strip()
+                and store.get_status(args.wallet, signature) == "pending"
+            ):
+                store.record_failure(
+                    args.wallet,
+                    signature,
+                    "paper_simulation",
+                    type(exc).__name__,
+                    "Paper simulation failed; the signature remains recoverable.",
+                )
+            raise
 
         # Mark processed only after paper processing returns.
         if isinstance(signature, str) and signature.strip():
@@ -200,16 +296,28 @@ def main(argv=None):
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
-    # Creates the signatures database and its parent directory.
-    store = SignatureStore()
+    # Initialize persistence before starting any scan. If initialization
+    # is interrupted or fails, exit without starting a background worker.
+    try:
+        store = SignatureStore(db_path=args.signature_db)
+        trader = PaperTrader(
+            {args.quote_mint: args.paper_balance},
+            db_path=args.paper_db,
+        )
+    except KeyboardInterrupt:
+        logger.info("Startup interrupted; monitoring was not started.")
+        return 130
+    except Exception:
+        logger.error(
+            "Paper monitor initialization failed; monitoring was not started."
+        )
+        return 1
 
-    trader = PaperTrader(
-        {args.quote_mint: args.paper_balance},
-        db_path=args.paper_db,
-    )
+    latency_recorder = LatencyRecorder()
 
     logger.info("Paper-only monitoring started.")
     logger.info("Quote mint: %s", args.quote_mint)
+    logger.info("RPC timeout: %s seconds", args.timeout)
     logger.info(
         "Initial virtual balance for a new database: %s",
         args.paper_balance,
@@ -238,7 +346,7 @@ def main(argv=None):
     try:
         while True:
             try:
-                run_once(args, trader, store)
+                run_once(args, trader, store, latency_recorder=latency_recorder)
 
             except KeyboardInterrupt:
                 raise
@@ -262,6 +370,7 @@ def main(argv=None):
             {
                 "final_virtual_balances": trader.get_balances(),
                 "paper_trades": trader.trades,
+                "latency_summary": latency_recorder.summary(),
                 "real_trading": False,
             },
             indent=2,

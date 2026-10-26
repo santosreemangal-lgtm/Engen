@@ -1,3 +1,5 @@
+import argparse
+import os
 import io
 import tempfile
 import unittest
@@ -11,14 +13,120 @@ from engine.signature_store import SignatureStore
 
 
 USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
-TEST_WALLET = "PublicWalletTestAddress"
+TEST_WALLET = "11111111111111111111111111111111"
 
 
 class PaperMonitorRunnerTests(unittest.TestCase):
 
+    def _validate_rpc_url(self, rpc_url):
+        parser = runner.build_parser()
+        args = parser.parse_args([
+            "--wallet", TEST_WALLET,
+            "--quote-mint", USDT_MINT,
+            "--rpc-url", rpc_url,
+        ])
+        runner.validate_args(args, parser)
+
+    def test_rpc_url_accepts_valid_https_endpoint(self):
+        self._validate_rpc_url("https://api.mainnet-beta.solana.com")
+
+    def test_runner_refuses_live_trading_configuration(self):
+        with patch.dict(os.environ, {"LIVE_TRADING_ENABLED": "true"}):
+            with self.assertRaises(SystemExit):
+                self._validate_rpc_url(
+                    "https://api.mainnet-beta.solana.com"
+                )
+
+    def test_runner_refuses_non_read_only_engine_mode(self):
+        with patch.dict(os.environ, {"ENGINE_MODE": "paper"}):
+            with self.assertRaises(SystemExit):
+                self._validate_rpc_url(
+                    "https://api.mainnet-beta.solana.com"
+                )
+
+    def test_interrupted_storage_startup_exits_before_monitoring(self):
+        argv = [
+            "paper_monitor_runner",
+            "--wallet", TEST_WALLET,
+            "--quote-mint", USDT_MINT,
+        ]
+        with (
+            patch("sys.argv", argv),
+            patch.object(
+                runner,
+                "SignatureStore",
+                side_effect=KeyboardInterrupt,
+            ),
+            patch.object(runner, "PaperTrader") as trader_mock,
+            redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(runner.main(), 130)
+
+        trader_mock.assert_not_called()
+
+    def test_unsafe_startup_stops_before_database_initialization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paper_db = Path(directory) / "paper.db"
+            signature_db = Path(directory) / "signatures.db"
+            argv = [
+                "paper_monitor_runner",
+                "--wallet", TEST_WALLET,
+                "--quote-mint", USDT_MINT,
+                "--paper-db", str(paper_db),
+                "--signature-db", str(signature_db),
+            ]
+            with (
+                patch.dict(os.environ, {"LIVE_TRADING_ENABLED": "true"}),
+                patch("sys.argv", argv),
+                patch.object(runner, "SignatureStore") as store_mock,
+                patch.object(runner, "PaperTrader") as trader_mock,
+                redirect_stdout(io.StringIO()),
+            ):
+                with self.assertRaises(SystemExit):
+                    runner.main()
+
+            store_mock.assert_not_called()
+            trader_mock.assert_not_called()
+            self.assertFalse(paper_db.exists())
+            self.assertFalse(signature_db.exists())
+
+    def test_timeout_accepts_positive_finite_value(self):
+        self.assertEqual(runner.positive_timeout("2.5"), 2.5)
+
+    def test_timeout_rejects_zero_negative_and_non_finite_values(self):
+        for value in ("0", "-1", "nan", "inf", "invalid"):
+            with self.subTest(value=value):
+                with self.assertRaises(argparse.ArgumentTypeError):
+                    runner.positive_timeout(value)
+
+    def test_rpc_url_accepts_local_http_endpoint(self):
+        self._validate_rpc_url("http://127.0.0.1:8899")
+
+    def test_rpc_url_rejects_missing_host(self):
+        with self.assertRaises(SystemExit):
+            self._validate_rpc_url("https:///rpc")
+
+    def test_rpc_url_rejects_unsupported_scheme(self):
+        with self.assertRaises(SystemExit):
+            self._validate_rpc_url("ftp://rpc.example.com")
+
+    def test_rpc_url_rejects_user_credentials(self):
+        with self.assertRaises(SystemExit):
+            self._validate_rpc_url("https://user:password@rpc.example.com")
+
+    def test_rpc_url_rejects_fragments(self):
+        with self.assertRaises(SystemExit):
+            self._validate_rpc_url("https://rpc.example.com/rpc#fragment")
+
+    def test_rpc_url_rejects_invalid_port(self):
+        with self.assertRaises(SystemExit):
+            self._validate_rpc_url("https://rpc.example.com:99999")
+
+
     def test_runner_starts_paper_only_with_persistent_usdt_balance(self):
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "paper.db"
+            signature_db_path = Path(directory) / "signatures.db"
 
             args = [
                 "paper_monitor_runner",
@@ -30,6 +138,8 @@ class PaperMonitorRunnerTests(unittest.TestCase):
                 "100",
                 "--paper-db",
                 str(db_path),
+                "--signature-db",
+                str(signature_db_path),
                 "--interval",
                 "5",
             ]
@@ -39,7 +149,7 @@ class PaperMonitorRunnerTests(unittest.TestCase):
             # Interrupt before any real RPC call.
             with (
                 patch("sys.argv", args),
-                patch.object(runner, "SignatureStore"),
+                patch.object(runner, "SignatureStore") as signature_store_mock,
                 patch.object(
                     runner,
                     "monitor_wallet",
@@ -55,6 +165,9 @@ class PaperMonitorRunnerTests(unittest.TestCase):
             self.assertIn('"real_trading": false', printed)
             self.assertIn('"wallet_signing": false', printed)
             self.assertTrue(db_path.exists())
+            signature_store_mock.assert_called_once_with(
+                db_path=str(signature_db_path)
+            )
 
             restarted = PaperTrader(
                 {USDT_MINT: "999"},
@@ -177,6 +290,7 @@ class PaperMonitorRunnerTests(unittest.TestCase):
         self.assertTrue(
             mock_monitor.call_args.kwargs["defer_processed"]
         )
+        self.assertEqual(mock_monitor.call_args.kwargs["timeout"], 10.0)
 
     def test_processing_error_leaves_signature_pending(self):
         transaction = {

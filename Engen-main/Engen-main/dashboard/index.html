@@ -69,6 +69,33 @@
       border-radius: 18px;
     }
 
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .overview-item {
+      min-width: 0;
+      padding: 14px;
+      background: #101114;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .overview-label {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .overview-value {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
     h2 {
       margin: 0 0 18px;
       font-size: 19px;
@@ -115,9 +142,32 @@
       cursor: pointer;
     }
 
+    button:hover:not(:disabled) {
+      filter: brightness(1.08);
+    }
+
+    button:focus-visible,
+    input:focus-visible {
+      outline: 3px solid #c4b5fd;
+      outline-offset: 3px;
+    }
+
     button:disabled {
       cursor: not-allowed;
       opacity: 0.6;
+    }
+
+    /* Keep state meaning consistent and never rely on color alone. */
+    .status-ok {
+      color: #86efac;
+    }
+
+    .status-warning {
+      color: #fcd34d;
+    }
+
+    .status-error {
+      color: #fca5a5;
     }
 
     #stop-monitoring {
@@ -230,6 +280,114 @@
       line-height: 1.8;
     }
 
+
+
+    textarea, select {
+      width: 100%;
+      min-width: 0;
+      padding: 12px;
+      color: var(--text);
+      background: #101114;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      font: inherit;
+    }
+
+    textarea:focus-visible, select:focus-visible {
+      outline: 3px solid #c4b5fd;
+      outline-offset: 3px;
+    }
+
+    .profile-card, .history-item {
+      margin-top: 14px;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: #101114;
+      min-width: 0;
+    }
+
+    .profile-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .profile-field {
+      min-width: 0;
+      margin-top: 12px;
+    }
+
+    .profile-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .profile-actions button, .pagination button {
+      min-height: 40px;
+    }
+
+    .secondary-button {
+      color: var(--text);
+      background: #30313a;
+    }
+
+    .danger-button {
+      color: #fecaca;
+      background: #321d24;
+    }
+
+    .classification-buy {
+      color: var(--positive);
+      font-weight: 700;
+    }
+
+    .classification-sell {
+      color: var(--negative);
+      font-weight: 700;
+    }
+
+    .classification-unknown {
+      color: #fcd34d;
+      font-weight: 700;
+    }
+
+    .status-pill {
+      display: inline-block;
+      padding: 3px 7px;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .history-meta {
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+      line-height: 1.7;
+    }
+
+    .pagination {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    @media (max-width: 520px) {
+      .profile-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .pagination {
+        align-items: stretch;
+        flex-direction: column;
+      }
+    }
+
     @media (max-width: 520px) {
       body {
         padding: 24px 12px;
@@ -237,6 +395,10 @@
 
       .panel {
         padding: 17px;
+      }
+
+      .overview-grid {
+        grid-template-columns: minmax(0, 1fr);
       }
 
       .form-row {
@@ -263,6 +425,29 @@
       Manage public Solana wallet addresses from one dashboard.
       Saved addresses remain available after refreshing the page.
     </p>
+
+    <section class="panel" aria-labelledby="overview-heading">
+      <h2 id="overview-heading">Engine Overview</h2>
+      <div class="overview-grid">
+        <div class="overview-item">
+          <p class="overview-label">Authorized mode</p>
+          <p id="overview-mode" class="overview-value">READ-ONLY</p>
+        </div>
+        <div class="overview-item">
+          <p class="overview-label">Monitoring engine</p>
+          <p id="overview-health" class="overview-value" aria-live="polite">Checking status…</p>
+        </div>
+        <div class="overview-item">
+          <p class="overview-label">Last successful monitoring check</p>
+          <p id="overview-last-success" class="overview-value">Not checked yet</p>
+        </div>
+        <div class="overview-item">
+          <p class="overview-label">RPC endpoint health</p>
+          <p id="overview-rpc" class="overview-value" aria-live="polite">Not checked yet</p>
+        </div>
+      </div>
+      <p class="muted">A successful wallet scan is evidence of a successful recent request, not a guarantee of continuous RPC availability. This dashboard does not sign or broadcast transactions.</p>
+    </section>
 
     <section class="panel">
       <h2>Add a wallet</h2>
@@ -311,6 +496,100 @@
       </div>
     </section>
 
+
+    <section class="panel" aria-labelledby="profiles-heading">
+      <h2 id="profiles-heading">Destination Profiles</h2>
+      <p class="muted">Profiles store public destination addresses, source-wallet links, and isolated settings. Balance values are stored observations, not guaranteed live balances. Creating a profile does not enable monitoring or trading.</p>
+      <form id="profile-form">
+        <div class="profile-grid">
+          <div>
+            <label for="profile-name">Profile name</label>
+            <input id="profile-name" name="profile-name" maxlength="80" required>
+          </div>
+          <div>
+            <label for="profile-destination">Destination public address (optional)</label>
+            <input id="profile-destination" name="profile-destination" autocomplete="off" spellcheck="false">
+          </div>
+        </div>
+        <div class="profile-field">
+          <label for="profile-settings-json">Initial profile settings (JSON object)</label>
+          <textarea id="profile-settings-json" rows="3" required>{}</textarea>
+        </div>
+        <div class="profile-actions">
+          <button id="profile-create-button" type="submit" disabled>Create Profile</button>
+          <button id="profile-refresh-button" class="secondary-button" type="button" disabled>Refresh Profiles</button>
+        </div>
+      </form>
+      <p id="profile-message" role="status" aria-live="polite" class="muted">Loading profile storage…</p>
+      <div id="profile-list"><p class="empty">Profiles will appear here.</p></div>
+    </section>
+
+    <section class="panel" aria-labelledby="history-heading">
+      <h2 id="history-heading">Profile Transaction History</h2>
+      <p class="muted">Only stored transaction records are shown. UNKNOWN or incomplete classifications remain labeled honestly. Fee and valuation fields are not invented when the stored record does not provide them.</p>
+      <div class="profile-grid">
+        <div>
+          <label for="history-profile">Destination profile</label>
+          <select id="history-profile" disabled>
+            <option value="">No profiles available</option>
+          </select>
+        </div>
+        <div>
+          <label for="history-classification">Classification</label>
+          <select id="history-classification">
+            <option value="">All classifications</option>
+            <option value="BUY_CANDIDATE">BUY_CANDIDATE</option>
+            <option value="SELL_CANDIDATE">SELL_CANDIDATE</option>
+            <option value="TRANSFER">TRANSFER</option>
+            <option value="UNKNOWN">UNKNOWN</option>
+            <option value="FAILED_TRANSACTION">FAILED_TRANSACTION</option>
+            <option value="RENT">RENT</option>
+            <option value="LIQUIDITY_OPERATION">LIQUIDITY_OPERATION</option>
+          </select>
+        </div>
+        <div>
+          <label for="history-status">Transaction status</label>
+          <select id="history-status">
+            <option value="">All statuses</option>
+            <option value="observed">observed</option>
+            <option value="confirmed">confirmed</option>
+            <option value="failed">failed</option>
+            <option value="pending">pending</option>
+            <option value="unknown">unknown</option>
+          </select>
+        </div>
+        <div>
+          <label for="history-token-mint">Token mint filter (optional)</label>
+          <input id="history-token-mint" autocomplete="off" spellcheck="false" placeholder="Token mint public address">
+        </div>
+      </div>
+      <div class="profile-actions">
+        <button id="history-filter-button" type="button" disabled>Apply Filters</button>
+        <button id="history-reset-button" class="secondary-button" type="button">Reset Filters</button>
+      </div>
+      <p id="history-message" class="muted" role="status" aria-live="polite">Choose a profile to load history.</p>
+      <div id="history-list"><p class="empty">No transaction history loaded.</p></div>
+      <div class="pagination">
+        <button id="history-prev" class="secondary-button" type="button" disabled>Previous page</button>
+        <p id="history-page-label" class="muted" aria-live="polite">Page 0 of 0</p>
+        <button id="history-next" class="secondary-button" type="button" disabled>Next page</button>
+      </div>
+      <p class="muted">Stored transaction schema does not currently provide a verified fee value for each profile transaction. Realized P&amp;L is shown only in the separate paper-simulation panel; unrealized P&amp;L remains unavailable without a verified fresh market-price source.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="simulation-heading">
+      <h2 id="simulation-heading">Paper Trading — Simulated Only</h2>
+      <p class="muted">These virtual balances and fills are separate from real wallet balances. This panel never submits transactions.</p>
+      <div id="simulation-status" class="muted" aria-live="polite">Loading paper simulation report...</div>
+      <div id="simulation-balances"></div>
+      <h3>Simulated realized P&amp;L (USD)</h3>
+      <div id="simulation-pnl"></div>
+      <h3>Recent simulated orders</h3>
+      <div id="simulation-orders"></div>
+      <h3>Recent simulated fills</h3>
+      <div id="simulation-fills"></div>
+    </section>
+
     <section class="panel">
       <h2>Your wallets</h2>
 
@@ -351,22 +630,71 @@
 
     const monitorStatus = document.getElementById("monitor-status");
     const monitorResults = document.getElementById("monitor-results");
+    const overviewHealth = document.getElementById("overview-health");
+    const overviewLastSuccess = document.getElementById("overview-last-success");
+    const overviewRpc = document.getElementById("overview-rpc");
     const startButton = document.getElementById("start-monitoring");
     const stopButton = document.getElementById("stop-monitoring");
+    const simulationStatus = document.getElementById("simulation-status");
+    const simulationBalances = document.getElementById("simulation-balances");
+    const simulationPnl = document.getElementById("simulation-pnl");
+    const simulationOrders = document.getElementById("simulation-orders");
+    const simulationFills = document.getElementById("simulation-fills");
 
     const ADDRESS_PATTERN =
       /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
-    async function apiRequest(path, options = {}) {
-      const response = await fetch(path, {
-        cache: "no-store",
-        ...options
-      });
+    let profiles = [];
+    let historyPage = 1;
+    let historyPages = 0;
+    const profileForm = document.getElementById("profile-form");
+    const profileNameInput = document.getElementById("profile-name");
+    const profileDestinationInput = document.getElementById("profile-destination");
+    const profileSettingsInput = document.getElementById("profile-settings-json");
+    const profileCreateButton = document.getElementById("profile-create-button");
+    const profileRefreshButton = document.getElementById("profile-refresh-button");
+    const profileMessage = document.getElementById("profile-message");
+    const profileList = document.getElementById("profile-list");
+    const historyProfile = document.getElementById("history-profile");
+    const historyClassification = document.getElementById("history-classification");
+    const historyStatus = document.getElementById("history-status");
+    const historyTokenMint = document.getElementById("history-token-mint");
+    const historyFilterButton = document.getElementById("history-filter-button");
+    const historyResetButton = document.getElementById("history-reset-button");
+    const historyMessage = document.getElementById("history-message");
+    const historyList = document.getElementById("history-list");
+    const historyPrev = document.getElementById("history-prev");
+    const historyNext = document.getElementById("history-next");
+    const historyPageLabel = document.getElementById("history-page-label");
 
-      const data = await response.json();
+
+    async function apiRequest(path, options = {}) {
+      let response;
+      try {
+        response = await fetch(path, {
+          cache: "no-store",
+          ...options
+        });
+      } catch (_error) {
+        throw new Error("Backend unavailable. Check that dashboard/server.py is running.");
+      }
+
+      let data;
+      try {
+        data = await response.json();
+      } catch (_error) {
+        throw new Error("The backend returned an invalid response.");
+      }
 
       if (!response.ok) {
-        throw new Error(data.error || "The request failed.");
+        const detail = data && typeof data.error === "string"
+          ? data.error
+          : "The request failed.";
+        throw new Error(detail);
+      }
+
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        throw new Error("The backend response has an unexpected format.");
       }
 
       return data;
@@ -488,6 +816,15 @@
         removeButton.disabled = !backendReady;
 
         removeButton.addEventListener("click", async () => {
+          const confirmed = window.confirm(
+            "Remove this public wallet address from the saved dashboard list?\n\n" +
+            "This does not delete blockchain data or undo past monitoring."
+          );
+          if (!confirmed) {
+            message.textContent = "Wallet removal cancelled.";
+            return;
+          }
+
           removeButton.disabled = true;
 
           try {
@@ -524,6 +861,32 @@
       changes.forEach(change => {
         const changeBox = document.createElement("div");
         changeBox.className = "token-balance-change";
+
+        const metadata = change.metadata && typeof change.metadata === "object"
+          ? change.metadata
+          : null;
+        const tokenName = metadata && typeof metadata.name === "string"
+          ? metadata.name.trim()
+          : "";
+        const tokenSymbol = metadata && typeof metadata.symbol === "string"
+          ? metadata.symbol.trim()
+          : "";
+
+        if (tokenName || tokenSymbol) {
+          addText(
+            changeBox,
+            "Token: " + [tokenName, tokenSymbol ? "(" + tokenSymbol + ")" : ""]
+              .filter(Boolean).join(" "),
+            "p"
+          );
+        } else {
+          addText(
+            changeBox,
+            "Token metadata: unavailable",
+            "p",
+            "muted"
+          );
+        }
 
         addText(
           changeBox,
@@ -677,6 +1040,31 @@
       monitorData = data;
       monitoringEnabled = data.enabled === true;
 
+      const monitoredWallets = Array.isArray(data.wallets) ? data.wallets : [];
+      const successfulChecks = monitoredWallets
+        .filter(wallet => typeof wallet.last_successful_check === "string")
+        .map(wallet => wallet.last_successful_check)
+        .sort();
+      overviewLastSuccess.textContent = successfulChecks.length
+        ? successfulChecks[successfulChecks.length - 1]
+        : "Not checked successfully yet";
+
+      if (!monitoringEnabled) {
+        overviewHealth.textContent = "STOPPED";
+      } else if (monitoredWallets.some(wallet => wallet.state === "error")) {
+        overviewHealth.textContent = "ERROR — check wallet details";
+      } else if (monitoredWallets.some(wallet => wallet.state === "stale")) {
+        overviewHealth.textContent = "STALE — last check is old";
+      } else if (monitoredWallets.some(wallet => wallet.state === "connected")) {
+        overviewHealth.textContent = "RUNNING — recent scan succeeded";
+      } else {
+        overviewHealth.textContent = "STARTING / WAITING";
+      }
+
+      overviewHealth.className = "overview-value " +
+        (overviewHealth.textContent.startsWith("RUNNING") ? "status-ok" :
+         overviewHealth.textContent.startsWith("ERROR") ? "status-error" :
+         overviewHealth.textContent.startsWith("STALE") ? "status-warning" : "");
       monitorStatus.textContent = monitoringEnabled
         ? "Monitoring is enabled. Scans run approximately every " +
           data.interval_seconds + " seconds."
@@ -697,6 +1085,94 @@
       renderMonitorResults();
     }
 
+    function renderSimulationReport(data) {
+      simulationBalances.replaceChildren();
+      simulationPnl.replaceChildren();
+      simulationOrders.replaceChildren();
+      simulationFills.replaceChildren();
+
+      if (
+        data.mode !== "PAPER_SIMULATION" ||
+        data.simulated !== true ||
+        data.real_trading !== false ||
+        data.transaction_broadcast !== false ||
+        data.real_wallet_balances_included !== false
+      ) {
+        simulationStatus.textContent =
+          "Simulation report rejected: safety metadata is missing or inconsistent.";
+        addText(simulationBalances, "No simulation values are shown because the report could not be verified.", "p", "empty");
+        return;
+      }
+
+      simulationStatus.textContent =
+        "Mode: PAPER_SIMULATION | Real trading: disabled | Transaction broadcast: disabled";
+
+      if (data.error) {
+        addText(simulationStatus, data.error);
+      }
+      if (!data.database_available) {
+        addText(simulationBalances, "No paper-simulation database exists yet.", "p", "empty");
+      } else {
+        const balances = data.balances && typeof data.balances === "object"
+          ? data.balances
+          : {};
+        const entries = Object.entries(balances);
+        if (entries.length === 0) {
+          addText(simulationBalances, "No simulated balances recorded.", "p", "empty");
+        }
+        entries.forEach(([mint, amount]) => {
+          addText(simulationBalances, mint + ": " + amount + " (simulated)", "p", "mono");
+        });
+      }
+
+      const pnl = data.pnl && typeof data.pnl === "object" ? data.pnl : {};
+      const realized = pnl.realized_by_mint && typeof pnl.realized_by_mint === "object"
+        ? pnl.realized_by_mint
+        : {};
+      const pnlEntries = Object.entries(realized);
+      if (pnlEntries.length === 0) {
+        addText(simulationPnl, "Realized P&L is not available yet; no simulated sales are recorded.", "p", "empty");
+      }
+      pnlEntries.forEach(([mint, item]) => {
+        const value = item && item.pnl !== null && item.pnl !== undefined
+          ? item.pnl + " " + (item.currency || "USD")
+          : "unavailable (unknown cost basis)";
+        addText(simulationPnl, mint + ": " + value, "p", "mono");
+      });
+      addText(simulationPnl,
+        "Unrealized P&L: unavailable until a verified fresh market-price source is connected.",
+        "p", "muted");
+
+      const orders = Array.isArray(data.orders) ? data.orders : [];
+      if (orders.length === 0) addText(simulationOrders, "No simulated orders.", "p", "empty");
+      orders.forEach(order => addText(
+        simulationOrders,
+        [order.side, order.quantity + " " + order.asset_mint, order.status,
+         order.reason || ""].filter(Boolean).join(" | "), "p"
+      ));
+
+      const fills = Array.isArray(data.fills) ? data.fills : [];
+      if (fills.length === 0) addText(simulationFills, "No simulated fills.", "p", "empty");
+      fills.forEach(fill => addText(
+        simulationFills,
+        [fill.quantity + " " + fill.asset_mint,
+         "reference " + fill.reference_price,
+         "execution " + fill.execution_price,
+         "fee " + fill.fee + " " + fill.currency,
+         "network cost " + fill.network_cost + " " + fill.currency,
+         "price age " + fill.price_age_seconds + "s",
+         "source " + fill.price_source].join(" | "), "p"
+      ));
+    }
+
+    async function loadSimulationReport() {
+      try {
+        renderSimulationReport(await apiRequest("/api/paper-simulation"));
+      } catch (error) {
+        simulationStatus.textContent = "Paper simulation report unavailable: " + error.message;
+      }
+    }
+
     async function loadMonitorStatus() {
       try {
         const data = await apiRequest("/api/monitor");
@@ -704,11 +1180,383 @@
       } catch (error) {
         monitorStatus.textContent =
           "Could not load monitoring status: " + error.message;
+        overviewHealth.textContent = "UNAVAILABLE — backend error";
+        overviewHealth.className = "overview-value status-error";
+        overviewRpc.textContent = "Unknown — connectivity could not be checked";
+        overviewRpc.className = "overview-value status-warning";
+        overviewLastSuccess.textContent = "Unavailable — backend error";
 
         startButton.disabled = true;
         stopButton.disabled = true;
       }
     }
+
+
+
+    async function postProfile(payload) {
+      return apiRequest("/api/profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+    }
+
+    function profileSelectOptions() {
+      const current = historyProfile.value;
+      historyProfile.replaceChildren();
+      if (!profiles.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No profiles available";
+        historyProfile.appendChild(option);
+        historyProfile.disabled = true;
+        historyFilterButton.disabled = true;
+        return;
+      }
+      profiles.forEach(profile => {
+        const option = document.createElement("option");
+        option.value = profile.profile_id;
+        option.textContent = profile.name + " (" + profile.status + ")";
+        historyProfile.appendChild(option);
+      });
+      historyProfile.disabled = false;
+      historyFilterButton.disabled = !backendReady;
+      if (profiles.some(profile => profile.profile_id === current)) {
+        historyProfile.value = current;
+      }
+    }
+
+    function renderProfiles() {
+      profileList.replaceChildren();
+      profileSelectOptions();
+      if (!profiles.length) {
+        addText(profileList, "No destination profiles yet. Create one above; it will start disabled.", "p", "empty");
+        return;
+      }
+      profiles.forEach(profile => {
+        const card = document.createElement("article");
+        card.className = "profile-card";
+        addText(card, profile.name || "Unnamed profile", "h3");
+        addText(card, "Profile ID: " + profile.profile_id, "p", "mono");
+        addText(card, "Status: " + (profile.status || "unknown") + " (profile status does not enable live trading)", "p", "muted");
+        addText(card, "Destination public address: " + (profile.destination_public_address || "Not configured"), "p", "mono");
+        addText(card, "Created: " + (profile.created_at || "unknown") + " | Updated: " + (profile.updated_at || "unknown"), "p", "history-meta");
+
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "Edit profile details and settings";
+        details.appendChild(summary);
+
+        const editForm = document.createElement("form");
+        editForm.className = "profile-field";
+        const nameLabel = document.createElement("label");
+        nameLabel.textContent = "Profile name";
+        const nameInput = document.createElement("input");
+        nameInput.value = profile.name || "";
+        nameInput.maxLength = 80;
+        nameInput.required = true;
+        nameLabel.appendChild(nameInput);
+        editForm.appendChild(nameLabel);
+        const destinationLabel = document.createElement("label");
+        destinationLabel.textContent = "Destination public address";
+        const destinationInput = document.createElement("input");
+        destinationInput.value = profile.destination_public_address || "";
+        destinationInput.autocomplete = "off";
+        destinationInput.spellcheck = false;
+        destinationLabel.appendChild(destinationInput);
+        editForm.appendChild(destinationLabel);
+        const settingsLabel = document.createElement("label");
+        settingsLabel.textContent = "Profile-specific settings (JSON object; no private keys or seed phrases)";
+        const settingsInput = document.createElement("textarea");
+        settingsInput.rows = 4;
+        settingsInput.value = JSON.stringify(profile.settings || {}, null, 2);
+        settingsLabel.appendChild(settingsInput);
+        editForm.appendChild(settingsLabel);
+        const statusLabel = document.createElement("label");
+        statusLabel.textContent = "Profile status";
+        const statusSelect = document.createElement("select");
+        ["disabled", "active"].forEach(status => {
+          const option = document.createElement("option");
+          option.value = status;
+          option.textContent = status;
+          statusSelect.appendChild(option);
+        });
+        statusSelect.value = profile.status === "active" ? "active" : "disabled";
+        statusLabel.appendChild(statusSelect);
+        editForm.appendChild(statusLabel);
+        const saveButton = document.createElement("button");
+        saveButton.type = "submit";
+        saveButton.textContent = "Save Profile";
+        saveButton.disabled = !backendReady;
+        editForm.appendChild(saveButton);
+        editForm.addEventListener("submit", async event => {
+          event.preventDefault();
+          if (!nameInput.value.trim() || nameInput.value.trim().length > 80) {
+            profileMessage.textContent = "Profile name must contain 1–80 characters.";
+            return;
+          }
+          const destination = destinationInput.value.trim();
+          if (destination && !ADDRESS_PATTERN.test(destination)) {
+            profileMessage.textContent = "Destination must be a valid-looking public address.";
+            return;
+          }
+          let settings;
+          try {
+            settings = JSON.parse(settingsInput.value);
+            if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+              throw new Error("Settings must be a JSON object.");
+            }
+          } catch (error) {
+            profileMessage.textContent = "Invalid settings JSON: " + error.message;
+            settingsInput.focus();
+            return;
+          }
+          saveButton.disabled = true;
+          try {
+            await postProfile({action: "update", profile_id: profile.profile_id,
+              name: nameInput.value.trim(),
+              destination_public_address: destination || undefined,
+              status: statusSelect.value, settings});
+            profileMessage.textContent = "Profile details and settings saved.";
+            await loadProfiles();
+        loadRpcHealth();
+          } catch (error) {
+            profileMessage.textContent = "Could not save profile: " + error.message;
+          } finally {
+            saveButton.disabled = !backendReady;
+          }
+        });
+        details.appendChild(editForm);
+        card.appendChild(details);
+
+        addText(card, "Source wallets", "h4");
+        if (!Array.isArray(profile.source_wallets) || profile.source_wallets.length === 0) {
+          addText(card, "No source wallets associated.", "p", "empty");
+        } else {
+          profile.source_wallets.forEach(address => addText(card, address, "p", "mono"));
+        }
+        const sourceForm = document.createElement("form");
+        sourceForm.className = "profile-field";
+        const sourceLabel = document.createElement("label");
+        sourceLabel.textContent = "Associate source public wallet";
+        const sourceInput = document.createElement("input");
+        sourceInput.autocomplete = "off";
+        sourceInput.spellcheck = false;
+        sourceInput.placeholder = "Public Solana wallet address";
+        sourceLabel.appendChild(sourceInput);
+        sourceForm.appendChild(sourceLabel);
+        const sourceButton = document.createElement("button");
+        sourceButton.type = "submit";
+        sourceButton.textContent = "Associate Source Wallet";
+        sourceButton.disabled = !backendReady;
+        sourceForm.appendChild(sourceButton);
+        sourceForm.addEventListener("submit", async event => {
+          event.preventDefault();
+          const address = sourceInput.value.trim();
+          if (!ADDRESS_PATTERN.test(address)) {
+            profileMessage.textContent = "Enter a valid-looking source wallet address.";
+            sourceInput.focus();
+            return;
+          }
+          sourceButton.disabled = true;
+          try {
+            await postProfile({action: "associate-source-wallet", profile_id: profile.profile_id, wallet_address: address});
+            profileMessage.textContent = "Source wallet association saved.";
+            await loadProfiles();
+          } catch (error) {
+            profileMessage.textContent = "Could not associate source wallet: " + error.message;
+          } finally {
+            sourceButton.disabled = !backendReady;
+          }
+        });
+        card.appendChild(sourceForm);
+
+        addText(card, "Stored observed balances", "h4");
+        addText(card, profile.balances_source || "Balance provenance unavailable", "p", "muted");
+        const balances = Array.isArray(profile.balances) ? profile.balances : [];
+        if (!balances.length) {
+          addText(card, "No balance snapshots are stored for this profile.", "p", "empty");
+        } else {
+          balances.forEach(balance => {
+            const age = balance.age_seconds === null || balance.age_seconds === undefined
+              ? "age unknown" : "observed " + balance.age_seconds + "s ago";
+            const freshness = balance.is_stale === true ? "STALE"
+              : balance.is_stale === false ? "within recorded freshness limit"
+              : "freshness limit unknown";
+            addText(card,
+              balance.amount + " token units | mint " + balance.token_mint +
+              " | wallet " + balance.wallet_address +
+              " | " + age + " | " + freshness +
+              " | source " + balance.source,
+              "p", "history-meta mono");
+          });
+        }
+
+        const deleteButton = document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.className = "danger-button";
+        deleteButton.textContent = "Archive / Soft-delete Profile";
+        deleteButton.disabled = !backendReady;
+        deleteButton.addEventListener("click", async () => {
+          const confirmed = window.confirm(
+            "Soft-delete profile '" + profile.name + "'?\n\n" +
+            "The profile will be hidden from this list. Stored transaction and balance history is preserved."
+          );
+          if (!confirmed) {
+            profileMessage.textContent = "Profile deletion cancelled.";
+            return;
+          }
+          deleteButton.disabled = true;
+          try {
+            await postProfile({action: "delete", profile_id: profile.profile_id});
+            profileMessage.textContent = "Profile soft-deleted. Historical records were preserved.";
+            await loadProfiles();
+          } catch (error) {
+            profileMessage.textContent = "Could not delete profile: " + error.message;
+          } finally {
+            deleteButton.disabled = !backendReady;
+          }
+        });
+        card.appendChild(deleteButton);
+        profileList.appendChild(card);
+      });
+      profileSelectOptions();
+    }
+
+    async function loadProfiles() {
+      try {
+        const data = await apiRequest("/api/profiles");
+        if (!Array.isArray(data.profiles) || typeof data.database_available !== "boolean") {
+          throw new Error("Profile API response failed schema validation.");
+        }
+        profiles = data.profiles.filter(profile =>
+          profile && typeof profile.profile_id === "string" &&
+          typeof profile.name === "string" && typeof profile.status === "string" &&
+          Array.isArray(profile.source_wallets) && Array.isArray(profile.balances)
+        );
+        renderProfiles();
+        profileCreateButton.disabled = !backendReady;
+        profileRefreshButton.disabled = !backendReady;
+        profileMessage.textContent = data.error
+          ? data.error
+          : data.database_available
+            ? "Loaded " + profiles.length + " destination profile(s)."
+            : "Profile database does not exist yet. Creating a profile will initialize it.";
+        if (profiles.length && !historyProfile.value) historyProfile.value = profiles[0].profile_id;
+        await loadProfileTransactions();
+      } catch (error) {
+        profiles = [];
+        renderProfiles();
+        profileMessage.textContent = "Profiles unavailable: " + error.message;
+        historyMessage.textContent = "Transaction history unavailable until profiles load.";
+        historyList.replaceChildren();
+        addText(historyList, "Profile API unavailable.", "p", "empty");
+      }
+    }
+
+    async function loadProfileTransactions(resetPage = false) {
+      const profileId = historyProfile.value;
+      historyList.replaceChildren();
+      if (!profileId) {
+        historyMessage.textContent = "Choose a profile to load history.";
+        historyPageLabel.textContent = "Page 0 of 0";
+        historyPrev.disabled = true;
+        historyNext.disabled = true;
+        return;
+      }
+      if (resetPage) historyPage = 1;
+      const tokenMint = historyTokenMint.value.trim();
+      if (tokenMint && !ADDRESS_PATTERN.test(tokenMint)) {
+        historyMessage.textContent = "Token mint filter must be a valid-looking public address.";
+        historyTokenMint.focus();
+        return;
+      }
+      const params = new URLSearchParams({
+        profile_id: profileId,
+        page: String(historyPage),
+        page_size: "25"
+      });
+      if (historyClassification.value) params.set("classification", historyClassification.value);
+      if (historyStatus.value) params.set("status", historyStatus.value);
+      if (tokenMint) params.set("token_mint", tokenMint);
+      historyMessage.textContent = "Loading transaction history…";
+      historyPrev.disabled = true;
+      historyNext.disabled = true;
+      try {
+        const data = await apiRequest("/api/profile-transactions?" + params.toString());
+        if (!Array.isArray(data.transactions) || !Number.isInteger(data.page) ||
+            !Number.isInteger(data.pages) || !Number.isInteger(data.total)) {
+          throw new Error("Transaction API response failed schema validation.");
+        }
+        historyPages = data.pages;
+        historyPage = data.page;
+        if (!data.transactions.length) {
+          addText(historyList, "No transactions match these filters.", "p", "empty");
+        }
+        data.transactions.forEach(tx => {
+          const card = document.createElement("article");
+          card.className = "history-item";
+          const classification = typeof tx.classification === "string"
+            ? tx.classification : "UNKNOWN";
+          const classificationClass = classification === "BUY_CANDIDATE"
+            ? "classification-buy" : classification === "SELL_CANDIDATE"
+              ? "classification-sell" : classification === "UNKNOWN"
+                ? "classification-unknown" : "";
+          addText(card, classification, "h3", classificationClass);
+          addText(card, "Status: " + (tx.status || "unknown"), "span",
+            "status-pill " + (tx.status === "confirmed" ? "status-ok" :
+              tx.status === "failed" ? "status-error" :
+              tx.status === "pending" || tx.status === "unknown" ? "status-warning" : ""));
+          addText(card, "Signature: " + (tx.signature || "unavailable"), "p", "mono");
+          addText(card, "Source wallet: " + (tx.source_wallet_address || "unavailable"), "p", "mono");
+          addText(card, "Token mint: " + (tx.token_mint || "not recorded"), "p", "mono");
+          addText(card, "Amount: " + (tx.amount === null || tx.amount === undefined ? "unavailable" : tx.amount) +
+            " | raw amount: " + (tx.raw_amount ?? "not recorded") +
+            " | decimals: " + (tx.token_decimals ?? "unknown"), "p", "history-meta");
+          addText(card, "Timestamp: " + (tx.observed_at || "unknown") +
+            " | status: " + (tx.status || "unknown") +
+            " | slot: " + (tx.slot ?? "unknown"), "p", "history-meta");
+          const evidence = tx.evidence && typeof tx.evidence === "object"
+            ? JSON.stringify(tx.evidence) : "Evidence unavailable";
+          addText(card, "Classification evidence: " + evidence, "p", "history-meta");
+          addText(card, "Transaction fee: unavailable in the stored profile transaction schema.", "p", "muted");
+          addText(card, "Record source: observed transaction metadata; simulated: no", "p", "muted");
+          historyList.appendChild(card);
+        });
+        historyMessage.textContent = "Showing " + data.transactions.length + " of " + data.total +
+          " matching stored transaction(s). History is bounded to 25 records per page.";
+        historyPageLabel.textContent = "Page " + (data.pages ? data.page : 0) + " of " + data.pages;
+        historyPrev.disabled = data.page <= 1;
+        historyNext.disabled = data.page >= data.pages;
+      } catch (error) {
+        historyMessage.textContent = "Transaction history unavailable: " + error.message;
+        addText(historyList, "No potentially stale results are displayed after an API error.", "p", "empty");
+        historyPageLabel.textContent = "Page unavailable";
+      }
+    }
+
+
+
+
+    async function loadRpcHealth() {
+      try {
+        const data = await apiRequest("/api/rpc-health");
+        if (data.mode !== "READ_ONLY" || typeof data.available !== "boolean" ||
+            typeof data.status !== "string" || typeof data.checked_at !== "string") {
+          throw new Error("RPC health response failed schema validation.");
+        }
+        overviewRpc.textContent = data.available
+          ? "Connected — getHealth: ok | checked " + data.checked_at
+          : "Unavailable — " + data.status + (data.error ? " (" + data.error + ")" : "") +
+            " | checked " + data.checked_at;
+        overviewRpc.className = "overview-value " +
+          (data.available ? "status-ok" : "status-error");
+      } catch (error) {
+        overviewRpc.textContent = "Unavailable — health probe failed: " + error.message;
+        overviewRpc.className = "overview-value status-error";
+      }
+    }
+
 
     async function loadWallets() {
       try {
@@ -726,17 +1574,100 @@
         message.textContent = "Connected. Saved wallet list loaded.";
 
         await loadMonitorStatus();
+        await loadSimulationReport();
+        await loadProfiles();
       } catch (error) {
         backendReady = false;
         addButton.disabled = true;
         startButton.disabled = true;
         stopButton.disabled = true;
+        monitorStatus.textContent = "Monitoring status unavailable while the backend is disconnected.";
+        simulationStatus.textContent = "Paper simulation report unavailable while the backend is disconnected.";
+        simulationBalances.replaceChildren();
+        simulationPnl.replaceChildren();
+        simulationOrders.replaceChildren();
+        simulationFills.replaceChildren();
+        profiles = [];
+        renderProfiles();
+        profileCreateButton.disabled = true;
+        profileRefreshButton.disabled = true;
+        historyFilterButton.disabled = true;
+        historyMessage.textContent = "Transaction history unavailable while the backend is disconnected.";
+        historyList.replaceChildren();
+        addText(historyList, "Backend unavailable.", "p", "empty");
 
         renderWallets();
-        message.textContent =
-          "Backend unavailable. Start dashboard/server.py first.";
+        message.textContent = error.message || "Backend unavailable. Start dashboard/server.py first.";
       }
     }
+
+
+    profileForm.addEventListener("submit", async event => {
+      event.preventDefault();
+      if (!backendReady) {
+        profileMessage.textContent = "Backend is not connected.";
+        return;
+      }
+      const name = profileNameInput.value.trim();
+      const destination = profileDestinationInput.value.trim();
+      if (!name || name.length > 80) {
+        profileMessage.textContent = "Profile name must contain 1–80 characters.";
+        profileNameInput.focus();
+        return;
+      }
+      if (destination && !ADDRESS_PATTERN.test(destination)) {
+        profileMessage.textContent = "Destination must be a valid-looking public address.";
+        profileDestinationInput.focus();
+        return;
+      }
+      let settings;
+      try {
+        settings = JSON.parse(profileSettingsInput.value);
+        if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+          throw new Error("Settings must be a JSON object.");
+        }
+      } catch (error) {
+        profileMessage.textContent = "Invalid settings JSON: " + error.message;
+        profileSettingsInput.focus();
+        return;
+      }
+      profileCreateButton.disabled = true;
+      try {
+        await postProfile({action: "create", name,
+          destination_public_address: destination || null, settings});
+        profileForm.reset();
+        profileSettingsInput.value = "{}";
+        profileMessage.textContent = "Profile created disabled by default. No monitoring or trading was started.";
+        await loadProfiles();
+      } catch (error) {
+        profileMessage.textContent = "Could not create profile: " + error.message;
+      } finally {
+        profileCreateButton.disabled = !backendReady;
+      }
+    });
+
+    profileRefreshButton.addEventListener("click", loadProfiles);
+    historyProfile.addEventListener("change", () => loadProfileTransactions(true));
+    historyFilterButton.addEventListener("click", () => loadProfileTransactions(true));
+    historyResetButton.addEventListener("click", () => {
+      historyClassification.value = "";
+      historyStatus.value = "";
+      historyTokenMint.value = "";
+      loadProfileTransactions(true);
+    });
+    historyPrev.addEventListener("click", () => {
+      if (historyPage > 1) {
+        historyPage -= 1;
+        loadProfileTransactions();
+      }
+    });
+    historyNext.addEventListener("click", () => {
+      if (historyPage < historyPages) {
+        historyPage += 1;
+        loadProfileTransactions();
+      }
+    });
+
 
     form.addEventListener("submit", async event => {
       event.preventDefault();
@@ -848,6 +1779,10 @@
         loadMonitorStatus();
       }
     }, 5000);
+
+    window.setInterval(() => {
+      if (backendReady) loadRpcHealth();
+    }, 30000);
   </script>
 </body>
 </html>

@@ -1,0 +1,2 @@
+signature,expected_label,predicted_label,reviewed,notes
+# Replace this comment row with real transaction signatures and labels; leave unreviewed rows out of metrics.

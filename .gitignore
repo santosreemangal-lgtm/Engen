@@ -1,0 +1,23 @@
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+**/*.key
+**/*.pem
+**/*.seed
+**/*.secret
+
+# Python-generated files
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Local databases and logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Local dashboard state
+Engen-main/Engen-main/dashboard/wallets.json
+Engen-main/Engen-main/dashboard/wallets.tmp

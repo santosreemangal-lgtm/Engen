@@ -15,13 +15,13 @@ class PendingRetryTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         db_path = Path(self.temp_dir.name) / "pending_retry.db"
         self.store = SignatureStore(db_path=db_path)
-        self.wallet = "test_public_wallet"
+        self.wallet = "11111111111111111111111111111111"
 
     def tearDown(self):
         self.temp_dir.cleanup()
 
     def test_unavailable_signature_is_retried_until_processed(self):
-        signature = "new-signature"
+        signature = "1111111111111111111111111111111111111111111111111111111111111113"
 
         with (
             patch(
@@ -32,7 +32,7 @@ class PendingRetryTests(unittest.TestCase):
             ) as mock_process,
         ):
             mock_get_signatures.side_effect = [
-                [{"signature": "historical-signature"}],
+                [{"signature": "1111111111111111111111111111111111111111111111111111111111111112"}],
                 [{"signature": signature}],
                 [{"signature": signature}],
                 [{"signature": signature}],
@@ -98,7 +98,7 @@ class PendingRetryTests(unittest.TestCase):
             self.assertEqual(mock_process.call_count, 2)
 
     def test_rpc_error_keeps_signature_pending_for_retry(self):
-        signature = "retry-after-rpc-error"
+        signature = "1111111111111111111111111111111111111111111111111111111111111114"
 
         with (
             patch(

@@ -42,13 +42,15 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
     mode = _read(env, "ENGINE_MODE", "read_only").lower() or "read_only"
     if mode not in ALLOWED_MODES:
         problems.append(
-            "ENGINE_MODE must be one of %s, got %r" % (list(ALLOWED_MODES), mode)
+            "ENGINE_MODE must be one of the supported safe modes: %s"
+            % (list(ALLOWED_MODES),)
         )
 
     level = _read(env, "LOG_LEVEL", "INFO").upper() or "INFO"
     if level not in VALID_LOG_LEVELS:
         problems.append(
-            "LOG_LEVEL must be one of %s, got %r" % (list(VALID_LOG_LEVELS), level)
+            "LOG_LEVEL must be one of the supported levels: %s"
+            % (list(VALID_LOG_LEVELS),)
         )
 
     live = _read(env, "LIVE_TRADING_ENABLED", "false").lower()

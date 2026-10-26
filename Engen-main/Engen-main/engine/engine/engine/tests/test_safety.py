@@ -1,4 +1,8 @@
+import ast
 import unittest
+from pathlib import Path
+
+from engine import paper_trader
 from dataclasses import replace
 
 from engine.safety import (
@@ -33,6 +37,23 @@ class EmergencyStopTests(unittest.TestCase):
             "disabled by project policy",
         ):
             attempted_override.require_execution_permitted()
+
+    def test_paper_trader_has_no_network_or_signing_imports(self):
+        source = Path(paper_trader.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        imported_roots = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported_roots.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported_roots.add(node.module.split(".")[0])
+
+        self.assertTrue(imported_roots.isdisjoint({
+            "solana", "solders", "urllib", "requests", "httpx"
+        }))
+        self.assertNotIn("sendTransaction", source)
+        self.assertNotIn("send_raw_transaction", source)
+        self.assertNotIn("sign_transaction", source)
 
 
 if __name__ == "__main__":

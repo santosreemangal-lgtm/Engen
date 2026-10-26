@@ -3,7 +3,8 @@ import tempfile
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
-from urllib.request import urlopen
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from pathlib import Path
 from unittest.mock import patch
 
@@ -81,3 +82,26 @@ class DashboardSecurityHeaderTests(unittest.TestCase):
             self.assertIn("camera=()", policy)
             self.assertIn("microphone=()", policy)
             self.assertIn("geolocation=()", policy)
+
+    def test_post_rejects_non_json_content_type(self):
+        request = Request(
+            self.url.replace("/api/monitor", "/api/wallets"),
+            data=b"{}",
+            headers={"Content-Type": "text/plain"},
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(request, timeout=2)
+        self.assertEqual(caught.exception.code, 415)
+        self.assertIn("application/json", caught.exception.read().decode("utf-8"))
+
+    def test_post_rejects_malformed_json(self):
+        request = Request(
+            self.url.replace("/api/monitor", "/api/wallets"),
+            data=b"{not-json",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(request, timeout=2)
+        self.assertEqual(caught.exception.code, 400)

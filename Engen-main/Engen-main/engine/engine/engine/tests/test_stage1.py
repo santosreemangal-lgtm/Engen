@@ -84,6 +84,7 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(status["status"], "ok")
         self.assertEqual(status["stage"], 1)
         self.assertFalse(status["live_trading_enabled"])
+        self.assertTrue(status["emergency_stop_engaged"])
 
     def test_all_checks_pass_by_default(self):
         results = run_checks(load_config({}))

@@ -1,0 +1,464 @@
+"""Read-only transaction analysis helpers for public Solana data."""
+
+from collections.abc import Mapping
+import re
+
+
+WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112"
+NATIVE_SOL_SOURCE = "native_sol"
+
+# Recognized SPL quote-token mints.
+QUOTE_TOKEN_MINTS = frozenset({
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",  # USDT
+    WRAPPED_SOL_MINT,
+})
+
+
+def analyze_transaction(transaction):
+    """Return a normalized transaction summary, including signer keys."""
+
+    if not isinstance(transaction, Mapping):
+        raise ValueError("Transaction data must be a mapping.")
+
+    meta = transaction.get("meta")
+
+    if not isinstance(meta, Mapping):
+        return {
+            "available": False,
+            "error": "Transaction metadata is unavailable.",
+        }
+
+    error = meta.get("err")
+    status = "failed" if error is not None else "success"
+
+    transaction_data = transaction.get("transaction", {})
+
+    if not isinstance(transaction_data, Mapping):
+        transaction_data = {}
+
+    message_data = transaction_data.get("message", {})
+
+    if not isinstance(message_data, Mapping):
+        message_data = {}
+
+    account_keys = message_data.get("accountKeys", [])
+
+    if not isinstance(account_keys, list):
+        account_keys = []
+
+    def normalize_pubkey(item):
+        if isinstance(item, str) and item:
+            return item
+
+        if isinstance(item, Mapping):
+            pubkey = item.get("pubkey")
+            if isinstance(pubkey, str) and pubkey:
+                return pubkey
+
+        return None
+
+    signers = []
+    header = message_data.get("header")
+
+    if isinstance(header, Mapping):
+        required = header.get("numRequiredSignatures")
+
+        if (
+            isinstance(required, int)
+            and not isinstance(required, bool)
+            and 0 <= required <= len(account_keys)
+        ):
+            signers = [
+                normalize_pubkey(item)
+                for item in account_keys[:required]
+            ]
+            signers = [pubkey for pubkey in signers if pubkey]
+
+    # Support parsed account keys that explicitly include signer flags.
+    # If the header did not produce signer keys, use those flags.
+    if not signers:
+        signers = [
+            pubkey
+            for item in account_keys
+            if isinstance(item, Mapping)
+            and item.get("signer") is True
+            for pubkey in [normalize_pubkey(item)]
+            if pubkey
+        ]
+
+    return {
+        "available": True,
+        "status": status,
+        "slot": transaction.get("slot"),
+        "fee": meta.get("fee"),
+        "account_count": len(account_keys),
+        "signers": signers,
+        "error": error,
+    }
+
+
+def analyze_token_balance_changes(meta):
+    """Extract exact SPL-token balance changes from transaction metadata."""
+
+    if not isinstance(meta, Mapping):
+        return []
+
+    pre_balances = meta.get("preTokenBalances", [])
+    post_balances = meta.get("postTokenBalances", [])
+
+    if not isinstance(pre_balances, list):
+        pre_balances = []
+
+    if not isinstance(post_balances, list):
+        post_balances = []
+
+    def normalize_balances(balances):
+        normalized = {}
+
+        for item in balances:
+            if not isinstance(item, Mapping):
+                continue
+
+            mint = item.get("mint")
+            account_index = item.get("accountIndex")
+            amount_data = item.get("uiTokenAmount")
+
+            if (
+                not isinstance(mint, str)
+                or not mint
+                or not isinstance(account_index, int)
+                or isinstance(account_index, bool)
+                or not isinstance(amount_data, Mapping)
+            ):
+                continue
+
+            raw_amount = amount_data.get("amount")
+            decimals = amount_data.get("decimals")
+
+            if (
+                not isinstance(raw_amount, str)
+                or not raw_amount.isdigit()
+                or not isinstance(decimals, int)
+                or isinstance(decimals, bool)
+                or decimals < 0
+            ):
+                continue
+
+            owner = item.get("owner")
+            key = (account_index, mint, owner)
+
+            normalized[key] = {
+                "account_index": account_index,
+                "mint": mint,
+                "owner": owner,
+                "amount": int(raw_amount),
+                "decimals": decimals,
+            }
+
+        return normalized
+
+    before = normalize_balances(pre_balances)
+    after = normalize_balances(post_balances)
+
+    changes = []
+
+    for key in before.keys() | after.keys():
+        old = before.get(key)
+        new = after.get(key)
+
+        old_amount = old["amount"] if old else 0
+        new_amount = new["amount"] if new else 0
+
+        decimals = new["decimals"] if new else old["decimals"]
+
+        if old and new and old["decimals"] != new["decimals"]:
+            continue
+
+        delta = new_amount - old_amount
+
+        if delta == 0:
+            continue
+
+        changes.append({
+            "account_index": key[0],
+            "mint": key[1],
+            "owner": key[2],
+            "decimals": decimals,
+            "pre_amount": str(old_amount),
+            "post_amount": str(new_amount),
+            "delta_amount": str(delta),
+        })
+
+    return sorted(
+        changes,
+        key=lambda item: (item["account_index"], item["mint"]),
+    )
+
+
+def analyze_native_sol_balance_changes(transaction):
+    """Extract native SOL balance changes, expressed in lamports.
+
+    For the fee payer (account index zero), the network transaction fee is
+    added back to the raw balance delta. This estimates the movement excluding
+    the network fee, but does not remove rent, transfers, or other SOL uses.
+
+    This is a heuristic input for classification, not proof of a swap.
+    """
+
+    if not isinstance(transaction, Mapping):
+        return []
+
+    meta = transaction.get("meta")
+
+    if not isinstance(meta, Mapping):
+        return []
+
+    pre_balances = meta.get("preBalances")
+    post_balances = meta.get("postBalances")
+
+    if (
+        not isinstance(pre_balances, list)
+        or not isinstance(post_balances, list)
+        or len(pre_balances) != len(post_balances)
+    ):
+        return []
+
+    transaction_data = transaction.get("transaction")
+
+    if not isinstance(transaction_data, Mapping):
+        return []
+
+    message = transaction_data.get("message")
+
+    if not isinstance(message, Mapping):
+        return []
+
+    raw_keys = message.get("accountKeys")
+
+    if not isinstance(raw_keys, list):
+        return []
+
+    def normalize_key(item):
+        if isinstance(item, str) and item:
+            return item
+
+        if isinstance(item, Mapping):
+            pubkey = item.get("pubkey")
+            if isinstance(pubkey, str) and pubkey:
+                return pubkey
+
+        return None
+
+    # Preserve positions: account indexes must align with pre/post balances.
+    account_keys = [normalize_key(item) for item in raw_keys]
+
+    # For versioned transactions, loaded addresses follow static keys:
+    # writable addresses first, then read-only addresses.
+    loaded_addresses = meta.get("loadedAddresses")
+
+    if isinstance(loaded_addresses, Mapping):
+        for group in ("writable", "readonly"):
+            values = loaded_addresses.get(group, [])
+
+            if isinstance(values, list):
+                account_keys.extend(normalize_key(item) for item in values)
+
+    fee = meta.get("fee")
+    valid_fee = (
+        isinstance(fee, int)
+        and not isinstance(fee, bool)
+        and fee >= 0
+    )
+
+    changes = []
+    count = min(len(account_keys), len(pre_balances))
+
+    for index in range(count):
+        owner = account_keys[index]
+        before = pre_balances[index]
+        after = post_balances[index]
+
+        if (
+            not isinstance(owner, str)
+            or not isinstance(before, int)
+            or isinstance(before, bool)
+            or before < 0
+            or not isinstance(after, int)
+            or isinstance(after, bool)
+            or after < 0
+        ):
+            continue
+
+        raw_delta = after - before
+        adjusted_delta = raw_delta
+        fee_adjusted = False
+
+        # The first account is the transaction fee payer. Without a valid fee
+        # value, skip this account rather than treating the fee as swap spend.
+        if index == 0:
+            if not valid_fee:
+                continue
+
+            adjusted_delta += fee
+            fee_adjusted = True
+
+        if adjusted_delta == 0:
+            continue
+
+        changes.append({
+            "account_index": index,
+            "mint": WRAPPED_SOL_MINT,
+            "owner": owner,
+            "decimals": 9,
+            "pre_amount": str(before),
+            "post_amount": str(after),
+            "delta_amount": str(adjusted_delta),
+            "raw_delta_amount": str(raw_delta),
+            "fee_adjusted": fee_adjusted,
+            "source": NATIVE_SOL_SOURCE,
+        })
+
+    return changes
+
+
+def classify_token_balance_changes(token_balance_changes, wallet_address):
+    """Conservatively classify a wallet's balance deltas.
+
+    This is a heuristic, not proof of a swap. Native SOL movements can include
+    rent, transfers, and other uses. Native SOL is not combined with wrapped
+    SOL or other SPL quote-token movements.
+    """
+
+    def unknown(reason):
+        return {
+            "classification": "UNKNOWN",
+            "reason": reason,
+            "asset_mints": [],
+            "quote_mints": [],
+        }
+
+    if not isinstance(wallet_address, str) or not wallet_address.strip():
+        return unknown("A monitored wallet address is required.")
+
+    if not isinstance(token_balance_changes, list):
+        return unknown("Token balance changes are unavailable.")
+
+    token_deltas = {}
+    native_sol_delta = 0
+    native_sol_seen = False
+
+    for change in token_balance_changes:
+        if not isinstance(change, Mapping):
+            continue
+
+        if change.get("owner") != wallet_address:
+            continue
+
+        mint = change.get("mint")
+        raw_delta = change.get("delta_amount")
+
+        if not isinstance(mint, str) or not mint:
+            continue
+
+        if (
+            not isinstance(raw_delta, str)
+            or re.fullmatch(r"-?\d+", raw_delta) is None
+        ):
+            continue
+
+        delta = int(raw_delta)
+
+        if delta == 0:
+            continue
+
+        if change.get("source") == NATIVE_SOL_SOURCE:
+            if (
+                mint != WRAPPED_SOL_MINT
+                or change.get("decimals") != 9
+            ):
+                return unknown("Native SOL balance change is invalid.")
+
+            native_sol_seen = True
+            native_sol_delta += delta
+            continue
+
+        token_deltas[mint] = token_deltas.get(mint, 0) + delta
+
+    token_deltas = {
+        mint: delta
+        for mint, delta in token_deltas.items()
+        if delta != 0
+    }
+
+    token_quote_deltas = {
+        mint: delta
+        for mint, delta in token_deltas.items()
+        if mint in QUOTE_TOKEN_MINTS
+    }
+
+    asset_deltas = {
+        mint: delta
+        for mint, delta in token_deltas.items()
+        if mint not in QUOTE_TOKEN_MINTS
+    }
+
+    # Do not mix native SOL with wrapped SOL, USDC, or USDT movements.
+    if native_sol_seen:
+        if token_quote_deltas:
+            return unknown(
+                "Both native SOL and SPL quote-token movements are present."
+            )
+
+        token_quote_deltas = {
+            WRAPPED_SOL_MINT: native_sol_delta,
+        }
+
+    if not token_deltas and not native_sol_seen:
+        return unknown(
+            "No usable balance changes owned by the monitored wallet."
+        )
+
+    if not token_quote_deltas:
+        return unknown(
+            "No recognized quote-token movement or native SOL movement."
+        )
+
+    if not asset_deltas:
+        return unknown("No non-quote token movement was found.")
+
+    if (
+        all(delta > 0 for delta in asset_deltas.values())
+        and all(delta < 0 for delta in token_quote_deltas.values())
+    ):
+        return {
+            "classification": "BUY_CANDIDATE",
+            "reason": (
+                "A non-quote token increased while a recognized quote "
+                "asset decreased."
+            ),
+            "asset_mints": sorted(asset_deltas),
+            "quote_mints": sorted(token_quote_deltas),
+        }
+
+    if (
+        all(delta < 0 for delta in asset_deltas.values())
+        and all(delta > 0 for delta in token_quote_deltas.values())
+    ):
+        return {
+            "classification": "SELL_CANDIDATE",
+            "reason": (
+                "A non-quote token decreased while a recognized quote "
+                "asset increased."
+            ),
+            "asset_mints": sorted(asset_deltas),
+            "quote_mints": sorted(token_quote_deltas),
+        }
+
+    return unknown(
+        "Balance changes do not show one clear quote-token swap direction."
+    )
+
+
+if __name__ == "__main__":
+    print("Transaction analysis module loaded successfully.")

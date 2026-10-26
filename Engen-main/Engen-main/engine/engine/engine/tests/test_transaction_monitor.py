@@ -1,0 +1,402 @@
+import unittest
+from unittest.mock import patch
+
+from engine.solana_public import DEFAULT_RPC_URL
+from engine.transaction_monitor import (
+    monitor_wallet,
+    process_new_signatures,
+)
+
+
+class TransactionMonitorTests(unittest.TestCase):
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_processes_valid_signatures(self, mock_process):
+        mock_process.return_value = {
+            "signature": "sig-123",
+            "available": True,
+        }
+
+        results = process_new_signatures(
+            signatures=[{"signature": "sig-123"}],
+        )
+
+        self.assertEqual(
+            results,
+            [{"signature": "sig-123", "available": True}],
+        )
+        mock_process.assert_called_once_with(
+            signature="sig-123",
+            rpc_url=DEFAULT_RPC_URL,
+            timeout=10,
+        )
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_skips_invalid_signature_records(self, mock_process):
+        mock_process.return_value = {
+            "signature": "valid-signature",
+            "available": True,
+        }
+
+        results = process_new_signatures(
+            signatures=[
+                None,
+                "invalid-record",
+                {},
+                {"signature": ""},
+                {"signature": 123},
+                {"signature": "valid-signature"},
+            ],
+        )
+
+        self.assertEqual(
+            results,
+            [{
+                "signature": "valid-signature",
+                "available": True,
+            }],
+        )
+        mock_process.assert_called_once_with(
+            signature="valid-signature",
+            rpc_url=DEFAULT_RPC_URL,
+            timeout=10,
+        )
+
+    def test_rejects_non_list_input(self):
+        with self.assertRaises(ValueError):
+            process_new_signatures(
+                signatures={"signature": "sig-123"},
+            )
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_processes_multiple_signatures(self, mock_process):
+        mock_process.side_effect = [
+            {
+                "signature": "sig-1",
+                "available": True,
+            },
+            {
+                "signature": "sig-2",
+                "available": False,
+                "error": "Transaction data is not available yet.",
+            },
+        ]
+
+        results = process_new_signatures(
+            signatures=[
+                {"signature": "sig-1"},
+                {"signature": "sig-2"},
+            ],
+        )
+
+        self.assertEqual(
+            results,
+            [
+                {
+                    "signature": "sig-1",
+                    "available": True,
+                },
+                {
+                    "signature": "sig-2",
+                    "available": False,
+                    "error": "Transaction data is not available yet.",
+                    "retryable": True,
+                },
+            ],
+        )
+        self.assertEqual(mock_process.call_count, 2)
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_custom_rpc_settings_are_forwarded(self, mock_process):
+        mock_process.return_value = {
+            "signature": "sig-custom",
+            "available": True,
+        }
+
+        results = process_new_signatures(
+            signatures=[{"signature": "sig-custom"}],
+            rpc_url="https://example.com",
+            timeout=5,
+        )
+
+        self.assertEqual(len(results), 1)
+        mock_process.assert_called_once_with(
+            signature="sig-custom",
+            rpc_url="https://example.com",
+            timeout=5,
+        )
+
+    def test_monitor_wallet_processes_new_signatures(self):
+        with (
+            patch("engine.transaction_monitor.SignatureStore") as mock_store_class,
+            patch(
+                "engine.transaction_monitor.get_and_store_new_wallet_signatures"
+            ) as mock_get_new,
+            patch(
+                "engine.transaction_monitor.process_new_signatures"
+            ) as mock_process_new,
+        ):
+            mock_store = mock_store_class.return_value
+            mock_get_new.return_value = [
+                {"signature": "new-signature"},
+            ]
+            mock_process_new.return_value = [
+                {
+                    "signature": "new-signature",
+                    "available": True,
+                },
+            ]
+
+            results = monitor_wallet(
+                wallet_address="PublicWalletAddress",
+                limit=5,
+                rpc_url="https://example.com",
+                timeout=7,
+            )
+
+            self.assertEqual(len(results), 1)
+            mock_get_new.assert_called_once()
+
+            process_kwargs = mock_process_new.call_args.kwargs
+
+            self.assertEqual(
+                process_kwargs["signatures"],
+                [{"signature": "new-signature"}],
+            )
+            self.assertEqual(
+                process_kwargs["rpc_url"],
+                "https://example.com",
+            )
+            self.assertEqual(process_kwargs["timeout"], 7)
+            self.assertEqual(
+                process_kwargs["wallet_address"],
+                "PublicWalletAddress",
+            )
+            self.assertIs(process_kwargs["store"], mock_store)
+
+    def test_monitor_wallet_rejects_empty_address(self):
+        with self.assertRaises(ValueError):
+            monitor_wallet("")
+
+    def test_monitor_wallet_returns_empty_when_no_new_signatures(self):
+        with (
+            patch("engine.transaction_monitor.SignatureStore") as mock_store_class,
+            patch(
+                "engine.transaction_monitor.get_and_store_new_wallet_signatures"
+            ) as mock_get_new,
+            patch(
+                "engine.transaction_monitor.process_new_signatures"
+            ) as mock_process_new,
+        ):
+            mock_store = mock_store_class.return_value
+            mock_get_new.return_value = []
+            mock_process_new.return_value = []
+
+            results = monitor_wallet(
+                wallet_address="PublicWalletAddress",
+            )
+
+            self.assertEqual(results, [])
+            mock_get_new.assert_called_once()
+
+            process_kwargs = mock_process_new.call_args.kwargs
+
+            self.assertEqual(process_kwargs["signatures"], [])
+            self.assertEqual(
+                process_kwargs["rpc_url"],
+                DEFAULT_RPC_URL,
+            )
+            self.assertEqual(process_kwargs["timeout"], 10)
+            self.assertEqual(
+                process_kwargs["wallet_address"],
+                "PublicWalletAddress",
+            )
+            self.assertIs(process_kwargs["store"], mock_store)
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_filters_token_balance_changes_to_watched_wallet(
+        self,
+        mock_process,
+    ):
+        watched_wallet = "wallet-watched"
+        own_change = {
+            "owner": watched_wallet,
+            "mint": "mint-own",
+            "delta_amount": "100",
+        }
+        other_change = {
+            "owner": "wallet-other",
+            "mint": "mint-other",
+            "delta_amount": "-100",
+        }
+        unknown_owner_change = {
+            "mint": "mint-unknown",
+            "delta_amount": "50",
+        }
+
+        mock_process.return_value = {
+            "signature": "sig-123",
+            "available": True,
+            "token_balance_changes": [
+                own_change,
+                other_change,
+                unknown_owner_change,
+            ],
+        }
+
+        results = process_new_signatures(
+            signatures=[{"signature": "sig-123"}],
+            wallet_address=watched_wallet,
+        )
+
+        self.assertEqual(
+            results[0]["token_balance_changes"],
+            [own_change],
+        )
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_classifies_successful_monitored_transaction(self, mock_process):
+        wallet = "wallet-watched"
+        changes = [
+            {
+                "owner": wallet,
+                "mint": "TOKEN_A",
+                "delta_amount": "500",
+            },
+            {
+                "owner": wallet,
+                "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                "delta_amount": "-1000000",
+            },
+        ]
+
+        mock_process.return_value = {
+            "signature": "sig-buy",
+            "available": True,
+            "status": "success",
+            "signers": [wallet],
+            "token_balance_changes": changes,
+        }
+
+        results = process_new_signatures(
+            signatures=[{"signature": "sig-buy"}],
+            wallet_address=wallet,
+        )
+
+        self.assertEqual(
+            results[0]["trade_signal"]["classification"],
+            "BUY_CANDIDATE",
+        )
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_unknown_when_monitored_wallet_is_not_a_signer(
+        self,
+        mock_process,
+    ):
+        wallet = "wallet-watched"
+        changes = [
+            {
+                "owner": wallet,
+                "mint": "TOKEN_A",
+                "delta_amount": "500",
+            },
+            {
+                "owner": wallet,
+                "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                "delta_amount": "-1000000",
+            },
+        ]
+
+        mock_process.return_value = {
+            "signature": "sig-other-signer",
+            "available": True,
+            "status": "success",
+            "signers": ["wallet-other"],
+            "token_balance_changes": changes,
+        }
+
+        results = process_new_signatures(
+            signatures=[{"signature": "sig-other-signer"}],
+            wallet_address=wallet,
+        )
+
+        self.assertEqual(
+            results[0]["trade_signal"]["classification"],
+            "UNKNOWN",
+        )
+        self.assertEqual(
+            results[0]["trade_signal"]["asset_mints"],
+            [],
+        )
+        self.assertEqual(
+            results[0]["trade_signal"]["quote_mints"],
+            [],
+        )
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_unknown_when_signer_information_is_missing(
+        self,
+        mock_process,
+    ):
+        wallet = "wallet-watched"
+
+        mock_process.return_value = {
+            "signature": "sig-no-signer-data",
+            "available": True,
+            "status": "success",
+            "token_balance_changes": [
+                {
+                    "owner": wallet,
+                    "mint": "TOKEN_A",
+                    "delta_amount": "500",
+                },
+                {
+                    "owner": wallet,
+                    "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    "delta_amount": "-1000000",
+                },
+            ],
+        }
+
+        results = process_new_signatures(
+            signatures=[{"signature": "sig-no-signer-data"}],
+            wallet_address=wallet,
+        )
+
+        self.assertEqual(
+            results[0]["trade_signal"]["classification"],
+            "UNKNOWN",
+        )
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_unavailable_transaction_is_returned_for_visibility(
+        self,
+        mock_process,
+    ):
+        mock_process.return_value = {
+            "signature": "pending-signature",
+            "available": False,
+            "error": "Transaction data is not available yet.",
+        }
+
+        results = process_new_signatures(
+            signatures=[
+                {"signature": "pending-signature"},
+            ],
+        )
+
+        self.assertEqual(
+            results,
+            [
+                {
+                    "signature": "pending-signature",
+                    "available": False,
+                    "error": "Transaction data is not available yet.",
+                    "retryable": True,
+                },
+            ],
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

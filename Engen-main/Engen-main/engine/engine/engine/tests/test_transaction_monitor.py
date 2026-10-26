@@ -1,7 +1,10 @@
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from engine.solana_public import DEFAULT_RPC_URL, SolanaRPCError
+from engine.signature_store import SignatureStore
 from engine.transaction_monitor import (
     monitor_wallet,
     process_new_signatures,
@@ -409,6 +412,61 @@ class TransactionMonitorTests(unittest.TestCase):
         self.assertNotIn("status", result)
         self.assertNotIn("token_balance_changes", result)
         self.assertTrue(result["retryable"])
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_rpc_failures_are_bounded_and_move_to_review(self, mock_process):
+        wallet = "11111111111111111111111111111111"
+        signature = "1" * 63 + "2"
+        with tempfile.TemporaryDirectory() as directory:
+            store = SignatureStore(Path(directory) / "signatures.db")
+            store.save(wallet, signature)
+            mock_process.side_effect = SolanaRPCError(
+                "Public Solana RPC request failed."
+            )
+            for _ in range(5):
+                result = process_new_signatures(
+                    signatures=[{"signature": signature}],
+                    wallet_address=wallet,
+                    store=store,
+                )[0]
+            self.assertEqual(result["processing_status"], "needs_review")
+            self.assertEqual(
+                store.get_status(wallet, signature),
+                "needs_review",
+            )
+            self.assertEqual(
+                store.get_error_record(wallet, signature)["attempts"],
+                5,
+            )
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_raw_transaction_is_preserved_idempotently(self, mock_process):
+        wallet = "11111111111111111111111111111111"
+        signature = "1" * 63 + "3"
+        raw = {"slot": 500, "meta": {"fee": 5000}}
+        with tempfile.TemporaryDirectory() as directory:
+            store = SignatureStore(Path(directory) / "signatures.db")
+            store.save(wallet, signature, slot=500)
+            mock_process.return_value = {
+                "signature": signature,
+                "available": True,
+                "metadata_complete": True,
+                "status": "failed",
+                "token_balance_changes": [],
+                "raw_transaction": raw,
+            }
+            for _ in range(2):
+                process_new_signatures(
+                    signatures=[{
+                        "signature": signature,
+                        "confirmationStatus": "confirmed",
+                    }],
+                    wallet_address=wallet,
+                    store=store,
+                )
+            record = store.get_transaction_record(wallet, signature)
+            self.assertEqual(record["raw_transaction"], raw)
+            self.assertEqual(record["status"], "processed")
 
     @patch("engine.transaction_monitor.process_transaction_signature")
     def test_unavailable_transaction_is_returned_for_visibility(

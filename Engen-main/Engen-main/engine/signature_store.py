@@ -194,6 +194,13 @@ class SignatureStore:
                     """,
                     (wallet_address, signature),
                 )
+                connection.execute(
+                    """UPDATE transaction_records
+                       SET processing_status = 'processed',
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE wallet_address = ? AND signature = ?""",
+                    (wallet_address, signature),
+                )
 
         return cursor.rowcount == 1
 

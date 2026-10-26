@@ -143,6 +143,9 @@ class MonitorService:
 
             with self._lock:
                 self._enabled = False
+                for details in self._wallets.values():
+                    if details.get("state") not in ("error", "stale"):
+                        details["state"] = "stopping"
                 return self.status()
 
     def stop_and_wait(self, timeout=15):
@@ -225,6 +228,9 @@ class MonitorService:
                 # The lifecycle lock ensures a replacement worker cannot
                 # start until this worker has completely exited.
                 self._enabled = False
+                if self._stop_event.is_set():
+                    for details in self._wallets.values():
+                        details["state"] = "stopped"
 
 
 if __name__ == "__main__":

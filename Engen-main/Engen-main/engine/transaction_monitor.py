@@ -3,7 +3,7 @@
 from engine.solana_public import DEFAULT_RPC_URL, SolanaRPCError
 from engine.signature_store import SignatureStore
 from engine.solana_validation import is_valid_transaction_signature
-from engine.transaction_analysis import classify_token_balance_changes
+from engine.transaction_analysis import classify_transaction
 from engine.transaction_processor import process_transaction_signature
 from engine.wallet_monitor import get_and_store_new_wallet_signatures
 
@@ -217,9 +217,10 @@ def process_new_signatures(
             else:
                 result = {
                     **result,
-                    "trade_signal": classify_token_balance_changes(
-                        result["token_balance_changes"],
+                    "trade_signal": classify_transaction(
+                        result.get("raw_transaction"),
                         wallet_address,
+                        result["token_balance_changes"],
                     ),
                 }
 

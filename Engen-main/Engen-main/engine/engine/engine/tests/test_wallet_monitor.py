@@ -26,7 +26,7 @@ class WalletMonitorTests(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
-    @patch("engine.wallet_monitor.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_before_cursor_is_sent_to_rpc(self, mock_urlopen):
         response = mock_urlopen.return_value.__enter__.return_value
         response.read.return_value = json.dumps({
@@ -227,7 +227,7 @@ class WalletMonitorTests(unittest.TestCase):
         )
 
 
-    @patch("engine.wallet_monitor.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_rpc_errors_do_not_expose_configured_url_or_credentials(
         self,
         mock_urlopen,

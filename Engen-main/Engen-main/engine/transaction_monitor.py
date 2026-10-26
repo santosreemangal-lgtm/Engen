@@ -100,8 +100,21 @@ def process_new_signatures(
             results.append(_include_signature_observation(error_result, item))
             continue
 
-        if result.get("available") is False:
-            pending_result = {**result, "retryable": True}
+        if (
+            result.get("available") is False
+            or result.get("metadata_complete") is False
+        ):
+            pending_result = {
+                **result,
+                "available": False,
+                "metadata_status": result.get(
+                    "metadata_status", "incomplete_metadata"
+                ),
+                "error": result.get(
+                    "error", "Transaction metadata is incomplete; retrying."
+                ),
+                "retryable": True,
+            }
             if (
                 wallet_address is not None
                 and store is not None

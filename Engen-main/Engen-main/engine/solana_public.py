@@ -79,10 +79,10 @@ def _rpc_request(payload, rpc_url=DEFAULT_RPC_URL, timeout=10):
     if not isinstance(data, dict):
         raise SolanaRPCError("Solana RPC returned an invalid response.")
 
-    if "jsonrpc" in data and data.get("jsonrpc") != "2.0":
-        raise SolanaRPCError("Solana RPC returned an invalid response.")
+    if data.get("jsonrpc") != "2.0":
+        raise SolanaRPCError("Solana RPC returned an invalid JSON-RPC version.")
 
-    if "id" in data and data.get("id") != payload.get("id"):
+    if data.get("id") != payload.get("id"):
         raise SolanaRPCError("Solana RPC returned a mismatched response ID.")
 
     if "error" in data:

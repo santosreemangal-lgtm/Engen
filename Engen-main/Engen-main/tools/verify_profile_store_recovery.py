@@ -4,7 +4,11 @@ This uses only temporary local files and synthetic records. It does not contact
 Solana RPC, access a real user database, or enable trading.
 """
 import tempfile
+import sys
 from pathlib import Path
+
+# Running a script from tools/ places that directory first on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from engine.profile_store import ProfileStore
 

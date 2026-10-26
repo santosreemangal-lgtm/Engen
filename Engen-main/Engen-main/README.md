@@ -27,7 +27,7 @@ The backend defaults to `127.0.0.1:8000` and refuses to bind to non-loopback int
 
 An optional API bearer token can be configured with the `DASHBOARD_AUTH_TOKEN` environment variable (at least 32 characters). When configured, every `/api/*` request requires `Authorization: Bearer <token>`; the dashboard's token field keeps the value in the current browser tab's session storage. Use a randomly generated secret, never commit it, and clear it when finished. If the variable is unset, the API is intended only for localhost use. This is a single-user dashboard, not a multi-user authorization system: do not treat a shared token as per-profile access control.
 
-State-changing browser requests with a mismatched `Origin` are rejected. Request bodies are bounded and write requests must use JSON. These controls are defense in depth, not a substitute for a properly configured authenticated HTTPS proxy when remote access is required. Monitoring is opt-in; check status before starting and stop it when finished.
+State-changing browser requests with a mismatched `Origin` are rejected. Request bodies are capped at 10,000 bytes, write requests must use JSON, and the API applies an in-memory limit of 120 requests per client IP per 60 seconds. This rate limiter is process-local; deployments with multiple workers or reverse proxies need a proxy/shared-store limit and load testing. These controls are defense in depth, not a substitute for a properly configured authenticated HTTPS proxy when remote access is required. Monitoring is opt-in; check status before starting and stop it when finished.
 
 ## API reference
 

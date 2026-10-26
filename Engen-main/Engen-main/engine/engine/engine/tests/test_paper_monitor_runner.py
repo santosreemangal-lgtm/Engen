@@ -13,7 +13,7 @@ from engine.signature_store import SignatureStore
 
 
 USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
-TEST_WALLET = "PublicWalletTestAddress"
+TEST_WALLET = "11111111111111111111111111111111"
 
 
 class PaperMonitorRunnerTests(unittest.TestCase):

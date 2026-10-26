@@ -543,8 +543,8 @@
 
 
     <section class="panel" aria-labelledby="profiles-heading">
-      <h2 id="profiles-heading">Destination Profiles</h2>
-      <p class="muted">Profiles store public destination addresses, source-wallet links, and isolated settings. Balance values are stored observations, not guaranteed live balances. Creating a profile does not enable monitoring or trading.</p>
+      <h2 id="profiles-heading">Independent Wallet Profiles</h2>
+      <p class="muted">Each profile keeps its own public wallet address, monitored trader list, settings, observed balance history, transaction history, and paper ledger. Address-only setup is read-only: it does not connect a signer or authorize transactions.</p>
       <form id="profile-form">
         <div class="profile-grid">
           <div>
@@ -552,13 +552,14 @@
             <input id="profile-name" name="profile-name" maxlength="80" required>
           </div>
           <div>
-            <label for="profile-destination">Destination public address (optional)</label>
+            <label for="profile-destination">Your wallet public address (optional, read-only)</label>
             <input id="profile-destination" name="profile-destination" autocomplete="off" spellcheck="false">
           </div>
         </div>
         <div class="profile-field">
           <label for="profile-settings-json">Initial profile settings (JSON object)</label>
           <textarea id="profile-settings-json" rows="3" required>{}</textarea>
+          <p class="muted">Optional paper_trading settings example: {"paper_trading":{"initial_quote_balance":"100","max_position_pct":25,"max_open_positions":5}}. These limits apply to the paper-only runner when started with this profile.</p>
         </div>
         <div class="profile-actions">
           <button id="profile-create-button" type="submit" disabled>Create Profile</button>
@@ -574,7 +575,7 @@
       <p class="muted">Only stored transaction records are shown. UNKNOWN or incomplete classifications remain labeled honestly. Fee and valuation fields are not invented when the stored record does not provide them.</p>
       <div class="profile-grid">
         <div>
-          <label for="history-profile">Destination profile</label>
+          <label for="history-profile">Wallet profile</label>
           <select id="history-profile" disabled>
             <option value="">No profiles available</option>
           </select>
@@ -1237,10 +1238,20 @@
     }
 
     async function loadSimulationReport() {
+      const profileId = historyProfile.value;
+      if (!profileId) {
+        simulationStatus.textContent = "Choose a wallet profile to view its isolated paper ledger.";
+        simulationBalances.replaceChildren();
+        simulationPnl.replaceChildren();
+        simulationOrders.replaceChildren();
+        simulationFills.replaceChildren();
+        return;
+      }
       try {
-        renderSimulationReport(await apiRequest("/api/paper-simulation"));
+        const params = new URLSearchParams({profile_id: profileId});
+        renderSimulationReport(await apiRequest("/api/paper-simulation?" + params.toString()));
       } catch (error) {
-        simulationStatus.textContent = "Paper simulation report unavailable: " + error.message;
+        simulationStatus.textContent = "Profile paper simulation report unavailable: " + error.message;
       }
     }
 
@@ -1270,6 +1281,32 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
+    }
+
+    async function postProfileMonitor(payload) {
+      return apiRequest("/api/profile-monitor", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+    }
+
+    async function refreshProfileMonitorStatus(profile, statusNode, startButton, stopButton) {
+      try {
+        const params = new URLSearchParams({profile_id: profile.profile_id});
+        const data = await apiRequest("/api/profile-monitor?" + params.toString());
+        const monitor = data.monitor || {};
+        const count = Array.isArray(monitor.wallets) ? monitor.wallets.length : 0;
+        statusNode.textContent = "This profile monitor: " +
+          (monitor.enabled ? "RUNNING" : "STOPPED") + " | monitored traders: " + count;
+        startButton.disabled = !backendReady || profile.status !== "active" ||
+          !profile.source_wallets.length || Boolean(monitor.enabled);
+        stopButton.disabled = !backendReady || !monitor.enabled;
+      } catch (error) {
+        statusNode.textContent = "Profile monitor status unavailable: " + error.message;
+        startButton.disabled = true;
+        stopButton.disabled = true;
+      }
     }
 
     function profileSelectOptions() {
@@ -1442,6 +1479,50 @@
         });
         card.appendChild(sourceForm);
 
+        addText(card, "Profile-specific read-only monitoring", "h4");
+        const monitorStatusNode = document.createElement("p");
+        monitorStatusNode.className = "muted";
+        monitorStatusNode.setAttribute("role", "status");
+        monitorStatusNode.setAttribute("aria-live", "polite");
+        monitorStatusNode.textContent = "Checking this profile's monitor status…";
+        card.appendChild(monitorStatusNode);
+        const monitorActions = document.createElement("div");
+        monitorActions.className = "profile-actions";
+        const startProfileMonitorButton = document.createElement("button");
+        startProfileMonitorButton.type = "button";
+        startProfileMonitorButton.textContent = "Start this profile";
+        startProfileMonitorButton.disabled = !backendReady || profile.status !== "active" || !profile.source_wallets.length;
+        startProfileMonitorButton.addEventListener("click", async () => {
+          startProfileMonitorButton.disabled = true;
+          try {
+            await postProfileMonitor({action: "start", profile_id: profile.profile_id});
+            monitorStatusNode.textContent = "Read-only monitoring started for this profile.";
+            await refreshProfileMonitorStatus(profile, monitorStatusNode, startProfileMonitorButton, stopProfileMonitorButton);
+          } catch (error) {
+            monitorStatusNode.textContent = "Could not start this profile monitor: " + error.message;
+            startProfileMonitorButton.disabled = !backendReady || profile.status !== "active" || !profile.source_wallets.length;
+          }
+        });
+        const stopProfileMonitorButton = document.createElement("button");
+        stopProfileMonitorButton.type = "button";
+        stopProfileMonitorButton.className = "secondary-button";
+        stopProfileMonitorButton.textContent = "Stop this profile";
+        stopProfileMonitorButton.disabled = true;
+        stopProfileMonitorButton.addEventListener("click", async () => {
+          stopProfileMonitorButton.disabled = true;
+          try {
+            await postProfileMonitor({action: "stop", profile_id: profile.profile_id});
+            monitorStatusNode.textContent = "Read-only monitoring stopped for this profile.";
+            await refreshProfileMonitorStatus(profile, monitorStatusNode, startProfileMonitorButton, stopProfileMonitorButton);
+          } catch (error) {
+            monitorStatusNode.textContent = "Could not stop this profile monitor: " + error.message;
+          }
+        });
+        monitorActions.appendChild(startProfileMonitorButton);
+        monitorActions.appendChild(stopProfileMonitorButton);
+        card.appendChild(monitorActions);
+        void refreshProfileMonitorStatus(profile, monitorStatusNode, startProfileMonitorButton, stopProfileMonitorButton);
+
         addText(card, "Stored observed balances", "h4");
         addText(card, profile.balances_source || "Balance provenance unavailable", "p", "muted");
         const balances = Array.isArray(profile.balances) ? profile.balances : [];
@@ -1515,6 +1596,7 @@
             : "Profile database does not exist yet. Creating a profile will initialize it.";
         if (profiles.length && !historyProfile.value) historyProfile.value = profiles[0].profile_id;
         await loadProfileTransactions();
+        await loadSimulationReport();
       } catch (error) {
         profiles = [];
         renderProfiles();
@@ -1718,7 +1800,10 @@
     });
 
     profileRefreshButton.addEventListener("click", loadProfiles);
-    historyProfile.addEventListener("change", () => loadProfileTransactions(true));
+    historyProfile.addEventListener("change", () => {
+      loadProfileTransactions(true);
+      loadSimulationReport();
+    });
     historyFilterButton.addEventListener("click", () => loadProfileTransactions(true));
     historyResetButton.addEventListener("click", () => {
       historyClassification.value = "";

@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -88,6 +89,27 @@ class DashboardProfileApiTests(unittest.TestCase):
             dashboard_server.load_profile_transactions(
                 parse_qs("profile_id=" + self.profile_id + "&classification=BUY")
             )
+
+
+    def test_direct_rpc_health_probe_reports_read_only_success(self):
+        with patch.object(dashboard_server, "get_public_health", return_value="ok"):
+            report = dashboard_server.rpc_health_report()
+        self.assertEqual(report["mode"], "READ_ONLY")
+        self.assertTrue(report["available"])
+        self.assertEqual(report["status"], "ok")
+        self.assertFalse(report["transaction_broadcast"])
+        self.assertIn("checked_at", report)
+
+    def test_direct_rpc_health_probe_reports_provider_failure_without_crashing(self):
+        with patch.object(
+            dashboard_server, "get_public_health",
+            side_effect=dashboard_server.SolanaRPCError("provider unavailable"),
+        ):
+            report = dashboard_server.rpc_health_report()
+        self.assertFalse(report["available"])
+        self.assertEqual(report["status"], "unavailable")
+        self.assertEqual(report["error"], "SolanaRPCError")
+        self.assertFalse(report["transaction_broadcast")
 
     def test_missing_profile_database_is_not_created_by_get_helpers(self):
         self.store = None

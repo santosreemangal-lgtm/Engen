@@ -40,7 +40,7 @@ The README/report documentation updates were made after this code-test run; thos
 | 287 Slippage/stale-price controls | Deferred | No live execution; unrealized P&L remains unavailable without verified fresh pricing. |
 | 288 Emergency stop | Partial | Monitoring has stop/shutdown handling; there is no execution engine to halt. Immediate live-order blocking is not applicable until a separate live-mode design exists. |
 | 289 RPC outage cannot bypass execution safeguards | Partial | RPC outage/error handling is tested and no live execution path exists. A production execution fail-closed test is not applicable until such a path is proposed. |
-| 290 Unit tests for configuration/classification/storage/P&L | Implemented in test suite | Included in the 248-test passing offline suite; tests are not a guarantee of production correctness. |
+| 290 Unit tests for configuration/classification/storage/P&L | Implemented in test suite | Included in the 249-test passing offline suite; tests are not a guarantee of production correctness. |
 | 291 RPC/monitoring/API integration tests | Partial | Offline integration-style tests exist and pass; production RPC and deployed-environment integration are not certified by this run. |
 | 292 Regression tests for confirmed bugs | Partial | Security/API regression tests were added; cannot certify every historical bug has a regression test. |
 | 293 Full suite and failure review | Passed for recorded commit | 249 unit tests, compilation, and mock-analysis check passed in the linked run. |

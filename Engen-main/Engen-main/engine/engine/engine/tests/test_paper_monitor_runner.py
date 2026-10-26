@@ -1,4 +1,5 @@
 import argparse
+import os
 import io
 import tempfile
 import unittest
@@ -28,6 +29,20 @@ class PaperMonitorRunnerTests(unittest.TestCase):
 
     def test_rpc_url_accepts_valid_https_endpoint(self):
         self._validate_rpc_url("https://api.mainnet-beta.solana.com")
+
+    def test_runner_refuses_live_trading_configuration(self):
+        with patch.dict(os.environ, {"LIVE_TRADING_ENABLED": "true"}):
+            with self.assertRaises(SystemExit):
+                self._validate_rpc_url(
+                    "https://api.mainnet-beta.solana.com"
+                )
+
+    def test_runner_refuses_non_read_only_engine_mode(self):
+        with patch.dict(os.environ, {"ENGINE_MODE": "paper"}):
+            with self.assertRaises(SystemExit):
+                self._validate_rpc_url(
+                    "https://api.mainnet-beta.solana.com"
+                )
 
     def test_timeout_accepts_positive_finite_value(self):
         self.assertEqual(runner.positive_timeout("2.5"), 2.5)

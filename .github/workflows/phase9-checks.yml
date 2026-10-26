@@ -36,7 +36,8 @@ jobs:
         run: python -m compileall -q Engen-main/Engen-main
 
       - name: Run offline unit tests
-        run: python -m unittest discover -s Engen-main/Engen-main/engine/engine/engine/tests -v
+        working-directory: Engen-main/Engen-main
+        run: python -m unittest discover -s engine/engine/engine/tests -v
 
       - name: Run mock analysis check
         run: python main.py --mock-analysis-test

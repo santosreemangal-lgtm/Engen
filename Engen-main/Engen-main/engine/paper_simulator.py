@@ -22,6 +22,7 @@ class PaperSimulator:
         self.orders = {}
         self.fills = []
         self.processed_signals = set()
+        self._rebuild_pnl_ledger()
         if self.db_path:
             self._initialize()
 

@@ -33,6 +33,27 @@ def validate_public_address(value, field="wallet address"):
     return value
 
 
+def settings_json(settings):
+    if not isinstance(settings, dict):
+        raise ValueError("Settings must be an object.")
+    forbidden = {"private_key", "secret_key", "seed_phrase", "recovery_phrase", "mnemonic"}
+    def inspect(value, path="$"):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                normalized = str(key).strip().lower().replace("-", "_").replace(" ", "_")
+                if normalized in forbidden:
+                    raise ValueError("Secret authorization fields cannot be stored in profile settings.")
+                inspect(item, path + "." + str(key))
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                inspect(item, f"{path}[{index}]")
+    inspect(settings)
+    try:
+        return json.dumps(settings, sort_keys=True, allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Settings must contain JSON-safe values.") from exc
+
+
 def utc_now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
@@ -143,17 +164,12 @@ class ProfileStore:
         if destination_public_address is not None:
             validate_public_address(destination_public_address, "destination public address")
         settings = {} if settings is None else settings
-        if not isinstance(settings, dict):
-            raise ValueError("Settings must be an object.")
-        forbidden = {"private_key","secret_key","seed_phrase","recovery_phrase","mnemonic"}
-        if forbidden.intersection(str(k).lower() for k in settings):
-            raise ValueError("Secret authorization fields cannot be stored in profile settings.")
-        settings_json = json.dumps(settings, sort_keys=True, allow_nan=False)
+        settings_json_value = settings_json(settings)
         pid, now = str(uuid.uuid4()), utc_now()
         with self.session() as db:
             db.execute("INSERT INTO profiles VALUES(?,?,?,'disabled',?,?,NULL)",
                        (pid,name.strip(),destination_public_address,now,now))
-            db.execute("INSERT INTO profile_settings VALUES(?,?,?)",(pid,settings_json,now))
+            db.execute("INSERT INTO profile_settings VALUES(?,?,?)",(pid,settings_json_value,now))
         return pid
 
     def get_profile(self, profile_id):
@@ -229,12 +245,7 @@ class ProfileStore:
         return result
 
     def set_settings(self, profile_id, settings):
-        if not isinstance(settings, dict):
-            raise ValueError("Settings must be an object.")
-        forbidden = {"private_key","secret_key","seed_phrase","recovery_phrase","mnemonic"}
-        if forbidden.intersection(str(k).lower() for k in settings):
-            raise ValueError("Secret authorization fields cannot be stored in profile settings.")
-        payload, now = json.dumps(settings,sort_keys=True,allow_nan=False),utc_now()
+        payload, now = settings_json(settings), utc_now()
         with self.session() as db:
             if not db.execute("SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
                               (profile_id,)).fetchone():

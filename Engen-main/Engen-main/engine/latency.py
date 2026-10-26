@@ -5,6 +5,7 @@ perform network requests, or claim end-to-end Solana execution latency.
 """
 
 from contextlib import contextmanager
+import math
 from threading import Lock
 from time import perf_counter_ns
 
@@ -42,6 +43,7 @@ class LatencyRecorder:
         if (
             not isinstance(elapsed_ms, (int, float))
             or isinstance(elapsed_ms, bool)
+            or not math.isfinite(elapsed_ms)
             or elapsed_ms < 0
         ):
             raise ValueError("elapsed_ms must be a non-negative number.")

@@ -53,10 +53,23 @@ def process_new_signatures(
             if latency_recorder is not None:
                 processor_options["latency_recorder"] = latency_recorder
             result = process_transaction_signature(**processor_options)
+        except ValueError:
+            # Invalid signatures are rejected before any transaction RPC call.
+            results.append({
+                "signature": signature,
+                "available": False,
+                "metadata_complete": False,
+                "metadata_status": "invalid_signature",
+                "error": "Invalid transaction signature; RPC request was not sent.",
+                "retryable": False,
+            })
+            continue
         except SolanaRPCError as exc:
             results.append({
                 "signature": signature,
                 "available": False,
+                "metadata_complete": False,
+                "metadata_status": "rpc_error",
                 "error": str(exc),
                 "retryable": True,
             })

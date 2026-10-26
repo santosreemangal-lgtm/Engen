@@ -171,6 +171,63 @@ class ProfileStore:
                 (profile_id,))]
             return result
 
+    def list_profiles(self, include_archived=False):
+        with self.session() as db:
+            query = "SELECT profile_id FROM profiles WHERE deleted_at IS NULL"
+            if not include_archived:
+                query += " AND status != 'archived'"
+            query += " ORDER BY created_at, profile_id"
+            ids = [row["profile_id"] for row in db.execute(query)]
+        return [self.get_profile(pid) for pid in ids]
+
+    def update_profile(self, profile_id, *, name=None,
+                       destination_public_address=None, status=None):
+        updates, values = [], []
+        if name is not None:
+            if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80:
+                raise ValueError("Profile name must contain 1–80 characters.")
+            updates.append("name=?")
+            values.append(name.strip())
+        if destination_public_address is not None:
+            validate_public_address(destination_public_address, "destination public address")
+            updates.append("destination_public_address=?")
+            values.append(destination_public_address)
+        if status is not None:
+            if status not in {"disabled", "active", "archived"}:
+                raise ValueError("Invalid profile status.")
+            updates.append("status=?")
+            values.append(status)
+        if not updates:
+            return self.get_profile(profile_id)
+        updates.append("updated_at=?")
+        values.extend([utc_now(), profile_id])
+        with self.session() as db:
+            cur = db.execute(
+                "UPDATE profiles SET " + ", ".join(updates) +
+                " WHERE profile_id=? AND deleted_at IS NULL", values
+            )
+            if cur.rowcount != 1:
+                raise ValueError("Profile not found.")
+        return self.get_profile(profile_id)
+
+    def get_transaction(self, signature, profile_id=None):
+        with self.session() as db:
+            if profile_id is None:
+                row = db.execute("SELECT * FROM transactions WHERE signature=?",
+                                 (signature,)).fetchone()
+            else:
+                row = db.execute(
+                    """SELECT t.* FROM transactions t JOIN profile_transactions p
+                       ON p.signature=t.signature
+                       WHERE t.signature=? AND p.profile_id=?""",
+                    (signature, profile_id),
+                ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["evidence"] = json.loads(result.pop("evidence_json"))
+        return result
+
     def set_settings(self, profile_id, settings):
         if not isinstance(settings, dict):
             raise ValueError("Settings must be an object.")

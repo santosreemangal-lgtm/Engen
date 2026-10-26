@@ -102,6 +102,30 @@ class DashboardSecurityHeaderTests(unittest.TestCase):
             urlopen(request, timeout=2)
         self.assertEqual(caught.exception.code, 400)
 
+    def test_api_requires_configured_bearer_token(self):
+        with patch.object(server, "DASHBOARD_AUTH_TOKEN", "a" * 32):
+            with self.assertRaises(HTTPError) as caught:
+                urlopen(self.url, timeout=2)
+            self.assertEqual(caught.exception.code, 401)
+
+            request = Request(self.url, headers={"Authorization": "Bearer " + "a" * 32})
+            with urlopen(request, timeout=2) as response:
+                self.assertEqual(response.status, 200)
+
+    def test_post_rejects_cross_origin_state_change(self):
+        request = Request(
+            self.url.replace("/api/monitor", "/api/wallets"),
+            data=b"{}",
+            headers={
+                "Content-Type": "application/json",
+                "Origin": "https://attacker.example",
+            },
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(request, timeout=2)
+        self.assertEqual(caught.exception.code, 403)
+
 
 if __name__ == "__main__":
     unittest.main()

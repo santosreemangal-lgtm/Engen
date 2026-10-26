@@ -143,13 +143,16 @@ def monitor_wallet(
     if store is None:
         store = SignatureStore()
 
-    pending_signatures = get_and_store_new_wallet_signatures(
-        wallet_address=wallet_address,
-        store=store,
-        limit=limit,
-        rpc_url=rpc_url,
-        timeout=timeout,
-    )
+    signature_options = {
+        "wallet_address": wallet_address,
+        "store": store,
+        "limit": limit,
+        "rpc_url": rpc_url,
+        "timeout": timeout,
+    }
+    if latency_recorder is not None:
+        signature_options["latency_recorder"] = latency_recorder
+    pending_signatures = get_and_store_new_wallet_signatures(**signature_options)
 
     monitor_options = {
         "signatures": pending_signatures,

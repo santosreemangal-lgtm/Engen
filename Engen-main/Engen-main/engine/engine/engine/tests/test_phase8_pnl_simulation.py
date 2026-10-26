@@ -119,7 +119,7 @@ class PaperSimulatorTests(unittest.TestCase):
         result = simulator.execute_order(order["order_id"], price("10"), now=NOW,
                                          slippage_bps=100, fee_bps=100, network_cost="0.5")
         self.assertEqual(result["status"], "FILLED")
-        self.assertEqual(result["fill"]["execution_price"], "10.1")
+        self.assertEqual(Decimal(result["fill"]["execution_price"]), Decimal("10.1"))
         self.assertEqual(Decimal(result["fill"]["gross_quote"]), Decimal("20.2"))
         self.assertEqual(Decimal(result["fill"]["fee"]), Decimal("0.202"))
         self.assertEqual(Decimal(result["fill"]["net_quote"]), Decimal("20.902"))
@@ -133,7 +133,7 @@ class PaperSimulatorTests(unittest.TestCase):
         result = simulator.execute_order(order["order_id"], price("10"), now=NOW,
                                          slippage_bps=100, fee_bps=100, network_cost="0.5")
         self.assertEqual(result["status"], "FILLED")
-        self.assertEqual(result["fill"]["execution_price"], "9.9")
+        self.assertEqual(Decimal(result["fill"]["execution_price"]), Decimal("9.9"))
         self.assertEqual(Decimal(result["fill"]["net_quote"]), Decimal("19.102"))
 
     def test_stale_price_rejects_order_without_fill(self):

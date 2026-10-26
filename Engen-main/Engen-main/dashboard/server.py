@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlparse
 from decimal import Decimal
 from datetime import datetime, timezone
 
-from engine.profile_store import ProfileStore, LABELS, STATUSES, validate_public_address
+from engine.profile_store import ProfileStore, LABELS, STATUSES, validate_public_address, settings_json
 
 ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT.parent
@@ -380,6 +380,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if not isinstance(profile_id, str) or not profile_id.strip() or len(profile_id) > 64:
                     raise ValueError("A valid profile_id is required.")
                 if action == "update":
+                    # Validate settings before changing profile details so invalid
+                    # secret-like fields cannot leave a partially applied update.
+                    if "settings" in payload:
+                        settings_json(payload["settings"])
                     profile = store.update_profile(
                         profile_id,
                         name=payload.get("name"),

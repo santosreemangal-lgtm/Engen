@@ -28,6 +28,15 @@ class PaperMonitorRunnerTests(unittest.TestCase):
     def test_rpc_url_accepts_valid_https_endpoint(self):
         self._validate_rpc_url("https://api.mainnet-beta.solana.com")
 
+    def test_timeout_accepts_positive_finite_value(self):
+        self.assertEqual(runner.positive_timeout("2.5"), 2.5)
+
+    def test_timeout_rejects_zero_negative_and_non_finite_values(self):
+        for value in ("0", "-1", "nan", "inf", "invalid"):
+            with self.subTest(value=value):
+                with self.assertRaises(Exception):
+                    runner.positive_timeout(value)
+
     def test_rpc_url_accepts_local_http_endpoint(self):
         self._validate_rpc_url("http://127.0.0.1:8899")
 
@@ -219,6 +228,7 @@ class PaperMonitorRunnerTests(unittest.TestCase):
         self.assertTrue(
             mock_monitor.call_args.kwargs["defer_processed"]
         )
+        self.assertEqual(mock_monitor.call_args.kwargs["timeout"], 10.0)
 
     def test_processing_error_leaves_signature_pending(self):
         transaction = {

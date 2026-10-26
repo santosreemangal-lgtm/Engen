@@ -14,6 +14,8 @@ class BlockhashTests(unittest.TestCase):
     def test_returns_blockhash(self, mock_urlopen):
         response = MagicMock()
         response.read.return_value = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 3,
             "result": {
                 "value": {
                     "blockhash": "test_blockhash_123"
@@ -31,6 +33,8 @@ class BlockhashTests(unittest.TestCase):
     def test_rpc_error_raises_exception(self, mock_urlopen):
         response = MagicMock()
         response.read.return_value = json.dumps({
+            "jsonrpc": "2.0",
+            "id": 3,
             "error": {
                 "code": -1,
                 "message": "Test error"

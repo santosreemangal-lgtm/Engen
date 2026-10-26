@@ -74,6 +74,12 @@ def build_parser():
     )
 
     parser.add_argument(
+        "--signature-db",
+        default="data/signatures.db",
+        help="SQLite database for wallet signature history.",
+    )
+
+    parser.add_argument(
         "--interval",
         type=int,
         default=30,
@@ -115,6 +121,9 @@ def validate_args(args, parser):
 
     if not args.paper_db.strip():
         parser.error("--paper-db cannot be empty.")
+
+    if not args.signature_db.strip():
+        parser.error("--signature-db cannot be empty.")
 
     if not args.rpc_url.startswith(("https://", "http://")):
         parser.error(
@@ -217,8 +226,9 @@ def main(argv=None):
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
-    # Creates the signatures database and its parent directory.
-    store = SignatureStore()
+    # Use a configurable signature database so benchmarks and tests can
+    # remain isolated from the user's existing monitoring history.
+    store = SignatureStore(db_path=args.signature_db)
 
     trader = PaperTrader(
         {args.quote_mint: args.paper_balance},

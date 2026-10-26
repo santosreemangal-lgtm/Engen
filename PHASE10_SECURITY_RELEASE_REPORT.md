@@ -7,15 +7,15 @@
 
 ## Verified CI evidence
 
-GitHub Actions run: https://github.com/santosreemangal-lgtm/Engen/actions/runs/40379359034
+GitHub Actions run: https://github.com/santosreemangal-lgtm/Engen/actions/runs/40379767500
 
-On commit `f95ad31db2552b6e555d4cdd094cad24199c881a`:
+On commit `2b2dc1c2986b68e6c2d5ebc5625515fb9aed7c04`:
 - Python compilation: passed.
 - Offline unit suite: **249 tests passed**.
 - Mock-analysis check: passed.
 - The run's job conclusion was success.
 
-The README/report documentation updates were made after this code-test run; those later edits are documentation-only. Re-run CI after any subsequent code changes.
+The README and live-mode safety-gate documentation were updated after this code-test run; those later edits are documentation-only. Re-run CI after any subsequent code changes.
 
 ## Phase 10 checklist evidence
 
@@ -36,20 +36,20 @@ The README/report documentation updates were made after this code-test run; thos
 | 283 Explicit authorization for signed transactions | Deferred | Signed transactions are not supported; do not implement live signing without a separate approved review. |
 | 284 Transaction preview before signing | Deferred | No signed transaction path exists to preview. |
 | 285 Duplicate execution/repeated submission | Partial | Transaction storage has idempotency/unique-signature tests; no live order execution exists. A complete execution idempotency layer is future work. |
-| 286 Live order/exposure limits | Deferred | Live mode is not implemented; limits must be designed before any future live mode. |
-| 287 Slippage/stale-price controls | Deferred | No live execution; unrealized P&L remains unavailable without verified fresh pricing. |
+| 286 Live order/exposure limits | Specified for future review | `LIVE_MODE_SAFETY_GATE.md` requires configured per-order and per-profile exposure limits; no live execution is enabled. |
+| 287 Slippage/stale-price controls | Specified for future review | The safety gate requires maximum slippage and price-age limits; stale/missing quotes must fail closed. No live execution is enabled. |
 | 288 Emergency stop | Partial | Monitoring has stop/shutdown handling; there is no execution engine to halt. Immediate live-order blocking is not applicable until a separate live-mode design exists. |
 | 289 RPC outage cannot bypass execution safeguards | Partial | RPC outage/error handling is tested and no live execution path exists. A production execution fail-closed test is not applicable until such a path is proposed. |
-| 290 Unit tests for configuration/classification/storage/P&L | Implemented in test suite | Included in the 249-test passing offline suite; tests are not a guarantee of production correctness. |
+| 290 Unit tests for configuration/classification/storage/P&L | Implemented in test suite | Included in the 251-test passing offline suite; tests are not a guarantee of production correctness. |
 | 291 RPC/monitoring/API integration tests | Partial | Offline integration-style tests exist and pass; production RPC and deployed-environment integration are not certified by this run. |
 | 292 Regression tests for confirmed bugs | Partial | Security/API regression tests were added; cannot certify every historical bug has a regression test. |
-| 293 Full suite and failure review | Passed for recorded commit | 249 unit tests, compilation, and mock-analysis check passed in the linked run. |
+| 293 Full suite and failure review | Passed for recorded commit | 251 unit tests, compilation, and mock-analysis check passed in the linked run. |
 | 294 Startup/shutdown/restart recovery | Partial | Component-level persistence/shutdown tests exist; full process crash/restart recovery rehearsal remains. |
 | 295 Dashboard/backend integration | Partial | Automated API/dashboard checks exist; no user deployment environment was tested. |
 | 296 Dependencies/vulnerabilities/deployment | Partial | Current requirements use Python standard library; automated dependency vulnerability scanning and deployment review remain. |
 | 297 README setup/config/test/troubleshooting | Updated | README documents local run, API, authentication, network boundary, safety limitations, and validation commands. |
 | 298 Final security/operational readiness | **Not production-ready** | Multi-user authorization, rate limiting, deployment TLS/proxy verification, and further operational reviews remain. Live trading remains disabled. |
-| 299 Separate live readiness and explicit approval | Deferred by design | No live mode is enabled. Any future proposal requires a separate documented review and explicit owner approval before activation. |
+| 299 Separate live readiness and explicit approval | Specified for future review | `LIVE_MODE_SAFETY_GATE.md` documents a separate threat model, exact-commit review, independent tests, and explicit owner approval; no approval is implied by this document. |
 | 300 Evidence-based project report | Drafted here | This report records verified tests, branch/PR status, limitations, and next steps; update it after future tests/deployment work. |
 
 ## Changes included in the current branch
@@ -60,7 +60,7 @@ The README/report documentation updates were made after this code-test run; thos
 - Regression tests for authentication, cross-origin writes, security headers, and malformed/non-JSON API writes.
 - README security/deployment instructions and this report.
 
-## Unresolved risks and next steps
+Future live-mode safety requirements are documented in [`LIVE_MODE_SAFETY_GATE.md`](LIVE_MODE_SAFETY_GATE.md); this is a specification only, not a live-mode implementation.\n\n## Unresolved risks and next steps
 
 1. Keep this PR in draft until remaining security requirements are reviewed; do not expose the backend to the public internet.
 2. Implement proper user identity and per-profile authorization before any multi-user/private remote dashboard.

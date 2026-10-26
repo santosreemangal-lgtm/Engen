@@ -3,6 +3,7 @@
 import json
 import urllib.error
 import urllib.request
+from contextlib import nullcontext
 
 from engine.solana_public import (
     DEFAULT_RPC_URL,
@@ -17,6 +18,7 @@ def get_wallet_signatures(
     rpc_url=DEFAULT_RPC_URL,
     timeout=10,
     before=None,
+    latency_recorder=None,
 ):
     """Fetch signatures for a public wallet.
 
@@ -60,14 +62,20 @@ def get_wallet_signatures(
         method="POST",
     )
 
+    timer = (
+        latency_recorder.measure("wallet.signature_fetch")
+        if latency_recorder is not None
+        else nullcontext()
+    )
     try:
-        with urllib.request.urlopen(
-            request,
-            timeout=timeout,
-        ) as response:
-            data = json.loads(
-                response.read().decode("utf-8")
-            )
+        with timer:
+            with urllib.request.urlopen(
+                request,
+                timeout=timeout,
+            ) as response:
+                data = json.loads(
+                    response.read().decode("utf-8")
+                )
     except (
         urllib.error.URLError,
         TimeoutError,
@@ -129,12 +137,15 @@ def get_new_wallet_signatures(
     timeout=10,
 ):
     """Fetch recent signatures and filter previously seen entries."""
-    signatures = get_wallet_signatures(
-        wallet_address=wallet_address,
-        limit=limit,
-        rpc_url=rpc_url,
-        timeout=timeout,
-    )
+    signature_options = {
+        "wallet_address": wallet_address,
+        "limit": limit,
+        "rpc_url": rpc_url,
+        "timeout": timeout,
+    }
+    if latency_recorder is not None:
+        signature_options["latency_recorder"] = latency_recorder
+    signatures = get_wallet_signatures(**signature_options)
 
     return filter_new_signatures(
         signatures,
@@ -148,6 +159,7 @@ def get_and_store_new_wallet_signatures(
     limit=10,
     rpc_url=DEFAULT_RPC_URL,
     timeout=10,
+    latency_recorder=None,
 ):
     """Persist signatures, establish the initial baseline, and retry pending entries."""
     if not isinstance(wallet_address, str) or not wallet_address.strip():

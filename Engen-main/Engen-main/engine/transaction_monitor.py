@@ -123,7 +123,7 @@ def process_new_signatures(
             if confirmation not in ("confirmed", "finalized"):
                 result = {
                     **result,
-                    "trade_signal": _unknown_signer_signal() | {
+                    "trade_signal": {**_unknown_signer_signal(),
                         "reason": (
                             "Transaction confirmation is insufficient; "
                             "no buy/sell candidate was created."

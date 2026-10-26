@@ -26,13 +26,26 @@ After this run, architecture and README documentation were updated; these later 
 - Added tests for unsafe RPC schemes, URL credentials/fragments, timeout bounds, invalid retry/pacing settings, and refusal before any network call.
 - Added ARCHITECTURE_DECISIONS.md covering responsibilities, data conventions, API contract, threat model, acceptance criteria, and explicitly unresolved design/deployment items.
 
+## Corrected status for requested tasks 055, 059, 060, 069, 273, 294, 296, 298–300
+
+- 055 — 1–5 users: target requirement only. The currently supported design remains one trusted localhost user; no multi-user capacity claim is made.
+- 059 — architecture decisions: architecture document exists; the checklist wording is corrected to “Document architecture decisions that materially affect future work.” Open decisions must be resolved or explicitly deferred.
+- 060 — plan approval: pending explicit owner approval. A written baseline and passing CI do not count as owner approval.
+- 069 — environment example: .env.example has placeholders and the root .gitignore excludes .env/.env.* except .env.example, key/seed/secret files, databases and logs. Repository-history secret scanning has not been evidenced, so this task is not fully certified.
+- 273 — profile authorization: not implemented. Shared bearer authentication is not profile ownership authorization; do not expose as a multi-user service.
+- 294 — restart recovery: partial. Unit tests exercise store persistence and monitor recovery/lifecycle, but a full process-level crash/restart rehearsal with active monitoring and paper-simulation state remains outstanding.
+- 296 — dependency/deployment review: not verified. A current independent dependency vulnerability scan and deployment security review must be recorded before closing.
+- 298 — readiness: not complete. This release is not production-ready while access-control, deployment, process-recovery and security-review gates remain open.
+- 299 — live mode: deferred and not authorized. No signing/broadcast path is implemented. Any future proposal requires separate review and explicit approval for the exact commit and environment.
+- 300 — final report: this document and the completion matrix are interim evidence reports, not a final release report. Finalize only after evidence is refreshed and remaining risks/deployment status are stated accurately.
+
 ## Phase 10 checklist evidence
 
 | Task | Status | Evidence / unresolved condition |
 |---|---|---|
 | 271 Access-control requirements | Partial | Reviewed backend; this is a single-user local dashboard today. |
 | 272 Authentication before exposing private data | Partial | Optional `DASHBOARD_AUTH_TOKEN` bearer authentication; token must be at least 32 characters. Remote exposure remains prohibited by backend bind guard. Remote proxy configuration has not been deployed or tested. |
-| 273 Profile-specific authorization | **Not complete** | There is no user/role/ownership model. Do not use as a multi-user service. |
+| 273 Profile-specific authorization | **Not complete — release blocker for multi-user use** | No user/role/ownership model exists. Keep single-user localhost scope; close only after server-side ownership checks cover every profile-related route and negative cross-profile tests pass. |
 | 274 Restrict network exposure | Implemented | Backend refuses non-loopback `DASHBOARD_HOST`; remote access requires a trusted reverse proxy while backend stays private. |
 | 275 Secure transport | Partial / deployment-specific | README requires HTTPS at a trusted reverse proxy for remote access; no TLS deployment has been configured or tested. |
 | 276 Protect state-changing endpoints | Partial | Optional bearer auth plus rejection of mismatched browser Origin. If no token is configured, the API is intended for localhost only. |

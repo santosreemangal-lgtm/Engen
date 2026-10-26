@@ -7,6 +7,7 @@ Never signs or submits real Solana transactions.
 import argparse
 import json
 import logging
+import math
 import time
 from contextlib import nullcontext
 from urllib.parse import urlsplit
@@ -38,6 +39,23 @@ def positive_decimal(value):
         )
 
     return str(amount)
+
+
+def positive_timeout(value):
+    """Validate a finite, positive RPC timeout in seconds."""
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(
+            "Timeout must be a valid number of seconds."
+        ) from exc
+
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise argparse.ArgumentTypeError(
+            "Timeout must be a finite number greater than zero."
+        )
+
+    return timeout
 
 
 def build_parser():
@@ -101,6 +119,13 @@ def build_parser():
     )
 
     parser.add_argument(
+        "--timeout",
+        type=positive_timeout,
+        default=10.0,
+        help="Timeout for each RPC request in seconds; default: 10.",
+    )
+
+    parser.add_argument(
         "--once",
         action="store_true",
         help="Perform one scan and exit.",
@@ -155,6 +180,7 @@ def run_once(args, trader, store, latency_recorder=None):
         "store": store,
         "limit": args.limit,
         "rpc_url": args.rpc_url,
+        "timeout": args.timeout,
         "defer_processed": True,
     }
     if latency_recorder is not None:
@@ -255,6 +281,7 @@ def main(argv=None):
 
     logger.info("Paper-only monitoring started.")
     logger.info("Quote mint: %s", args.quote_mint)
+    logger.info("RPC timeout: %s seconds", args.timeout)
     logger.info(
         "Initial virtual balance for a new database: %s",
         args.paper_balance,

@@ -19,7 +19,7 @@ Dashboard report: `dashboard/server.py` endpoint `/api/paper-simulation`; UI pan
 - [x] **222.** Missing historical prices return unavailable P&L, not zero.
 - [x] **223.** Market prices require a source and timezone-aware observation timestamp; this version accepts a supplied price object and has no connected price-feed provider.
 - [x] **224.** Price age is reported in seconds and freshness is configurable (default 60 seconds).
-- [~] **225.** Missing/stale/mismatched prices and provider failures reject simulated fills. An independent liquidity metric/feed is not connected, so the simulator cannot yet detect low liquidity when a source still reports a price.
+- [~] **225.** The simulator now fails closed by default when liquidity data is missing, stale, or below a configurable USD minimum (default $10,000); liquidity observations require their own source and timezone-aware timestamp. Automated tests cover missing, stale, below-threshold, and sufficient liquidity. Still partial: no independent production liquidity provider is connected, so this safety gate only works when a caller supplies trustworthy liquidity observations.
 - [x] **226.** Unknown acquisition basis remains unknown and never becomes a fabricated zero-cost position.
 - [x] **227.** USD is the only supported portfolio valuation currency; other currencies require a sourced conversion before use.
 - [x] **228.** `Decimal` arithmetic is used without intermediate rounding; results are returned as decimal strings.
@@ -38,4 +38,4 @@ Dashboard report: `dashboard/server.py` endpoint `/api/paper-simulation`; UI pan
 
 ## Verification note
 
-Do not mark the entire phase production-ready yet: task 225 remains partial because there is no independent liquidity data source, and there is no connected live market-price provider. All calculations are offline/simulation-only. Live trading remains disabled.
+Do not mark the entire phase production-ready yet: task 225 remains partial because no independent production liquidity provider or live market-price provider is connected. The paper simulator now rejects missing/stale/low liquidity metadata by default, but caller-supplied metadata is not independently verified by this repository. All calculations are offline/simulation-only. Live trading remains disabled.

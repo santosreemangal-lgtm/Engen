@@ -13,10 +13,10 @@ class TransactionProcessorTests(unittest.TestCase):
             "engine.transaction_processor.get_transaction",
             return_value=None,
         ):
-            result = process_transaction_signature("signature123")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
 
         self.assertFalse(result["available"])
-        self.assertEqual(result["signature"], "signature123")
+        self.assertEqual(result["signature"], "1111111111111111111111111111111111111111111111111111111111111112")
         self.assertIn("error", result)
 
     def test_missing_metadata_is_reported_not_fabricated(self):
@@ -28,7 +28,7 @@ class TransactionProcessorTests(unittest.TestCase):
                 "meta": None,
             },
         ):
-            result = process_transaction_signature("signature123")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
         self.assertFalse(result["available"])
         self.assertFalse(result["metadata_complete"])
         self.assertEqual(result["metadata_status"], "missing")
@@ -56,10 +56,10 @@ class TransactionProcessorTests(unittest.TestCase):
             "engine.transaction_processor.get_transaction",
             return_value=transaction,
         ):
-            result = process_transaction_signature("signature456")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
 
         self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["signature"], "signature456")
+        self.assertEqual(result["signature"], "1111111111111111111111111111111111111111111111111111111111111112")
         self.assertEqual(result["token_balance_changes"], [])
 
     def test_processes_successful_transaction(self):
@@ -82,7 +82,7 @@ class TransactionProcessorTests(unittest.TestCase):
             "engine.transaction_processor.get_transaction",
             return_value=transaction,
         ):
-            result = process_transaction_signature("signature123")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
 
         self.assertTrue(result["available"])
         self.assertEqual(result["status"], "success")
@@ -113,13 +113,13 @@ class TransactionProcessorTests(unittest.TestCase):
             return_value=transaction,
         ) as mocked_get:
             process_transaction_signature(
-                "signature123",
+                "1111111111111111111111111111111111111111111111111111111111111112",
                 rpc_url="https://example.invalid",
                 timeout=3,
             )
 
         mocked_get.assert_called_once_with(
-            signature="signature123",
+            signature="1111111111111111111111111111111111111111111111111111111111111112",
             rpc_url="https://example.invalid",
             timeout=3,
         )
@@ -134,7 +134,7 @@ class TransactionProcessorTests(unittest.TestCase):
             "engine.transaction_processor.get_transaction",
             return_value=transaction,
         ):
-            result = process_transaction_signature("signature-incomplete")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
         self.assertTrue(result["available"])
         self.assertFalse(result["metadata_complete"])
         self.assertIn("preTokenBalances", result["metadata_missing_fields"])
@@ -173,7 +173,7 @@ class TransactionProcessorTests(unittest.TestCase):
             "engine.transaction_processor.get_transaction",
             return_value=transaction,
         ):
-            result = process_transaction_signature("signature789")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
 
         self.assertEqual(len(result["token_balance_changes"]), 1)
         change = result["token_balance_changes"][0]
@@ -207,7 +207,7 @@ class TransactionProcessorTests(unittest.TestCase):
             "engine.transaction_processor.get_transaction",
             return_value=transaction,
         ):
-            result = process_transaction_signature("native-sol-signature")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
 
         self.assertEqual(result["status"], "success")
         self.assertEqual(len(result["token_balance_changes"]), 1)
@@ -241,7 +241,7 @@ class TransactionProcessorTests(unittest.TestCase):
             "engine.transaction_processor.get_transaction",
             return_value=transaction,
         ):
-            result = process_transaction_signature("failed-native-sol-signature")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
 
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["token_balance_changes"], [])

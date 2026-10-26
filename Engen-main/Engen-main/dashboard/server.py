@@ -46,6 +46,14 @@ _API_REQUEST_TIMES = {}
 DASHBOARD_AUTH_TOKEN = os.environ.get("DASHBOARD_AUTH_TOKEN", "")
 
 
+def validate_server_config(host, auth_token):
+    """Reject unsafe bind addresses and weak configured API tokens."""
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        raise ValueError("Dashboard backend must bind to localhost.")
+    if auth_token and len(auth_token) < 32:
+        raise ValueError("DASHBOARD_AUTH_TOKEN must contain at least 32 characters.")
+
+
 def is_valid_solana_address(value):
     """Validate Base58 alphabet and the decoded 32-byte public-key length."""
     if not isinstance(value, str) or not ADDRESS_PATTERN.fullmatch(value):
@@ -599,14 +607,13 @@ if __name__ == "__main__":
     print("Wallet storage: %s" % WALLETS_FILE)
     print("Monitoring is opt-in; no scan starts automatically.")
     print("Read-only mode: no trades, signing, or private keys.")
-    if HOST not in ("127.0.0.1", "localhost", "::1"):
+    try:
+        validate_server_config(HOST, DASHBOARD_AUTH_TOKEN)
+    except ValueError as exc:
         raise SystemExit(
-            "Refusing non-loopback binding. Keep DASHBOARD_HOST on localhost. "
-            "For remote access, use a trusted HTTPS reverse proxy with "
-            "authentication and keep this backend bound to localhost."
-        )
-    if DASHBOARD_AUTH_TOKEN and len(DASHBOARD_AUTH_TOKEN) < 32:
-        raise SystemExit("DASHBOARD_AUTH_TOKEN must contain at least 32 characters.")
+            "%s For remote access, use a trusted HTTPS reverse proxy with "
+            "authentication and keep this backend bound to localhost." % exc
+        ) from exc
 
     server = ThreadingHTTPServer((HOST, PORT), DashboardHandler)
 

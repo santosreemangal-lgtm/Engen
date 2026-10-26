@@ -4,6 +4,7 @@
 import json
 import os
 import re
+import hmac
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -36,6 +37,7 @@ PORT = 8000
 ADDRESS_PATTERN = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 MAX_SAVED_WALLETS = 100
 MAX_REQUEST_BODY_BYTES = 10000
+DASHBOARD_AUTH_TOKEN = os.environ.get("DASHBOARD_AUTH_TOKEN", "")
 
 
 def is_valid_solana_address(value):
@@ -372,8 +374,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         return payload
 
+    def _api_authorized(self):
+        if not DASHBOARD_AUTH_TOKEN:
+            return True
+        supplied = self.headers.get("Authorization", "")
+        prefix = "Bearer "
+        if not supplied.startswith(prefix):
+            return False
+        return hmac.compare_digest(supplied[len(prefix):], DASHBOARD_AUTH_TOKEN)
+
     def do_GET(self):
         path = urlparse(self.path).path
+        if path.startswith("/api/") and not self._api_authorized():
+            self.send_json(401, {"error": "Dashboard API authentication required."})
+            return
 
         if path == "/api/wallets":
             self.send_json(200, {"wallets": load_wallets()})
@@ -411,6 +425,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path.startswith("/api/") and not self._api_authorized():
+            self.send_json(401, {"error": "Dashboard API authentication required."})
+            return
+        origin = self.headers.get("Origin")
+        if path.startswith("/api/") and origin:
+            parsed_origin = urlparse(origin)
+            if parsed_origin.scheme not in ("http", "https") or parsed_origin.netloc.lower() != self.headers.get("Host", "").lower():
+                self.send_json(403, {"error": "Cross-origin state changes are not allowed."})
+                return
         payload = self.read_json()
 
         if payload is None:

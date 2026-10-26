@@ -69,6 +69,33 @@
       border-radius: 18px;
     }
 
+    .overview-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .overview-item {
+      min-width: 0;
+      padding: 14px;
+      background: #101114;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .overview-label {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .overview-value {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
     h2 {
       margin: 0 0 18px;
       font-size: 19px;
@@ -262,6 +289,10 @@
         padding: 17px;
       }
 
+      .overview-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+
       .form-row {
         flex-direction: column;
       }
@@ -286,6 +317,29 @@
       Manage public Solana wallet addresses from one dashboard.
       Saved addresses remain available after refreshing the page.
     </p>
+
+    <section class="panel" aria-labelledby="overview-heading">
+      <h2 id="overview-heading">Engine Overview</h2>
+      <div class="overview-grid">
+        <div class="overview-item">
+          <p class="overview-label">Authorized mode</p>
+          <p id="overview-mode" class="overview-value">READ-ONLY</p>
+        </div>
+        <div class="overview-item">
+          <p class="overview-label">Monitoring engine</p>
+          <p id="overview-health" class="overview-value" aria-live="polite">Checking status…</p>
+        </div>
+        <div class="overview-item">
+          <p class="overview-label">Last successful monitoring check</p>
+          <p id="overview-last-success" class="overview-value">Not checked yet</p>
+        </div>
+        <div class="overview-item">
+          <p class="overview-label">RPC observation</p>
+          <p id="overview-rpc" class="overview-value" aria-live="polite">Not checked yet</p>
+        </div>
+      </div>
+      <p class="muted">A successful wallet scan is evidence of a successful recent request, not a guarantee of continuous RPC availability. This dashboard does not sign or broadcast transactions.</p>
+    </section>
 
     <section class="panel">
       <h2>Add a wallet</h2>
@@ -387,6 +441,9 @@
 
     const monitorStatus = document.getElementById("monitor-status");
     const monitorResults = document.getElementById("monitor-results");
+    const overviewHealth = document.getElementById("overview-health");
+    const overviewLastSuccess = document.getElementById("overview-last-success");
+    const overviewRpc = document.getElementById("overview-rpc");
     const startButton = document.getElementById("start-monitoring");
     const stopButton = document.getElementById("stop-monitoring");
     const simulationStatus = document.getElementById("simulation-status");
@@ -769,6 +826,39 @@
     function renderMonitorStatus(data) {
       monitorData = data;
       monitoringEnabled = data.enabled === true;
+
+      const monitoredWallets = Array.isArray(data.wallets) ? data.wallets : [];
+      const successfulChecks = monitoredWallets
+        .filter(wallet => typeof wallet.last_successful_check === "string")
+        .map(wallet => wallet.last_successful_check)
+        .sort();
+      overviewLastSuccess.textContent = successfulChecks.length
+        ? successfulChecks[successfulChecks.length - 1]
+        : "Not checked successfully yet";
+
+      if (!monitoringEnabled) {
+        overviewHealth.textContent = "STOPPED";
+      } else if (monitoredWallets.some(wallet => wallet.state === "error")) {
+        overviewHealth.textContent = "ERROR — check wallet details";
+      } else if (monitoredWallets.some(wallet => wallet.state === "stale")) {
+        overviewHealth.textContent = "STALE — last check is old";
+      } else if (monitoredWallets.some(wallet => wallet.state === "connected")) {
+        overviewHealth.textContent = "RUNNING — recent scan succeeded";
+      } else {
+        overviewHealth.textContent = "STARTING / WAITING";
+      }
+
+      if (!monitoredWallets.length) {
+        overviewRpc.textContent = "Not checked — no monitor results";
+      } else if (monitoredWallets.some(wallet => wallet.state === "error")) {
+        overviewRpc.textContent = "One or more scan requests failed";
+      } else if (monitoredWallets.some(wallet => wallet.state === "stale")) {
+        overviewRpc.textContent = "Stale — recent connectivity unconfirmed";
+      } else if (monitoredWallets.some(wallet => wallet.state === "connected")) {
+        overviewRpc.textContent = "Recent scan succeeded";
+      } else {
+        overviewRpc.textContent = "Waiting for first successful scan";
+      }
 
       monitorStatus.textContent = monitoringEnabled
         ? "Monitoring is enabled. Scans run approximately every " +

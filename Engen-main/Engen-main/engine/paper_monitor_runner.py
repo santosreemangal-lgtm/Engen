@@ -18,6 +18,7 @@ from engine.latency import LatencyRecorder
 from engine.paper_trader import PaperTrader
 from engine.signature_store import SignatureStore
 from engine.solana_public import DEFAULT_RPC_URL
+from engine.solana_validation import is_valid_solana_address
 from engine.transaction_analysis import QUOTE_TOKEN_MINTS
 from engine.transaction_monitor import monitor_wallet
 
@@ -147,8 +148,8 @@ def validate_args(args, parser):
             "LIVE_TRADING_ENABLED=false."
         )
 
-    if not args.wallet.strip():
-        parser.error("--wallet cannot be empty.")
+    if not is_valid_solana_address(args.wallet):
+        parser.error("--wallet must be a valid Solana public address.")
 
     if args.interval < 5:
         parser.error("--interval must be at least 5 seconds.")

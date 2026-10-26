@@ -52,5 +52,20 @@ comparisons. Polling interval also contributes to detection delay and is not
 included in the duration of an individual RPC call.
 
 The paper monitor uses a persistent signature database and a persistent paper
-ledger by default. For a benchmark, use dedicated temporary database paths so
-existing monitoring history and virtual balances are not altered.
+ledger by default. Both paths are configurable through `--signature-db` and
+`--paper-db`. For a benchmark, use dedicated temporary database paths so
+existing monitoring history and virtual balances are not altered. Example:
+
+```bash
+python -m engine.paper_monitor_runner \
+  --wallet YOUR_PUBLIC_WALLET_ADDRESS \
+  --quote-mint So11111111111111111111111111111111111111112 \
+  --paper-balance 100 \
+  --signature-db /tmp/solana-rpc-benchmark-signatures.db \
+  --paper-db /tmp/solana-rpc-benchmark-paper.db \
+  --once
+```
+
+This one-shot run measures only the code paths actually exercised by the
+wallet's recent transactions. It is not a substitute for repeated RPC request
+samples or continuous detection-delay measurement.

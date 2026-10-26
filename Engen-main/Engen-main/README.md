@@ -53,11 +53,13 @@ API write operations update local profile/watchlist data or monitor state. They 
 
 ## Validation
 
-Run from the repository root:
+Run these commands from the repository root, one at a time:
 
 ```bash
 python -m compileall -q Engen-main/Engen-main
-python -m unittest discover -s Engen-main/Engen-main/engine/engine/engine/tests -v
+cd Engen-main/Engen-main
+python -m unittest discover -s engine/engine/engine/tests -v
+cd ../..
 python main.py --mock-analysis-test
 ```
 

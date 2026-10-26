@@ -87,6 +87,39 @@ def analyze_transaction(transaction):
             if pubkey
         ]
 
+    # Preserve instruction-level context without assuming an instruction is
+    # a swap. Both parsed and compiled instructions are represented when possible.
+    raw_instructions = message_data.get("instructions", [])
+    if not isinstance(raw_instructions, list):
+        raw_instructions = []
+    normalized_instructions = []
+    program_ids = []
+    for index, instruction in enumerate(raw_instructions):
+        if not isinstance(instruction, Mapping):
+            continue
+        program_id = instruction.get("programId")
+        program_id_index = instruction.get("programIdIndex")
+        if (
+            not isinstance(program_id, str)
+            and isinstance(program_id_index, int)
+            and not isinstance(program_id_index, bool)
+            and 0 <= program_id_index < len(account_keys)
+        ):
+            program_id = normalize_pubkey(account_keys[program_id_index])
+        if isinstance(program_id, str) and program_id:
+            program_ids.append(program_id)
+        parsed = instruction.get("parsed")
+        parsed_type = (
+            parsed.get("type") if isinstance(parsed, Mapping) else None
+        )
+        normalized_instructions.append({
+            "index": index,
+            "program_id": program_id if isinstance(program_id, str) else None,
+            "program": instruction.get("program"),
+            "parsed_type": parsed_type if isinstance(parsed_type, str) else None,
+            "stack_height": instruction.get("stackHeight"),
+        })
+
     return {
         "available": True,
         "status": status,
@@ -94,6 +127,8 @@ def analyze_transaction(transaction):
         "fee": meta.get("fee"),
         "account_count": len(account_keys),
         "signers": signers,
+        "program_ids": sorted(set(program_ids)),
+        "instructions": normalized_instructions,
         "error": error,
     }
 

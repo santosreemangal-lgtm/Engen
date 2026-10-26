@@ -23,7 +23,11 @@ cd Engen-main/Engen-main
 python -m dashboard.server
 ```
 
-The backend defaults to `127.0.0.1:8000`. It has **no user authentication**. Keep it on localhost or place it behind a trusted authenticated deployment layer. Do not expose it directly to the public internet. Monitoring is opt-in; check status before starting and stop it when finished.
+The backend defaults to `127.0.0.1:8000` and refuses to bind to non-loopback interfaces. Do not change this boundary to expose the backend directly to a network. For remote access, keep the backend bound to localhost behind a trusted reverse proxy that enforces HTTPS and user authentication.
+
+An optional API bearer token can be configured with the `DASHBOARD_AUTH_TOKEN` environment variable (at least 32 characters). When configured, every `/api/*` request requires `Authorization: Bearer <token>`; the dashboard's token field keeps the value in the current browser tab's session storage. Use a randomly generated secret, never commit it, and clear it when finished. If the variable is unset, the API is intended only for localhost use. This is a single-user dashboard, not a multi-user authorization system: do not treat a shared token as per-profile access control.
+
+State-changing browser requests with a mismatched `Origin` are rejected. Request bodies are bounded and write requests must use JSON. These controls are defense in depth, not a substitute for a properly configured authenticated HTTPS proxy when remote access is required. Monitoring is opt-in; check status before starting and stop it when finished.
 
 ## API reference
 
@@ -39,7 +43,7 @@ The backend defaults to `127.0.0.1:8000`. It has **no user authentication**. Kee
 | GET | `/api/profile-transactions` | Read filtered, paginated transaction history |
 | GET | `/api/paper-simulation` | Read the paper-simulation report |
 
-API write operations update local profile/watchlist data or monitor state. They do not enable live trading. JSON request bodies are bounded; public addresses and profile settings are validated by the backend. Browser security headers provide defense in depth and do not replace authentication.
+API write operations update local profile/watchlist data or monitor state. They do not enable live trading. JSON request bodies are bounded; public addresses and profile settings are validated by the backend. Browser security headers, optional bearer authentication, same-origin write checks, and loopback-only binding provide defense in depth. Per-user/per-profile authorization is not implemented; use this as a single-user local dashboard only.
 
 ## Validation
 

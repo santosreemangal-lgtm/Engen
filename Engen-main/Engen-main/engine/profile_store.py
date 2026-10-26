@@ -47,6 +47,8 @@ def exact_amount(value):
         raise ValueError("Invalid exact amount.") from exc
     if not parsed.is_finite():
         raise ValueError("Amount must be finite.")
+    if parsed != parsed.to_integral_value():
+        raise ValueError("Raw on-chain amounts must be integer strings.")
     return text
 
 

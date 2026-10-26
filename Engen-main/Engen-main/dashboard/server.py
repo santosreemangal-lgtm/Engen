@@ -386,6 +386,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         destination_public_address=payload.get("destination_public_address"),
                         status=payload.get("status"),
                     )
+                    if "settings" in payload:
+                        store.set_settings(profile_id, payload["settings"])
+                        profile = store.get_profile(profile_id)
                     self.send_json(200, {"profile": profile, "simulated": False})
                     return
                 if action == "settings":

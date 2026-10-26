@@ -64,6 +64,12 @@ class WalletMonitorTests(unittest.TestCase):
         )
         mock_urlopen.assert_called_once_with(request, timeout=7)
 
+    def test_invalid_public_wallet_address_is_rejected_before_rpc(self):
+        with patch("engine.wallet_monitor._rpc_request") as mock_rpc:
+            with self.assertRaises(ValueError):
+                get_wallet_signatures("not-a-wallet")
+            mock_rpc.assert_not_called()
+
     def test_empty_before_cursor_is_rejected(self):
         with self.assertRaises(ValueError):
             get_wallet_signatures(
@@ -146,6 +152,43 @@ class WalletMonitorTests(unittest.TestCase):
         self.assertEqual(
             self.store.get_status(self.wallet, "1111111111111111111111111111111111111111111111111111111111111114"),
             "processed",
+        )
+
+    @patch("engine.wallet_monitor.get_wallet_signatures")
+    def test_recovers_new_signatures_across_pages_until_processed_anchor(
+        self, mock_get_signatures,
+    ):
+        anchor = "1" * 63 + "2"
+        new_a = "1" * 63 + "3"
+        new_b = "1" * 63 + "4"
+        older = "1" * 63 + "5"
+        self.store.mark_baseline(self.wallet)
+        self.store.save(self.wallet, anchor, slot=100)
+        self.store.mark_processed(self.wallet, anchor)
+        mock_get_signatures.side_effect = [
+            [
+                {"signature": new_a, "slot": 102},
+                {"signature": new_b, "slot": 101},
+            ],
+            [
+                {"signature": anchor, "slot": 100},
+                {"signature": older, "slot": 99},
+            ],
+        ]
+
+        results = get_and_store_new_wallet_signatures(
+            wallet_address=self.wallet, store=self.store, limit=2,
+        )
+
+        self.assertEqual(
+            {item["signature"] for item in results},
+            {new_a, new_b},
+        )
+        self.assertFalse(self.store.has_seen(self.wallet, older))
+        self.assertEqual(mock_get_signatures.call_count, 2)
+        self.assertEqual(
+            mock_get_signatures.call_args_list[1].kwargs["before"],
+            new_b,
         )
 
     @patch("engine.wallet_monitor.get_wallet_signatures")

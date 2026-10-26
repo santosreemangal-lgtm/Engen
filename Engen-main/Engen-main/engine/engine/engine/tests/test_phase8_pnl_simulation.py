@@ -196,6 +196,26 @@ class PaperSimulatorTests(unittest.TestCase):
             self.assertEqual(len(restarted.fills), 1)
             self.assertEqual(self.create(restarted)["status"], "DUPLICATE")
 
+    def test_realized_pnl_is_reproducible_from_fills_after_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "simulator.db"
+            simulator = PaperSimulator({QUOTE: "1000"}, db_path=db_path)
+            buy = simulator.create_order("buy-1", "BUY", MINT, "2", QUOTE, created_at=NOW)
+            simulator.execute_order(buy["order_id"], price("10"), now=NOW,
+                                    slippage_bps=0, fee_bps=0, network_cost="0")
+            sell = simulator.create_order("sell-1", "SELL", MINT, "1", QUOTE, created_at=NOW)
+            simulator.execute_order(sell["order_id"], price("15"), now=NOW,
+                                    slippage_bps=0, fee_bps=0, network_cost="0")
+            summary = simulator.pnl_summary()
+            self.assertEqual(Decimal(summary["realized_by_mint"][MINT]["pnl"]), Decimal("5"))
+            self.assertEqual(summary["realized_by_mint"][MINT]["status"], "calculated")
+            self.assertIn("unavailable", summary["unrealized_status"])
+
+            restarted = PaperSimulator({QUOTE: "1"}, db_path=db_path)
+            restarted_summary = restarted.pnl_summary()
+            self.assertEqual(restarted_summary, summary)
+            self.assertEqual(len(restarted.fills), 2)
+
     def test_report_explicitly_separates_simulation_from_real_balances(self):
         report = self.make_simulator().report()
         self.assertEqual(report["mode"], "PAPER_SIMULATION")

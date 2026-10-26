@@ -19,6 +19,7 @@ class PaperMonitorRunnerTests(unittest.TestCase):
     def test_runner_starts_paper_only_with_persistent_usdt_balance(self):
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "paper.db"
+            signature_db_path = Path(directory) / "signatures.db"
 
             args = [
                 "paper_monitor_runner",
@@ -30,6 +31,8 @@ class PaperMonitorRunnerTests(unittest.TestCase):
                 "100",
                 "--paper-db",
                 str(db_path),
+                "--signature-db",
+                str(signature_db_path),
                 "--interval",
                 "5",
             ]
@@ -39,7 +42,7 @@ class PaperMonitorRunnerTests(unittest.TestCase):
             # Interrupt before any real RPC call.
             with (
                 patch("sys.argv", args),
-                patch.object(runner, "SignatureStore"),
+                patch.object(runner, "SignatureStore") as signature_store_mock,
                 patch.object(
                     runner,
                     "monitor_wallet",
@@ -55,6 +58,9 @@ class PaperMonitorRunnerTests(unittest.TestCase):
             self.assertIn('"real_trading": false', printed)
             self.assertIn('"wallet_signing": false', printed)
             self.assertTrue(db_path.exists())
+            signature_store_mock.assert_called_once_with(
+                db_path=str(signature_db_path)
+            )
 
             restarted = PaperTrader(
                 {USDT_MINT: "999"},

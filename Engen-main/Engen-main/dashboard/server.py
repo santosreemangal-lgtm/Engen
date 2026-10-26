@@ -352,6 +352,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def read_json(self):
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            self.send_json(415, {"error": "Content-Type must be application/json"})
+            return None
+
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if not 1 <= length <= MAX_REQUEST_BODY_BYTES:

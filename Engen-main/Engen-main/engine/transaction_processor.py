@@ -21,12 +21,7 @@ def process_transaction_signature(
     timeout=10,
     latency_recorder=None,
 ):
-    """Fetch and analyze a transaction without executing any trades.
-
-    When supplied, latency_recorder receives separate RPC-fetch and local
-    analysis timings. These timings do not represent on-chain execution.
-    """
-
+    """Fetch and analyze a transaction; incomplete provider data stays explicit."""
     if not isinstance(signature, str) or not signature.strip():
         raise ValueError("A transaction signature is required.")
 
@@ -46,20 +41,58 @@ def process_transaction_signature(
         return {
             "signature": signature,
             "available": False,
+            "metadata_complete": False,
+            "metadata_status": "not_available_yet",
             "error": "Transaction data is not available yet.",
         }
 
     if not isinstance(transaction, Mapping):
-        raise SolanaRPCError(
-            "Transaction data returned by RPC is invalid."
-        )
+        raise SolanaRPCError("Transaction data returned by RPC is invalid.")
+
+    slot = transaction.get("slot")
+    if slot is not None and (
+        not isinstance(slot, int) or isinstance(slot, bool) or slot < 0
+    ):
+        return {
+            "signature": signature,
+            "available": False,
+            "metadata_complete": False,
+            "metadata_status": "invalid_slot",
+            "error": "Transaction slot metadata is invalid.",
+        }
 
     metadata = transaction.get("meta")
-
+    if metadata is None:
+        return {
+            "signature": signature,
+            "available": False,
+            "metadata_complete": False,
+            "metadata_status": "missing",
+            "slot": slot,
+            "error": "Transaction metadata is unavailable.",
+        }
     if not isinstance(metadata, Mapping):
-        raise SolanaRPCError(
-            "Transaction data returned by RPC has invalid metadata."
-        )
+        return {
+            "signature": signature,
+            "available": False,
+            "metadata_complete": False,
+            "metadata_status": "invalid",
+            "slot": slot,
+            "error": "Transaction metadata is invalid.",
+        }
+
+    fee = metadata.get("fee")
+    if fee is not None and (
+        not isinstance(fee, int) or isinstance(fee, bool) or fee < 0
+    ):
+        return {
+            "signature": signature,
+            "available": False,
+            "metadata_complete": False,
+            "metadata_status": "invalid_fee",
+            "slot": slot,
+            "error": "Transaction fee metadata is invalid.",
+        }
 
     try:
         analysis_timer = (
@@ -70,22 +103,29 @@ def process_transaction_signature(
         with analysis_timer:
             analysis = analyze_transaction(transaction)
             token_balance_changes = analyze_token_balance_changes(metadata)
-
-            # Include native SOL movements only for successful transactions.
-            # Failed transactions must never become buy/sell candidates.
+            # Failed transactions may pay fees but cannot become swap candidates.
             if analysis.get("status") == "success":
                 token_balance_changes.extend(
                     analyze_native_sol_balance_changes(transaction)
                 )
-
-    except ValueError as exc:
+    except ValueError:
         raise SolanaRPCError(
             "Transaction data could not be analyzed."
-        ) from exc
+        ) from None
 
+    required_metadata = (
+        "err", "fee", "preBalances", "postBalances",
+        "preTokenBalances", "postTokenBalances",
+    )
+    missing_fields = [
+        field for field in required_metadata if field not in metadata
+    ]
     return {
         "signature": signature,
         **analysis,
+        "available": True,
+        "metadata_complete": not missing_fields,
+        "metadata_missing_fields": missing_fields,
         "token_balance_changes": token_balance_changes,
     }
 

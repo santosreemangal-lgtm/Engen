@@ -19,13 +19,18 @@ class TransactionProcessorTests(unittest.TestCase):
         self.assertEqual(result["signature"], "signature123")
         self.assertIn("error", result)
 
-    def test_invalid_transaction_data_raises_rpc_error(self):
+    def test_missing_metadata_is_reported_not_fabricated(self):
         with mock.patch(
             "engine.transaction_processor.get_transaction",
-            return_value={"meta": None},
+            return_value={"slot": 123, "meta": None},
         ):
-            with self.assertRaises(SolanaRPCError):
-                process_transaction_signature("signature123")
+            result = process_transaction_signature("signature123")
+        self.assertFalse(result["available"])
+        self.assertFalse(result["metadata_complete"])
+        self.assertEqual(result["metadata_status"], "missing")
+        self.assertEqual(result["slot"], 123)
+        self.assertNotIn("status", result)
+        self.assertNotIn("token_balance_changes", result)
 
     def test_processes_failed_transaction(self):
         transaction = {
@@ -81,6 +86,8 @@ class TransactionProcessorTests(unittest.TestCase):
         self.assertEqual(result["fee"], 5000)
         self.assertEqual(result["account_count"], 2)
         self.assertEqual(result["token_balance_changes"], [])
+        self.assertFalse(result["metadata_complete"])
+        self.assertIn("preBalances", result["metadata_missing_fields"])
 
     def test_rejects_empty_signature(self):
         with self.assertRaises(ValueError):
@@ -112,6 +119,21 @@ class TransactionProcessorTests(unittest.TestCase):
             rpc_url="https://example.invalid",
             timeout=3,
         )
+
+    def test_incomplete_metadata_is_marked_explicitly(self):
+        transaction = {
+            "slot": 55,
+            "transaction": {"message": {"accountKeys": []}},
+            "meta": {"err": None, "fee": 100},
+        }
+        with mock.patch(
+            "engine.transaction_processor.get_transaction",
+            return_value=transaction,
+        ):
+            result = process_transaction_signature("signature-incomplete")
+        self.assertTrue(result["available"])
+        self.assertFalse(result["metadata_complete"])
+        self.assertIn("preTokenBalances", result["metadata_missing_fields"])
 
     def test_includes_token_balance_changes(self):
         transaction = {

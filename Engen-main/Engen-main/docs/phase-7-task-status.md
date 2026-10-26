@@ -37,6 +37,6 @@ Tests: `engine/engine/engine/tests/test_profile_store.py`
 
 ## Verification
 
-The safety/unit workflow passed on the prior Phase 7 commit. The dashboard metadata fallback and disposable recovery exercise have now been added; the new CI run must pass before treating the final implementation as verified. A deployment-specific production restore rehearsal remains required before any production deployment, because no production database was available to test.
+The latest safety/unit workflow passed on commit `8b99799ab701946dca7920593011858cb4b175a5`, including all 209 unit tests, the disposable backup/restore recovery exercise, read-only health check, and repository-root entry point. The RPC benchmark for this exact commit was still running at the time of this checklist update. A deployment-specific production restore rehearsal remains required before any production deployment, because no production database was available to test.
 
 No changes have been merged into `main`. This module only stores read-only/paper-mode observations and does not sign or submit transactions.

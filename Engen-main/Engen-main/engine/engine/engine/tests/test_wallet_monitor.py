@@ -1,4 +1,5 @@
 import json
+import urllib.error
 import tempfile
 import unittest
 from pathlib import Path
@@ -223,6 +224,28 @@ class WalletMonitorTests(unittest.TestCase):
             self.store.get_status(self.wallet, "new_A"),
             "pending",
         )
+
+
+    @patch("engine.wallet_monitor.urllib.request.urlopen")
+    def test_rpc_errors_do_not_expose_configured_url_or_credentials(
+        self,
+        mock_urlopen,
+    ):
+        mock_urlopen.side_effect = urllib.error.URLError(
+            "https://rpc.example/?api-key=super-secret"
+        )
+
+        with self.assertRaisesRegex(
+            Exception,
+            "Failed to fetch wallet signatures from the configured RPC endpoint\\.",
+        ) as context:
+            get_wallet_signatures(
+                wallet_address=self.wallet,
+                rpc_url="https://rpc.example/?api-key=super-secret",
+            )
+
+        self.assertNotIn("super-secret", str(context.exception))
+        self.assertNotIn("rpc.example", str(context.exception))
 
 
 if __name__ == "__main__":

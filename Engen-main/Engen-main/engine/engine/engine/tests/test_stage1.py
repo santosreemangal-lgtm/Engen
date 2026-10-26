@@ -93,6 +93,7 @@ class LoggerTests(unittest.TestCase):
         self.assertNotIn("xyz789", redact("Token: xyz789"))
         self.assertNotIn("hunter2", redact("password = hunter2"))
         self.assertEqual(redact("normal message"), "normal message")
+        self.assertNotIn("TOPSECRET", redact('GET /api?token=TOPSECRET HTTP/1.1'))
 
     def test_setup_is_repeatable_without_duplicate_handlers(self):
         setup_logging("INFO")

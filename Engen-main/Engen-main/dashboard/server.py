@@ -141,7 +141,7 @@ def load_paper_simulation_report():
                 for row in db.execute("""SELECT o.side,f.asset_mint,f.quantity,f.execution_price,
                     f.fee,f.network_cost,f.created_at FROM simulated_fills f
                     JOIN simulated_orders o ON o.order_id=f.order_id
-                    ORDER BY f.created_at,f.fill_id""")
+                    ORDER BY f.rowid""")
             ]
             base["pnl"]["realized_by_mint"] = realized_pnl_from_fills(all_fills)
     except (OSError, sqlite3.Error, ValueError) as exc:

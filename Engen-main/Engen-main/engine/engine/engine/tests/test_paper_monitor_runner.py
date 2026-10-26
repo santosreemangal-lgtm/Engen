@@ -44,6 +44,32 @@ class PaperMonitorRunnerTests(unittest.TestCase):
                     "https://api.mainnet-beta.solana.com"
                 )
 
+    def test_unsafe_startup_stops_before_database_initialization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paper_db = Path(directory) / "paper.db"
+            signature_db = Path(directory) / "signatures.db"
+            argv = [
+                "paper_monitor_runner",
+                "--wallet", TEST_WALLET,
+                "--quote-mint", USDT_MINT,
+                "--paper-db", str(paper_db),
+                "--signature-db", str(signature_db),
+            ]
+            with (
+                patch.dict(os.environ, {"LIVE_TRADING_ENABLED": "true"}),
+                patch("sys.argv", argv),
+                patch.object(runner, "SignatureStore") as store_mock,
+                patch.object(runner, "PaperTrader") as trader_mock,
+                redirect_stdout(io.StringIO()),
+            ):
+                with self.assertRaises(SystemExit):
+                    runner.main()
+
+            store_mock.assert_not_called()
+            trader_mock.assert_not_called()
+            self.assertFalse(paper_db.exists())
+            self.assertFalse(signature_db.exists())
+
     def test_timeout_accepts_positive_finite_value(self):
         self.assertEqual(runner.positive_timeout("2.5"), 2.5)
 

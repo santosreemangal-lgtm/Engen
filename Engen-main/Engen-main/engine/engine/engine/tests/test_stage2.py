@@ -6,21 +6,21 @@ from engine.solana_public import SolanaRPCError, get_public_health, get_slot
 
 
 class SolanaPublicTests(unittest.TestCase):
-    @patch("engine.solana_public.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_health_returns_ok(self, mock_urlopen):
         response = MagicMock()
         response.read.return_value = json.dumps({"result": "ok"}).encode()
         mock_urlopen.return_value.__enter__.return_value = response
         self.assertEqual(get_public_health(), "ok")
 
-    @patch("engine.solana_public.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_slot_returns_number(self, mock_urlopen):
         response = MagicMock()
         response.read.return_value = json.dumps({"result": 12345}).encode()
         mock_urlopen.return_value.__enter__.return_value = response
         self.assertEqual(get_slot(), 12345)
 
-    @patch("engine.solana_public.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_rpc_error_raises_exception(self, mock_urlopen):
         response = MagicMock()
         response.read.return_value = json.dumps(

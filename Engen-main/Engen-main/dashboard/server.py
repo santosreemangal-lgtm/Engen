@@ -365,7 +365,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/rpc-health":
             report = rpc_health_report()
-            self.send_json(200 if report["available"] else 503, report)
+            self.send_json(200, report)
             return
 
         if path == "/api/paper-simulation":

@@ -11,7 +11,11 @@ Backend: `dashboard/server.py`
 - [~] **243.** Existing color tokens retained; keyboard focus and hover states added. A complete design-system pass remains.
 - [~] **244.** Existing positive/negative balance colors retained. Explicit transaction buy/sell classification indicators remain to be implemented when classification data is available.
 - [~] **245.** Added consistent success, warning, and error color utility classes; full contrast/accessibility audit remains.
-- [ ] **246–260.** Dashboard overview, engine/RPC health, destination profile cards and settings, profile balances/source wallets, transaction history/filtering, fee display, and complete P&L presentation remain to be implemented or integrated with backend data.
+- [x] **246.** Added an Engine Overview section to summarize the dashboard state.
+- [~] **247.** The overview labels the monitoring mode READ-ONLY; paper simulation is separately labeled in its own panel. A complete authorized-mode API contract remains.
+- [x] **248.** Shows the most recent successful monitoring check when available.
+- [~] **249.** Shows qualified RPC-observation states inferred from wallet scans; this is not a direct independent RPC health probe.
+- [ ] **250–260.** Destination profile cards/settings, profile balances/source wallets, transaction history/filtering, fee display, and full P&L presentation remain to be implemented or integrated with backend data.
 - [~] **261.** Backend fetch failures and invalid JSON responses now produce clearer errors; a full loading/empty/stale/error-state audit remains.
 - [ ] **262.** Transaction-history pagination/bounded loading remains to be implemented when the history API is available.
 - [~] **263.** Existing wallet-address validation remains; common API response shape checks were added. Full validation for all future profile/settings inputs remains.
@@ -30,6 +34,7 @@ Backend: `dashboard/server.py`
 - `dashboard/index.html`: fail-closed paper-simulation report metadata check.
 - `dashboard/index.html`: clearer backend-disconnected state for monitoring and simulation panels.
 - `dashboard/index.html`: keyboard focus, hover feedback, and status color utility classes.
+- `dashboard/index.html`: responsive Engine Overview for read-only mode, monitoring health, last successful check, and carefully qualified RPC observations.
 
 ## Known limitations
 

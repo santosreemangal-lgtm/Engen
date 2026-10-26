@@ -20,6 +20,7 @@ class PaperLatencyTests(unittest.TestCase):
             wallet="PublicWalletAddress",
             limit=5,
             rpc_url="https://example.invalid",
+            timeout=10,
         )
         store = Mock()
         trader = Mock()

@@ -2,8 +2,7 @@
 """Read-only access to public Solana RPC data. No keys or transactions."""
 
 import json
-import urllib.error
-import urllib.request
+from engine.rpc_policy import post_json_rpc
 
 
 DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com"
@@ -16,26 +15,10 @@ class SolanaRPCError(Exception):
 def _rpc_request(payload, rpc_url=DEFAULT_RPC_URL, timeout=10):
     """Send a read-only JSON-RPC request and validate its response."""
 
-    request = urllib.request.Request(
-        rpc_url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except (
-        urllib.error.URLError,
-        TimeoutError,
-        OSError,
-        ValueError,
-    ) as exc:
-        # Suppress the original exception because it may contain a credentialed RPC URL.
-        raise SolanaRPCError(
-            "Public Solana RPC request failed."
-        ) from None
+        data = post_json_rpc(payload, rpc_url=rpc_url, timeout=timeout)
+    except RuntimeError as exc:
+        raise SolanaRPCError(str(exc)) from None
 
     if not isinstance(data, dict):
         raise SolanaRPCError("Solana RPC returned an invalid response.")

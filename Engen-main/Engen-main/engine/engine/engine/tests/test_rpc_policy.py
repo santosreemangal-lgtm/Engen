@@ -93,6 +93,21 @@ class RPCPolicyTests(unittest.TestCase):
 
     @patch("engine.rpc_policy._pace_requests")
     @patch("engine.rpc_policy.urllib.request.urlopen")
+    def test_retry_count_is_capped_even_if_environment_is_unreasonable(
+        self, mock_urlopen, _pace,
+    ):
+        with patch.dict(os.environ, {
+            "ENGEN_RPC_RETRIES": "999999",
+            "ENGEN_RPC_BACKOFF_SECONDS": "0",
+            "ENGEN_RPC_MIN_INTERVAL_SECONDS": "0",
+        }):
+            mock_urlopen.side_effect = urllib.error.URLError("offline")
+            with self.assertRaises(RuntimeError):
+                post_json_rpc({"method": "getHealth"}, "https://rpc.example", 1)
+        self.assertEqual(mock_urlopen.call_count, 6)
+
+    @patch("engine.rpc_policy._pace_requests")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_invalid_json_response_is_not_retried(self, mock_urlopen, _pace):
         response = _Response({"result": "unused"})
         response.read = lambda: b"not-json"

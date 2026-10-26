@@ -316,6 +316,8 @@
       <p class="muted">These virtual balances and fills are separate from real wallet balances. This panel never submits transactions.</p>
       <div id="simulation-status" class="muted" aria-live="polite">Loading paper simulation report...</div>
       <div id="simulation-balances"></div>
+      <h3>Simulated realized P&amp;L (USD)</h3>
+      <div id="simulation-pnl"></div>
       <h3>Recent simulated orders</h3>
       <div id="simulation-orders"></div>
       <h3>Recent simulated fills</h3>
@@ -366,6 +368,7 @@
     const stopButton = document.getElementById("stop-monitoring");
     const simulationStatus = document.getElementById("simulation-status");
     const simulationBalances = document.getElementById("simulation-balances");
+    const simulationPnl = document.getElementById("simulation-pnl");
     const simulationOrders = document.getElementById("simulation-orders");
     const simulationFills = document.getElementById("simulation-fills");
 
@@ -740,6 +743,7 @@
 
     function renderSimulationReport(data) {
       simulationBalances.replaceChildren();
+      simulationPnl.replaceChildren();
       simulationOrders.replaceChildren();
       simulationFills.replaceChildren();
 
@@ -763,6 +767,24 @@
           addText(simulationBalances, mint + ": " + amount + " (simulated)", "p", "mono");
         });
       }
+
+      const pnl = data.pnl && typeof data.pnl === "object" ? data.pnl : {};
+      const realized = pnl.realized_by_mint && typeof pnl.realized_by_mint === "object"
+        ? pnl.realized_by_mint
+        : {};
+      const pnlEntries = Object.entries(realized);
+      if (pnlEntries.length === 0) {
+        addText(simulationPnl, "Realized P&L is not available yet; no simulated sales are recorded.", "p", "empty");
+      }
+      pnlEntries.forEach(([mint, item]) => {
+        const value = item && item.pnl !== null && item.pnl !== undefined
+          ? item.pnl + " " + (item.currency || "USD")
+          : "unavailable (unknown cost basis)";
+        addText(simulationPnl, mint + ": " + value, "p", "mono");
+      });
+      addText(simulationPnl,
+        "Unrealized P&L: unavailable until a verified fresh market-price source is connected.",
+        "p", "muted");
 
       const orders = Array.isArray(data.orders) ? data.orders : [];
       if (orders.length === 0) addText(simulationOrders, "No simulated orders.", "p", "empty");

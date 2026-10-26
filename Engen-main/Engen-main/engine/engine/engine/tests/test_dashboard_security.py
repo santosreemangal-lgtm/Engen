@@ -43,7 +43,7 @@ class DashboardWalletValidationTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with patch.object(server, "WALLETS_FILE", path):
-                self.assertEqual(server.load_wallets(), [valid, valid])
+                self.assertEqual(server.load_wallets(), [valid])
 
 
 if __name__ == "__main__":

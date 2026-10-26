@@ -6,25 +6,43 @@ from engine.solana_public import SolanaRPCError, get_public_health, get_slot
 
 
 class SolanaPublicTests(unittest.TestCase):
-    @patch("engine.solana_public.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_health_returns_ok(self, mock_urlopen):
         response = MagicMock()
-        response.read.return_value = json.dumps({"result": "ok"}).encode()
+        response.read.return_value = json.dumps({"jsonrpc": "2.0", "id": 1, "result": "ok"}).encode()
         mock_urlopen.return_value.__enter__.return_value = response
         self.assertEqual(get_public_health(), "ok")
 
-    @patch("engine.solana_public.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_slot_returns_number(self, mock_urlopen):
         response = MagicMock()
-        response.read.return_value = json.dumps({"result": 12345}).encode()
+        response.read.return_value = json.dumps({"jsonrpc": "2.0", "id": 2, "result": 12345}).encode()
         mock_urlopen.return_value.__enter__.return_value = response
         self.assertEqual(get_slot(), 12345)
 
-    @patch("engine.solana_public.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
+    def test_malformed_slot_result_is_rejected(self, mock_urlopen):
+        response = MagicMock()
+        response.read.return_value = json.dumps({
+            "jsonrpc": "2.0", "id": 2, "result": True,
+        }).encode()
+        mock_urlopen.return_value.__enter__.return_value = response
+        with self.assertRaises(SolanaRPCError):
+            get_slot()
+
+    @patch("engine.rpc_policy.urllib.request.urlopen")
+    def test_missing_json_rpc_version_is_rejected(self, mock_urlopen):
+        response = MagicMock()
+        response.read.return_value = json.dumps({"id": 2, "result": 123}).encode()
+        mock_urlopen.return_value.__enter__.return_value = response
+        with self.assertRaisesRegex(SolanaRPCError, "JSON-RPC version"):
+            get_slot()
+
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_rpc_error_raises_exception(self, mock_urlopen):
         response = MagicMock()
         response.read.return_value = json.dumps(
-            {"error": {"code": -1, "message": "Test error"}}
+            {"jsonrpc": "2.0", "id": 2, "error": {"code": -1, "message": "Test error"}}
         ).encode()
         mock_urlopen.return_value.__enter__.return_value = response
         with self.assertRaises(SolanaRPCError):

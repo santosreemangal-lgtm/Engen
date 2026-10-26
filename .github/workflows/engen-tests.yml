@@ -1,0 +1,146 @@
+name: Engen Safety and Unit Tests
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Engen-main/Engen-main
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Compile Python sources
+        run: python -m compileall -q main.py engine dashboard && python -m py_compile ../../main.py
+
+      - name: Run unit tests
+        run: python -m unittest discover -s engine/engine/engine/tests -v
+
+      - name: Read-only RPC benchmark for approved wallet
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 1
+        env:
+          SOLANA_WALLET: ardinRsN1mNYVeoJWTBsWeYeXvuR9UUDGMsCDKpb6AT
+          SOLANA_RPC_URL: https://api.mainnet-beta.solana.com
+        run: |
+          python - <<'PY'
+          import json, math, os, time, urllib.request
+          from datetime import datetime, timezone
+
+          endpoint = os.environ["SOLANA_RPC_URL"]
+          wallet = os.environ["SOLANA_WALLET"]
+          request_id = 0
+          report = {
+              "started_at_utc": datetime.now(timezone.utc).isoformat(),
+              "endpoint_host": "api.mainnet-beta.solana.com",
+              "wallet_address": wallet,
+              "runner": "GitHub-hosted Ubuntu runner; not the user's device",
+              "read_only": True,
+              "live_trading": False,
+              "stages": {},
+              "errors": [],
+          }
+
+          def rpc(method, params, timeout=12):
+              global request_id
+              request_id += 1
+              req = urllib.request.Request(
+                  endpoint,
+                  data=json.dumps({"jsonrpc":"2.0","id":request_id,"method":method,"params":params}).encode(),
+                  headers={"Content-Type":"application/json"},
+                  method="POST",
+              )
+              start = time.perf_counter_ns()
+              try:
+                  with urllib.request.urlopen(req, timeout=timeout) as response:
+                      body = json.loads(response.read().decode())
+                  elapsed = (time.perf_counter_ns() - start) / 1_000_000
+                  if not isinstance(body, dict) or body.get("error") is not None or "result" not in body:
+                      raise RuntimeError("Invalid JSON-RPC response")
+                  return body["result"], elapsed
+              except Exception as exc:
+                  elapsed = (time.perf_counter_ns() - start) / 1_000_000
+                  report["errors"].append({"method":method,"error_type":type(exc).__name__,"elapsed_ms":round(elapsed,3)})
+                  return None, elapsed
+
+          def summarize(name, samples):
+              ordered = sorted(samples)
+              if not ordered:
+                  report["stages"][name] = {"count":0,"error":"No successful samples"}
+                  return
+              def nr(p):
+                  return ordered[max(0, math.ceil(p * len(ordered)) - 1)]
+              report["stages"][name] = {
+                  "count":len(ordered),
+                  "mean_ms":round(sum(ordered)/len(ordered),3),
+                  "min_ms":round(ordered[0],3),
+                  "max_ms":round(ordered[-1],3),
+                  "p50_ms":round(nr(.50),3),
+                  "p95_ms":round(nr(.95),3),
+                  "p99_ms":round(nr(.99),3),
+              }
+
+          for method, params, count, label in [
+              ("getHealth", [], 10, "rpc.getHealth"),
+              ("getSlot", [], 20, "rpc.getSlot"),
+              ("getSignaturesForAddress", [wallet, {"limit":10,"commitment":"confirmed"}], 5, "rpc.getSignaturesForAddress"),
+          ]:
+              samples = []
+              for _ in range(count):
+                  result, elapsed = rpc(method, params)
+                  if result is not None:
+                      samples.append(elapsed)
+                  time.sleep(.15)
+              summarize(label, samples)
+
+          signatures, _ = rpc("getSignaturesForAddress", [wallet, {"limit":5,"commitment":"confirmed"}])
+          tx_samples, fetched = [], 0
+          if isinstance(signatures, list):
+              for item in signatures[:5]:
+                  sig = item.get("signature") if isinstance(item, dict) else None
+                  if not isinstance(sig, str) or not sig:
+                      continue
+                  result, elapsed = rpc("getTransaction", [sig, {"encoding":"json","commitment":"confirmed","maxSupportedTransactionVersion":1}])
+                  if result is not None:
+                      tx_samples.append(elapsed)
+                      fetched += 1
+                  time.sleep(.15)
+          summarize("rpc.getTransaction", tx_samples)
+          report["transactions_fetched"] = fetched
+          report["detection_latency_ms"] = None
+          report["detection_latency_note"] = "Snapshot RPC benchmark cannot measure time-to-detect; that needs timestamped continuous monitoring or WebSocket event observation."
+          report["finished_at_utc"] = datetime.now(timezone.utc).isoformat()
+          report["error_count"] = len(report["errors"])
+          print(json.dumps(report, indent=2))
+          with open("rpc-benchmark-report.json", "w") as f:
+              json.dump(report, f, indent=2)
+          if not any(x.get("count", 0) for x in report["stages"].values()):
+              raise SystemExit("Benchmark failed: no successful RPC samples.")
+          PY
+
+      - name: Upload RPC benchmark report
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.number == 1
+        uses: actions/upload-artifact@v7
+        with:
+          name: solana-rpc-benchmark-report
+          path: Engen-main/Engen-main/rpc-benchmark-report.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Run read-only health check
+        run: python main.py
+
+      - name: Test repository-root entry point
+        working-directory: .
+        run: python main.py

@@ -35,3 +35,7 @@ The shared read-only RPC transport reads these optional process environment vari
 Invalid or negative values fall back to the safe defaults. HTTP 429 and 5xx responses, plus transport/network failures, are retried within the configured bound. Invalid JSON responses and non-retryable HTTP errors are not retried. Error messages intentionally omit the configured RPC URL. These controls reduce bursts but do not replace an RPC provider's published quota or guarantee availability.
 
 `.env.example` remains a reference only and is not automatically loaded. Set these values in the process/Codespaces environment to override defaults.
+
+## Dashboard input bounds
+
+The dashboard backend validates saved wallet addresses as Base58 public keys decoding to exactly 32 bytes, rather than relying only on character count. The saved-wallet list is capped at 100 entries, and JSON request bodies are capped at 10,000 bytes. These bounds reduce accidental resource growth; they do not provide authentication. Keep the dashboard bound to loopback unless it is placed behind a properly authenticated and protected deployment.

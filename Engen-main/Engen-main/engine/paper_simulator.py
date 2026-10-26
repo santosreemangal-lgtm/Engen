@@ -66,13 +66,18 @@ class PaperSimulator:
                         "details": json.loads(row[9]),
                     }
                 self.processed_signals = {o["signal_id"] for o in self.orders.values()}
+                fill_rows = db.execute("""SELECT f.fill_id,f.order_id,o.side,f.asset_mint,f.quantity,
+                    o.quote_mint,f.reference_price,f.execution_price,f.gross_quote,f.fee,
+                    f.network_cost,f.net_quote,f.currency,f.price_source,f.price_timestamp,
+                    f.price_age_seconds,f.slippage_bps,f.created_at
+                    FROM simulated_fills f JOIN simulated_orders o ON o.order_id=f.order_id
+                    ORDER BY f.created_at,f.fill_id""").fetchall()
                 self.fills = [dict(zip(
-                    ("fill_id","order_id","asset_mint","quantity","reference_price","execution_price",
-                     "gross_quote","fee","network_cost","net_quote","currency","price_source",
-                     "price_timestamp","price_age_seconds","slippage_bps","created_at"), row))
-                    for row in db.execute("""SELECT fill_id,order_id,asset_mint,quantity,reference_price,
-                    execution_price,gross_quote,fee,network_cost,net_quote,currency,price_source,
-                    price_timestamp,price_age_seconds,slippage_bps,created_at FROM simulated_fills ORDER BY created_at,fill_id""")]
+                    ("fill_id","order_id","side","asset_mint","quantity","quote_mint",
+                     "reference_price","execution_price","gross_quote","fee","network_cost",
+                     "net_quote","currency","price_source","price_timestamp","price_age_seconds",
+                     "slippage_bps","created_at"), row)) for row in fill_rows]
+        self._rebuild_pnl_ledger()
 
     def _persist(self, order, balances=None, fill=None):
         if self.db_path is None:
@@ -177,7 +182,10 @@ class PaperSimulator:
         self._persist(updated, balances=balances, fill=fill)
         self.orders[order_id] = updated
         self.balances = balances
+        fill["side"] = order["side"]
+        fill["quote_mint"] = order["quote_mint"]
         self.fills.append(fill)
+        self._rebuild_pnl_ledger()
         return {"status":"FILLED","simulated":True,"real_trading":False,
                 "transaction_broadcast":False,"order":dict(updated),"fill":dict(fill)}
 
@@ -187,9 +195,62 @@ class PaperSimulator:
         self.orders[order["order_id"]] = updated
         return {"status":"REJECTED","reason":reason,"real_trading":False,"transaction_broadcast":False}
 
+    def _rebuild_pnl_ledger(self):
+        """Recalculate realized P&L from persisted fills in stable order."""
+        from engine.pnl import AverageCostLedger
+        ledger = AverageCostLedger()
+        events = []
+        for fill in self.fills:
+            mint = fill["asset_mint"]
+            quantity = fill["quantity"]
+            price = fill["execution_price"]
+            fee = fill["fee"]
+            network = fill["network_cost"]
+            if fill["side"] == "BUY":
+                event = ledger.buy(mint, quantity, price, fee=fee, network_fee=network,
+                                   timestamp=fill["created_at"])
+            else:
+                position = ledger.snapshot(mint)
+                tracked = Decimal(position["quantity"])
+                sold = Decimal(quantity)
+                if sold > tracked:
+                    # Initial virtual assets can lack acquisition history. Mark
+                    # that missing basis unknown rather than assuming zero cost.
+                    ledger.deposit(mint, sold - tracked, unit_price=None,
+                                   timestamp=fill["created_at"])
+                event = ledger.sell(mint, quantity, price, fee=fee, network_fee=network,
+                                    timestamp=fill["created_at"])
+            events.append(event)
+        self.pnl_ledger = ledger
+        self.pnl_events = events
+
+    def pnl_summary(self):
+        by_mint = {}
+        for event in self.pnl_events:
+            if event["type"] != "SELL":
+                continue
+            mint = event["mint"]
+            item = by_mint.setdefault(mint, {"realized_pnl": Decimal("0"), "complete": True,
+                                               "currency": "USD"})
+            if event["realized_pnl"] is None:
+                item["complete"] = False
+            else:
+                item["realized_pnl"] += Decimal(event["realized_pnl"])
+        realized = {
+            mint: {"pnl": str(item["realized_pnl"]) if item["complete"] else None,
+                   "status": "calculated" if item["complete"] else "unknown_cost_basis",
+                   "currency": item["currency"]}
+            for mint, item in sorted(by_mint.items())
+        }
+        return {"cost_basis_method": "average_cost", "currency": "USD",
+                "realized_by_mint": realized,
+                "unrealized_status": "unavailable_no_verified_fresh_market_price",
+                "unrealized_note": "No verified market-price provider is connected to the simulator."}
+
     def report(self):
         return {"mode":"PAPER_SIMULATION","simulated":True,"real_wallet_balances_included":False,
                 "real_trading":False,"transaction_broadcast":False,
                 "balances":{mint:str(amount) for mint,amount in self.balances.items()},
                 "orders":[dict(order) for order in self.orders.values()],
-                "fills":[dict(fill) for fill in self.fills]}
+                "fills":[dict(fill) for fill in self.fills],
+                "pnl":self.pnl_summary()}

@@ -39,3 +39,21 @@ The dashboard asks its monitor worker to stop and waits up to 15 seconds for exi
 ## Configuration safety
 
 Configuration validation happens before monitoring startup. Error messages describe the setting to correct but do not print arbitrary rejected values. Never log the complete process environment or configuration object.
+
+## Checklist implementation map: Tasks 080–090
+
+| Task | Implementation evidence |
+|---|---|
+| 080 — Emergency stop safe after uncertain startup | `engine/safety.py` provides a default-engaged latch; unsafe configuration aborts before storage initialization. |
+| 081 — Read-only blocks signing | `block_live_execution()` fails closed; the current runtime exposes no authorized live execution mode. |
+| 082 — Paper trading cannot broadcast | Regression test parses `engine/paper_trader.py` and rejects network/signing imports and broadcast/signing entry-point names. |
+| 083 — Checks before future live trading | The mandatory release gates above are documented; live execution remains out of scope and disabled. |
+| 084 — Interrupted-startup handling | Paper runner returns exit code 130 when storage initialization is interrupted, before constructing the trader or starting scans. |
+| 085 — Clean shutdown | Dashboard shutdown waits up to 15 seconds for its monitor worker and warns if it remains alive. |
+| 086 — Stop background tasks | `MonitorService.stop_and_wait()` requests stop and joins the worker with a bounded timeout; tests cover worker exit. |
+| 087 — Avoid full environment/config logs | Configuration errors no longer echo rejected values; startup failure logs are generic and do not dump environment variables. |
+| 088 — Conflicting-config checks | Paper runner validates the same safe configuration policy and rejects live-enabled or non-read-only settings before initialization. |
+| 089 — Configuration tests | Unit tests cover defaults, rejected modes, live-trading flags, sanitized errors, and fail-closed startup. |
+| 090 — Startup without live-trading credentials | Existing paper-runner startup tests use no signing key or seed phrase and assert `real_trading=false` and `wallet_signing=false`. |
+
+These tasks are implemented within the current read-only/paper-only boundary. They do not constitute approval or readiness for live trading.

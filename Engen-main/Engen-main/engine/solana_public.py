@@ -1,5 +1,7 @@
 """Validated, read-only access to public Solana JSON-RPC data."""
 
+import os
+
 from engine.rpc_policy import (
     RPCInvalidResponseError,
     RPCHTTPError,
@@ -8,7 +10,7 @@ from engine.rpc_policy import (
 )
 
 
-DEFAULT_RPC_URL = "https://api.mainnet-beta.solana.com"
+DEFAULT_RPC_URL = os.environ.get("ENGEN_RPC_URL", "https://api.mainnet-beta.solana.com").strip() or "https://api.mainnet-beta.solana.com"
 _BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
 

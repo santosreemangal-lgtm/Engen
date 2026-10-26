@@ -12,7 +12,7 @@ from engine.solana_public import (
 
 class TransactionRPCTests(unittest.TestCase):
 
-    @patch("engine.solana_public.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_returns_transaction_data(self, mock_urlopen):
         transaction = {
             "slot": 123,
@@ -30,7 +30,7 @@ class TransactionRPCTests(unittest.TestCase):
 
         self.assertEqual(result, transaction)
 
-    @patch("engine.solana_public.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_returns_none_when_transaction_is_not_found(
         self, mock_urlopen
     ):
@@ -47,7 +47,7 @@ class TransactionRPCTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             get_transaction("")
 
-    @patch("engine.solana_public.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_rpc_error_raises_exception(self, mock_urlopen):
         response = MagicMock()
         response.read.return_value = json.dumps({
@@ -62,7 +62,7 @@ class TransactionRPCTests(unittest.TestCase):
         with self.assertRaises(SolanaRPCError):
             get_transaction("test_signature")
 
-    @patch("engine.solana_public.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_invalid_result_is_rejected(self, mock_urlopen):
         response = MagicMock()
         response.read.return_value = json.dumps(
@@ -75,7 +75,7 @@ class TransactionRPCTests(unittest.TestCase):
             get_transaction("test_signature")
 
 
-    @patch("engine.solana_public.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_network_error_does_not_expose_rpc_url_credentials(self, mock_urlopen):
         mock_urlopen.side_effect = urllib.error.URLError(
             "https://rpc.example/?api-key=super-secret"

@@ -21,6 +21,24 @@ class SolanaPublicTests(unittest.TestCase):
         self.assertEqual(get_slot(), 12345)
 
     @patch("engine.rpc_policy.urllib.request.urlopen")
+    def test_malformed_slot_result_is_rejected(self, mock_urlopen):
+        response = MagicMock()
+        response.read.return_value = json.dumps({
+            "jsonrpc": "2.0", "id": 2, "result": True,
+        }).encode()
+        mock_urlopen.return_value.__enter__.return_value = response
+        with self.assertRaises(SolanaRPCError):
+            get_slot()
+
+    @patch("engine.rpc_policy.urllib.request.urlopen")
+    def test_missing_json_rpc_version_is_rejected(self, mock_urlopen):
+        response = MagicMock()
+        response.read.return_value = json.dumps({"id": 2, "result": 123}).encode()
+        mock_urlopen.return_value.__enter__.return_value = response
+        with self.assertRaisesRegex(SolanaRPCError, "JSON-RPC version"):
+            get_slot()
+
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_rpc_error_raises_exception(self, mock_urlopen):
         response = MagicMock()
         response.read.return_value = json.dumps(

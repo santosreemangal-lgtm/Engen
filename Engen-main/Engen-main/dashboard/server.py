@@ -2,6 +2,7 @@
 """Read-only web backend for the Solana Monitor dashboard."""
 
 import json
+import os
 import re
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -19,7 +20,7 @@ from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
 
 WALLETS_FILE = ROOT / "wallets.json"
-HOST = "0.0.0.0"
+HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT = 8000
 
 ADDRESS_PATTERN = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
@@ -171,10 +172,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print("Solana Monitor dashboard backend starting on port %s" % PORT)
+    print("Solana Monitor dashboard backend starting at %s:%s" % (HOST, PORT))
     print("Wallet storage: %s" % WALLETS_FILE)
     print("Monitoring is opt-in; no scan starts automatically.")
     print("Read-only mode: no trades, signing, or private keys.")
+    if HOST not in ("127.0.0.1", "localhost", "::1"):
+        print(
+            "WARNING: dashboard has no authentication. Exposing it beyond "
+            "localhost may let other users change saved wallets and control "
+            "read-only monitoring. Use only behind a trusted authenticated proxy."
+        )
 
     server = ThreadingHTTPServer((HOST, PORT), DashboardHandler)
 

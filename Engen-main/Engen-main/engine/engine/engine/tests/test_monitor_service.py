@@ -112,6 +112,35 @@ class MonitorServiceTests(unittest.TestCase):
             if worker is not None:
                 worker.join(timeout=3)
 
+    def test_stop_and_wait_confirms_worker_exit(self):
+        scan_started = threading.Event()
+        release_scan = threading.Event()
+
+        def slow_scan(address):
+            scan_started.set()
+            release_scan.wait(timeout=2)
+            return []
+
+        service = MonitorService(slow_scan, interval=30)
+        service.start(["test_public_wallet"])
+        self.assertTrue(scan_started.wait(timeout=2))
+        release_scan.set()
+
+        result = service.stop_and_wait(timeout=2)
+        self.assertTrue(result["worker_stopped"])
+        self.assertFalse(result["enabled"])
+
+    def test_stop_and_wait_rejects_invalid_timeout(self):
+        service = MonitorService(lambda address: [], interval=30)
+        for timeout in (0, -1, True, "1"):
+            with self.subTest(timeout=timeout):
+                with self.assertRaises(ValueError):
+                    service.stop_and_wait(timeout=timeout)
+        service.stop()
+        worker = service._thread
+        if worker is not None:
+            worker.join(timeout=2)
+
     def test_rejects_interval_below_30_seconds(self):
         with self.assertRaises(ValueError):
             MonitorService(lambda address: [], interval=29)

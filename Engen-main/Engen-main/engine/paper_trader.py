@@ -10,7 +10,8 @@ from pathlib import Path
 class PaperTrader:
     """Simulate swaps and optionally persist the paper ledger in SQLite."""
 
-    def __init__(self, initial_balances=None, db_path=None):
+    def __init__(self, initial_balances=None, db_path=None, *,
+                 max_position_pct=None, max_open_positions=None):
         if initial_balances is None:
             initial_balances = {}
         if not isinstance(initial_balances, Mapping):
@@ -27,6 +28,25 @@ class PaperTrader:
             if not quantity.is_finite() or quantity < 0:
                 raise ValueError("Initial balances must be finite and non-negative.")
             self.balances[mint] = quantity
+
+        if max_position_pct is None:
+            self.max_position_pct = None
+        else:
+            try:
+                limit = Decimal(str(max_position_pct))
+            except Exception as exc:
+                raise ValueError("Maximum position percentage must be numeric.") from exc
+            if not limit.is_finite() or limit <= 0 or limit > 100:
+                raise ValueError("Maximum position percentage must be greater than 0 and at most 100.")
+            self.max_position_pct = limit
+
+        if max_open_positions is not None and (
+            not isinstance(max_open_positions, int)
+            or isinstance(max_open_positions, bool)
+            or not 1 <= max_open_positions <= 100
+        ):
+            raise ValueError("Maximum open positions must be an integer from 1 to 100.")
+        self.max_open_positions = max_open_positions
 
         self.processed_signatures = set()
         self.trades = []
@@ -255,6 +275,23 @@ class PaperTrader:
 
             asset_amount = asset_delta
             quote_amount = -quote_delta
+            if self.max_position_pct is not None:
+                max_quote_spend = quote_balance * self.max_position_pct / Decimal("100")
+                if quote_amount > max_quote_spend:
+                    return {
+                        "status": "REJECTED",
+                        "reason": "Buy exceeds this profile's maximum position percentage.",
+                    }
+            if self.max_open_positions is not None and asset_balance <= 0:
+                open_positions = sum(
+                    1 for mint, amount in self.balances.items()
+                    if mint != quote_mint and amount > 0
+                )
+                if open_positions >= self.max_open_positions:
+                    return {
+                        "status": "REJECTED",
+                        "reason": "This profile's maximum open paper positions has been reached.",
+                    }
             if quote_balance < quote_amount:
                 return {"status": "REJECTED", "reason": "Insufficient paper quote balance."}
 

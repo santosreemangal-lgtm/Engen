@@ -23,7 +23,7 @@ class TransactionLatencyTests(unittest.TestCase):
         recorder = LatencyRecorder()
 
         result = process_transaction_signature(
-            "sample-signature",
+            "1111111111111111111111111111111111111111111111111111111111111112",
             latency_recorder=recorder,
         )
 
@@ -39,7 +39,7 @@ class TransactionLatencyTests(unittest.TestCase):
         recorder = LatencyRecorder()
 
         result = process_transaction_signature(
-            "not-yet-available",
+            "1111111111111111111111111111111111111111111111111111111111111113",
             latency_recorder=recorder,
         )
 

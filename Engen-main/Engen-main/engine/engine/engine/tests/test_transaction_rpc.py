@@ -26,9 +26,12 @@ class TransactionRPCTests(unittest.TestCase):
 
         mock_urlopen.return_value.__enter__.return_value = response
 
-        result = get_transaction("test_signature")
+        result = get_transaction("1111111111111111111111111111111111111111111111111111111111111111")
 
         self.assertEqual(result, transaction)
+        request = mock_urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["params"][1]["maxSupportedTransactionVersion"], 0)
 
     @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_returns_none_when_transaction_is_not_found(
@@ -41,7 +44,13 @@ class TransactionRPCTests(unittest.TestCase):
 
         mock_urlopen.return_value.__enter__.return_value = response
 
-        self.assertIsNone(get_transaction("unknown_signature"))
+        self.assertIsNone(get_transaction("1111111111111111111111111111111111111111111111111111111111111112"))
+
+    def test_malformed_signature_is_rejected_before_network_call(self):
+        with patch("engine.rpc_policy.urllib.request.urlopen") as mock_urlopen:
+            with self.assertRaises(ValueError):
+                get_transaction("not-a-valid-signature")
+            mock_urlopen.assert_not_called()
 
     def test_empty_signature_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -60,7 +69,7 @@ class TransactionRPCTests(unittest.TestCase):
         mock_urlopen.return_value.__enter__.return_value = response
 
         with self.assertRaises(SolanaRPCError):
-            get_transaction("test_signature")
+            get_transaction("1111111111111111111111111111111111111111111111111111111111111111")
 
     @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_invalid_result_is_rejected(self, mock_urlopen):
@@ -72,8 +81,18 @@ class TransactionRPCTests(unittest.TestCase):
         mock_urlopen.return_value.__enter__.return_value = response
 
         with self.assertRaises(SolanaRPCError):
-            get_transaction("test_signature")
+            get_transaction("1111111111111111111111111111111111111111111111111111111111111111")
 
+
+    @patch("engine.rpc_policy.urllib.request.urlopen")
+    def test_mismatched_json_rpc_id_is_rejected(self, mock_urlopen):
+        response = MagicMock()
+        response.read.return_value = json.dumps({
+            "jsonrpc": "2.0", "id": 999, "result": None,
+        }).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = response
+        with self.assertRaisesRegex(SolanaRPCError, "mismatched"):
+            get_transaction("1111111111111111111111111111111111111111111111111111111111111111")
 
     @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_network_error_does_not_expose_rpc_url_credentials(self, mock_urlopen):
@@ -83,7 +102,7 @@ class TransactionRPCTests(unittest.TestCase):
 
         with self.assertRaises(SolanaRPCError) as context:
             get_transaction(
-                "test_signature",
+                "1111111111111111111111111111111111111111111111111111111111111111",
                 rpc_url="https://rpc.example/?api-key=super-secret",
             )
 

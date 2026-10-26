@@ -65,6 +65,10 @@ The GitHub Actions workflow checks compilation, offline unit tests, and the mock
 - Backup/restore, HTTPS, secret management, and access control need deployment-specific testing.
 - Passing unit tests does not establish profitability or production security.
 
+## Future live-mode gate
+
+Live signing and broadcasting are not implemented or authorized. The requirements for any separate future proposal—including explicit approval, order/exposure limits, slippage and price-age checks, duplicate prevention, emergency stop, RPC fail-closed behavior, and independent testing—are documented in [`LIVE_MODE_SAFETY_GATE.md`](../../LIVE_MODE_SAFETY_GATE.md). That document is a safety specification only and does not enable live mode.
+
 ## Change policy
 
 Preserve working functionality and use small reviewable changes. Do not commit secrets. Keep monitoring read-only and live trading disabled. Do not merge until the relevant checks and deployment assumptions are verified.

@@ -41,6 +41,9 @@ class MarketPrice:
     currency: str
     source: str
     observed_at: str
+    liquidity_usd: Decimal = None
+    liquidity_source: str = None
+    liquidity_observed_at: str = None
 
     def __post_init__(self):
         if not isinstance(self.mint, str) or not self.mint.strip():
@@ -51,6 +54,24 @@ class MarketPrice:
         if not isinstance(self.source, str) or not self.source.strip():
             raise ValueError("Price source is required.")
         parse_timestamp(self.observed_at)
+        if self.liquidity_usd is not None:
+            object.__setattr__(
+                self, "liquidity_usd",
+                decimal_value(self.liquidity_usd, "USD liquidity", allow_zero=True),
+            )
+            if not isinstance(self.liquidity_source, str) or not self.liquidity_source.strip():
+                raise ValueError("Liquidity source is required when liquidity is supplied.")
+            parse_timestamp(self.liquidity_observed_at)
+        elif self.liquidity_source is not None or self.liquidity_observed_at is not None:
+            raise ValueError("Liquidity source/time cannot be supplied without a liquidity value.")
+
+    def liquidity_age_seconds(self, now=None):
+        if self.liquidity_usd is None:
+            return None
+        current = now or datetime.now(timezone.utc)
+        if isinstance(current, str):
+            current = parse_timestamp(current)
+        return max(0, int((current - parse_timestamp(self.liquidity_observed_at)).total_seconds()))
 
     def age_seconds(self, now=None):
         current = now or datetime.now(timezone.utc)

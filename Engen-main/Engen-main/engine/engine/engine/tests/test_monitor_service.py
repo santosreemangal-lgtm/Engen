@@ -1,5 +1,6 @@
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 import unittest
 
 from dashboard.monitor_service import MonitorService
@@ -72,6 +73,40 @@ class MonitorServiceTests(unittest.TestCase):
             worker = service._thread
             if worker is not None:
                 worker.join(timeout=3)
+
+    def test_wallet_failures_are_isolated_between_sources(self):
+        second_wallet_succeeded = threading.Event()
+        first = "11111111111111111111111111111111"
+        second = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+
+        def scan(address):
+            if address == first:
+                raise RuntimeError("temporary failure for first wallet")
+            second_wallet_succeeded.set()
+            return [{"signature": "public-result", "available": True}]
+
+        service = MonitorService(scan, interval=30)
+        try:
+            service.start([first, second])
+            self.assertTrue(second_wallet_succeeded.wait(timeout=3))
+            status = service.status()
+            states = {item["address"]: item["state"] for item in status["wallets"]}
+            self.assertEqual(states[first], "error")
+            self.assertEqual(states[second], "connected")
+        finally:
+            service.stop_and_wait(timeout=3)
+
+    def test_stale_monitor_is_reported_from_last_successful_check(self):
+        service = MonitorService(lambda address: [], interval=30)
+        old = (datetime.now(timezone.utc) - timedelta(seconds=90)).isoformat()
+        state = service._status_details({
+            "state": "connected",
+            "last_successful_check": old,
+            "last_error": None,
+            "latest_results": [],
+        })
+        self.assertEqual(state["state"], "stale")
+        service.stop()
 
     def test_scan_error_is_recorded(self):
         scan_started = threading.Event()

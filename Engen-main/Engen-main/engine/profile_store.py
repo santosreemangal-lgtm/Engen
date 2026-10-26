@@ -155,7 +155,7 @@ class ProfileStore:
         return pid
 
     def get_profile(self, profile_id):
-        with self.connect() as db:
+        with self.session() as db:
             row = db.execute("SELECT * FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
                              (profile_id,)).fetchone()
             if row is None:
@@ -176,7 +176,7 @@ class ProfileStore:
         if forbidden.intersection(str(k).lower() for k in settings):
             raise ValueError("Secret authorization fields cannot be stored in profile settings.")
         payload, now = json.dumps(settings,sort_keys=True,allow_nan=False),utc_now()
-        with self.connect() as db:
+        with self.session() as db:
             if not db.execute("SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
                               (profile_id,)).fetchone():
                 raise ValueError("Profile not found.")
@@ -187,7 +187,7 @@ class ProfileStore:
     def associate_source_wallet(self, profile_id, wallet_address):
         validate_public_address(wallet_address)
         now = utc_now()
-        with self.connect() as db:
+        with self.session() as db:
             if not db.execute("SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
                               (profile_id,)).fetchone():
                 raise ValueError("Profile not found.")
@@ -215,7 +215,7 @@ class ProfileStore:
         now = validate_timestamp(observed_at or utc_now())
         if block_time is not None and (not isinstance(block_time, int) or isinstance(block_time, bool) or block_time < 0):
             raise ValueError("Invalid block time.")
-        with self.connect() as db:
+        with self.session() as db:
             db.execute("INSERT OR IGNORE INTO source_wallets VALUES(?,?)",(source_wallet_address,utc_now()))
             db.execute("""INSERT OR IGNORE INTO transactions
               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
@@ -249,7 +249,7 @@ class ProfileStore:
         if freshness_seconds is not None and (not isinstance(freshness_seconds,int) or freshness_seconds<0):
             raise ValueError("Invalid freshness.")
         sid, now = str(uuid.uuid4()), validate_timestamp(observed_at or utc_now())
-        with self.connect() as db:
+        with self.session() as db:
             if not db.execute("SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",(profile_id,)).fetchone():
                 raise ValueError("Profile not found.")
             if not db.execute("SELECT 1 FROM profile_source_wallets WHERE profile_id=? AND wallet_address=?",
@@ -264,7 +264,7 @@ class ProfileStore:
         return sid
 
     def current_balances(self, profile_id):
-        with self.connect() as db:
+        with self.session() as db:
             return [dict(row) for row in db.execute(
                 "SELECT * FROM balance_snapshots WHERE profile_id=? AND is_current=1 ORDER BY token_mint",
                 (profile_id,))]
@@ -344,7 +344,7 @@ class ProfileStore:
 
     def delete_profile(self, profile_id):
         now=utc_now()
-        with self.connect() as db:
+        with self.session() as db:
             cur=db.execute("UPDATE profiles SET deleted_at=?,updated_at=?,status='archived' WHERE profile_id=? AND deleted_at IS NULL",
                            (now,now,profile_id))
             if cur.rowcount != 1:

@@ -32,9 +32,10 @@ def _rpc_request(payload, rpc_url=DEFAULT_RPC_URL, timeout=10):
         OSError,
         ValueError,
     ) as exc:
+        # Suppress the original exception because it may contain a credentialed RPC URL.
         raise SolanaRPCError(
             "Public Solana RPC request failed."
-        ) from exc
+        ) from None
 
     if not isinstance(data, dict):
         raise SolanaRPCError("Solana RPC returned an invalid response.")

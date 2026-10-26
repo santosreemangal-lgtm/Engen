@@ -66,6 +66,17 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(Exception):
             cfg.live_trading_enabled = True
 
+    def test_config_error_does_not_echo_untrusted_values(self):
+        secret_like_value = "do-not-print-this-value"
+        with self.assertRaises(ConfigError) as caught:
+            load_config({
+                "ENGINE_MODE": secret_like_value,
+                "LOG_LEVEL": "also-not-valid",
+                "LIVE_TRADING_ENABLED": "true",
+            })
+        self.assertNotIn(secret_like_value, str(caught.exception))
+        self.assertNotIn("also-not-valid", str(caught.exception))
+
 
 class HealthTests(unittest.TestCase):
     def test_status_fields(self):

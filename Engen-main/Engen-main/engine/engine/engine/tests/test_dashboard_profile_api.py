@@ -6,6 +6,7 @@ from urllib.parse import parse_qs
 
 from dashboard import server as dashboard_server
 from engine.profile_store import ProfileStore
+from engine.paper_trader import PaperTrader
 
 PUBLIC_WALLET = "11111111111111111111111111111111"
 TOKEN_MINT = "So11111111111111111111111111111111111111112"
@@ -15,14 +16,18 @@ class DashboardProfileApiTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.original_db = dashboard_server.PROFILE_STORE_DB
+        self.original_profile_data_dir = dashboard_server.PROFILE_DATA_DIR
         self.db_path = Path(self.temp.name) / "profiles.db"
         dashboard_server.PROFILE_STORE_DB = self.db_path
+        dashboard_server.PROFILE_DATA_DIR = Path(self.temp.name) / "profile-data"
         self.store = ProfileStore(self.db_path)
         self.profile_id = self.store.create_profile("API test profile", settings={"risk_mode": "paper"})
         self.store.associate_source_wallet(self.profile_id, PUBLIC_WALLET)
 
     def tearDown(self):
         dashboard_server.PROFILE_STORE_DB = self.original_db
+        dashboard_server.PROFILE_DATA_DIR = self.original_profile_data_dir
+        dashboard_server.profile_monitor_services.pop(self.profile_id, None)
         self.temp.cleanup()
 
     def test_profile_report_includes_provenance_and_marks_observed_not_simulated(self):
@@ -110,6 +115,51 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertEqual(report["status"], "unavailable")
         self.assertEqual(report["error"], "SolanaRPCError")
         self.assertFalse(report["transaction_broadcast"])
+
+    def test_profile_paper_reports_keep_balances_and_history_separate(self):
+        second_profile = self.store.create_profile("Second API profile")
+        first_db = dashboard_server.profile_paper_db_path(self.profile_id)
+        second_db = dashboard_server.profile_paper_db_path(second_profile)
+
+        first = PaperTrader({"USDC": 10}, db_path=first_db)
+        first.process({
+            "signature": "profile-a-signature",
+            "available": True,
+            "status": "success",
+            "trade_signal": {
+                "classification": "BUY_CANDIDATE",
+                "asset_mints": ["TOKEN_A"],
+                "quote_mints": ["USDC"],
+            },
+            "token_balance_changes": [
+                {"mint": "TOKEN_A", "delta_amount": "500", "decimals": 2},
+                {"mint": "USDC", "delta_amount": "-1000000", "decimals": 6},
+            ],
+        })
+        PaperTrader({"USDC": 20}, db_path=second_db)
+
+        first_report = dashboard_server.load_paper_simulation_report(self.profile_id)
+        second_report = dashboard_server.load_paper_simulation_report(second_profile)
+
+        self.assertEqual(first_report["balances"], {"TOKEN_A": "5", "USDC": "9"})
+        self.assertEqual(len(first_report["orders"]), 1)
+        self.assertEqual(second_report["balances"], {"USDC": "20"})
+        self.assertEqual(second_report["orders"], [])
+        self.assertFalse(first_report["real_trading"])
+        self.assertFalse(first_report["transaction_broadcast"])
+
+    def test_profile_paper_report_rejects_non_uuid_profile_id(self):
+        with self.assertRaises(ValueError):
+            dashboard_server.load_paper_simulation_report("../../paper.db")
+
+    def test_monitor_services_are_independent_per_profile(self):
+        second_profile = self.store.create_profile("Second monitor profile")
+        with patch.dict(dashboard_server.profile_monitor_services, {}, clear=True):
+            first_service = dashboard_server.get_profile_monitor_service(self.profile_id)
+            second_service = dashboard_server.get_profile_monitor_service(second_profile)
+            self.assertIsNot(first_service, second_service)
+            self.assertEqual(first_service.status()["wallets"], [])
+            self.assertEqual(second_service.status()["wallets"], [])
 
     def test_missing_profile_database_is_not_created_by_get_helpers(self):
         self.store = None

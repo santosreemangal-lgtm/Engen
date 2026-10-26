@@ -115,9 +115,32 @@
       cursor: pointer;
     }
 
+    button:hover:not(:disabled) {
+      filter: brightness(1.08);
+    }
+
+    button:focus-visible,
+    input:focus-visible {
+      outline: 3px solid #c4b5fd;
+      outline-offset: 3px;
+    }
+
     button:disabled {
       cursor: not-allowed;
       opacity: 0.6;
+    }
+
+    /* Keep state meaning consistent and never rely on color alone. */
+    .status-ok {
+      color: #86efac;
+    }
+
+    .status-warning {
+      color: #fcd34d;
+    }
+
+    .status-error {
+      color: #fca5a5;
     }
 
     #stop-monitoring {

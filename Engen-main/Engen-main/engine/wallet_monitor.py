@@ -65,8 +65,11 @@ def get_wallet_signatures(
                 rpc_url=rpc_url,
                 timeout=timeout,
             )
-    except RuntimeError as exc:
-        raise SolanaRPCError(str(exc)) from None
+    except RuntimeError:
+        # Keep this module's stable, URL-safe public error contract.
+        raise SolanaRPCError(
+            "Failed to fetch wallet signatures from the configured RPC endpoint."
+        ) from None
 
     if not isinstance(data, dict):
         raise SolanaRPCError(

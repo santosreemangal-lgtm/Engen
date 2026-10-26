@@ -15,10 +15,10 @@ jobs:
         working-directory: Engen-main/Engen-main
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.10"
 
@@ -131,7 +131,7 @@ jobs:
 
       - name: Upload RPC benchmark report
         if: always() && github.event_name == 'pull_request' && github.event.pull_request.number == 1
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: solana-rpc-benchmark-report
           path: rpc-benchmark-report.json

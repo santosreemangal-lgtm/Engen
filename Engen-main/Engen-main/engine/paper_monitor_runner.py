@@ -236,8 +236,23 @@ def run_once(args, trader, store, latency_recorder=None):
             if latency_recorder is not None
             else nullcontext()
         )
-        with decision_timer:
-            paper_result = trader.process(result)
+        try:
+            with decision_timer:
+                paper_result = trader.process(result)
+        except Exception as exc:
+            if (
+                isinstance(signature, str)
+                and signature.strip()
+                and store.get_status(args.wallet, signature) == "pending"
+            ):
+                store.record_failure(
+                    args.wallet,
+                    signature,
+                    "paper_simulation",
+                    type(exc).__name__,
+                    "Paper simulation failed; the signature remains recoverable.",
+                )
+            raise
 
         # Mark processed only after paper processing returns.
         if isinstance(signature, str) and signature.strip():

@@ -22,7 +22,11 @@ class TransactionProcessorTests(unittest.TestCase):
     def test_missing_metadata_is_reported_not_fabricated(self):
         with mock.patch(
             "engine.transaction_processor.get_transaction",
-            return_value={"slot": 123, "meta": None},
+            return_value={
+                "slot": 123,
+                "transaction": {"message": {"accountKeys": []}},
+                "meta": None,
+            },
         ):
             result = process_transaction_signature("signature123")
         self.assertFalse(result["available"])

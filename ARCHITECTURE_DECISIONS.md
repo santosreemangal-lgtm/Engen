@@ -41,15 +41,16 @@
 
 - Current supported scope: one trusted user on localhost. The checklist's “approximately 1–5 users” is a target to evaluate, not current verified capacity.
 - Do not expose this application as a multi-user service. The optional shared bearer token authenticates possession of one shared secret; it does not establish user identity, profile ownership, or role-based permissions.
-- A future 1–5-user release must define identity/session management, profile ownership, who can read/update/delete profiles and history, administrative roles if any, audit events, session revocation, and concurrency limits.
-- Acceptance tests must prove that user A cannot read, update, delete, or enumerate user B's profile, settings, source-wallet associations, transaction history, or simulation records by guessing/changing identifiers. Every route must enforce authorization server-side.
+- The current single-user implementation now scopes monitored-trader associations, profile monitor lifecycles, transaction/balance history, and paper-trading databases to a canonical profile UUID. The paper-only runner refuses to start for a missing/disabled profile or a public wallet not associated with that profile.
+- This is profile isolation for one trusted local user, not multi-user ownership authorization. A future 1–5-user release must define identity/session management, profile ownership, who can read/update/delete profiles and history, administrative roles if any, audit events, session revocation, and concurrency limits.
+- Acceptance tests for any future multi-user release must prove that user A cannot read, update, delete, or enumerate user B's profile, settings, source-wallet associations, transaction history, or simulation records by guessing/changing identifiers. Every route must enforce authorization server-side.
 - Task 060 approval is pending: this document is a proposal baseline, not evidence of owner approval. Record the approved revision and date only after explicit review.
 
 ## Threat model and deployment
 
 - Primary risks: malicious browser-origin writes, unauthorized local/network API access, oversized or malformed requests, rate abuse, secret leakage in logs/config, malicious RPC responses, duplicate processing, stale market data, and accidental transition into live execution.
 - Current supported use is one trusted user on localhost. Remote deployment is not approved by this document. It requires a trusted HTTPS reverse proxy, authentication, proxy-aware rate limiting, and deployment-specific security tests while the backend stays private on loopback.
-- A shared bearer token does not isolate users or profiles. Do not use this backend as a multi-user service until identity and ownership checks are implemented.
+- Profile-scoped monitoring and paper-ledger endpoints require a valid profile UUID and do not fall back to global simulation data when a profile ID is supplied. The single shared bearer token still does not isolate different human users or establish profile ownership; do not use this backend as a multi-user service until identity and ownership checks are implemented.
 - No secret phrases or private keys are accepted. Any future signed transaction path needs a separate reviewed design and explicit approval for the exact commit; this project currently does not implement it.
 
 ## Acceptance criteria
@@ -60,6 +61,7 @@
 4. Duplicate transaction signatures and paper signals do not duplicate persisted effects.
 5. Unknown classification and unavailable/stale price data are represented honestly.
 6. Profile settings remain isolated, profile deletion preserves history, and backup/restore is tested.
+7. Each profile's monitor lifecycle and paper ledger are isolated; the paper-only runner applies supported per-profile position-size/open-position limits and refuses profiles that are disabled or do not own the monitored source-wallet association.
 7. Dashboard write endpoints validate inputs, reject mismatched browser origins, bound request sizes, and remain loopback-only.
 8. No change enables signing, transaction broadcast, or live trading.
 9. A release is not production-ready until external deployment controls, access-control requirements, restart recovery, and a broader security review have been independently verified.
@@ -79,8 +81,8 @@
 
 ## Open decisions / not yet certified
 
-- Comprehensive typed profile-settings schema and documented per-setting defaults.
-- Multi-user identity and per-profile ownership/authorization model.
+- Comprehensive typed profile-settings schema and documented per-setting defaults beyond the supported paper_trading keys.
+- Multi-user identity and per-profile ownership/authorization model; current profile isolation is for one trusted local user only.
 - Production HTTPS/reverse-proxy deployment and load testing.
 - Full process crash/restart rehearsal with active monitoring and persistent simulation state.
 - Independent dependency vulnerability scan and external security review.

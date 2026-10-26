@@ -59,7 +59,7 @@ The GitHub Actions workflow checks compilation, offline unit tests, and the mock
 
 ## Important limitations
 
-- The dashboard backend does not implement user authentication or multi-user authorization.
+- The dashboard backend supports optional single shared bearer-token authentication, but does not implement user identities or multi-user/per-profile authorization.
 - Unrealized P&L must remain unavailable unless a verified, fresh market-price source exists.
 - Transaction fee fields must not be fabricated when the stored schema does not supply verified fee data.
 - Backup/restore, HTTPS, secret management, and access control need deployment-specific testing.

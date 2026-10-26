@@ -72,7 +72,7 @@ class PaperSimulator:
                     f.network_cost,f.net_quote,f.currency,f.price_source,f.price_timestamp,
                     f.price_age_seconds,f.slippage_bps,f.created_at
                     FROM simulated_fills f JOIN simulated_orders o ON o.order_id=f.order_id
-                    ORDER BY f.created_at,f.fill_id""").fetchall()
+                    ORDER BY f.rowid""").fetchall()
                 self.fills = [dict(zip(
                     ("fill_id","order_id","side","asset_mint","quantity","quote_mint",
                      "reference_price","execution_price","gross_quote","fee","network_cost",

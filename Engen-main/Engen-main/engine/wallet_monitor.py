@@ -172,6 +172,7 @@ def get_and_store_new_wallet_signatures(
             store.save(wallet_address, signature, slot=item.get("slot"))
             if anchor_signature and signature == anchor_signature:
                 anchor_found = True
+                break
         if anchor_found or len(page) < limit or pages >= 5 or not page:
             break
         next_before = page[-1].get("signature") if isinstance(page[-1], dict) else None

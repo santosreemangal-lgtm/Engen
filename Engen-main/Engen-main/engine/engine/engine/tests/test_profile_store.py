@@ -36,6 +36,8 @@ class ProfileStoreTests(unittest.TestCase):
     def test_secret_setting_fields_are_rejected(self):
         with self.assertRaises(ValueError):
             self.store.create_profile("Unsafe", settings={"private_key": "x"})
+        with self.assertRaises(ValueError):
+            self.store.create_profile("Nested", settings={"wallet": {"seed_phrase": "x"}})
 
     def test_duplicate_transaction_signature_is_unique(self):
         a = self.store.create_profile("Alpha")

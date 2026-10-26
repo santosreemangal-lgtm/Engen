@@ -28,6 +28,9 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s engine/engine/engine/tests -v
 
+      - name: Verify disposable profile-store backup and restore
+        run: python tools/verify_profile_store_recovery.py
+
       - name: Read-only RPC benchmark for approved wallet
         if: github.event_name == 'pull_request' && github.event.pull_request.number == 1
         env:

@@ -18,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
+from engine.logger import redact
 
 WALLETS_FILE = ROOT / "wallets.json"
 HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1").strip() or "127.0.0.1"
@@ -168,7 +169,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.send_json(200, {"wallets": wallets})
 
     def log_message(self, format_string, *args):
-        print("%s - %s" % (self.address_string(), format_string % args))
+        message = format_string % args
+        print("%s - %s" % (self.address_string(), redact(message)))
 
 
 if __name__ == "__main__":

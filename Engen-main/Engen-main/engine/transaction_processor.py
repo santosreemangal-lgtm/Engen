@@ -61,6 +61,27 @@ def process_transaction_signature(
             "error": "Transaction slot metadata is invalid.",
         }
 
+    transaction_data = transaction.get("transaction")
+    message_data = (
+        transaction_data.get("message")
+        if isinstance(transaction_data, Mapping)
+        else None
+    )
+    account_keys = (
+        message_data.get("accountKeys")
+        if isinstance(message_data, Mapping)
+        else None
+    )
+    if not isinstance(account_keys, list):
+        return {
+            "signature": signature,
+            "available": False,
+            "metadata_complete": False,
+            "metadata_status": "incomplete_transaction",
+            "slot": slot,
+            "error": "Transaction message or account keys are unavailable.",
+        }
+
     metadata = transaction.get("meta")
     if metadata is None:
         return {

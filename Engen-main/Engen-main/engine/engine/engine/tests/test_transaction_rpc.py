@@ -6,6 +6,8 @@ from unittest.mock import MagicMock, patch
 
 from engine.solana_public import (
     SolanaRPCError,
+    SolanaRPCHTTPError,
+    SolanaRPCProviderError,
     get_transaction,
 )
 
@@ -70,7 +72,7 @@ class TransactionRPCTests(unittest.TestCase):
 
         mock_urlopen.return_value.__enter__.return_value = response
 
-        with self.assertRaises(SolanaRPCError):
+        with self.assertRaises(SolanaRPCProviderError):
             get_transaction("1111111111111111111111111111111111111111111111111111111111111111")
 
     @patch("engine.rpc_policy.urllib.request.urlopen")
@@ -85,6 +87,16 @@ class TransactionRPCTests(unittest.TestCase):
         with self.assertRaises(SolanaRPCError):
             get_transaction("1111111111111111111111111111111111111111111111111111111111111111")
 
+
+    @patch("engine.rpc_policy.urllib.request.urlopen")
+    def test_http_error_is_distinct_from_provider_error(self, mock_urlopen):
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            "https://rpc.example", 404, "not found", {}, None
+        )
+        with self.assertRaises(SolanaRPCHTTPError) as caught:
+            get_transaction("1111111111111111111111111111111111111111111111111111111111111111")
+        self.assertEqual(caught.exception.status_code, 404)
+        self.assertNotIn("rpc.example", str(caught.exception))
 
     @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_mismatched_json_rpc_id_is_rejected(self, mock_urlopen):

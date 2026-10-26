@@ -579,5 +579,89 @@ class TransactionAnalysisTests(unittest.TestCase):
         self.assertEqual(result["quote_mints"], [])
 
 
+    def test_classification_records_evidence_and_confidence(self):
+        from engine.transaction_analysis import classify_transaction
+        wallet = "WALLET_A"
+        changes = [
+            {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "2500", "decimals": 3},
+            {"owner": wallet, "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+             "delta_amount": "-1000000", "decimals": 6},
+        ]
+        result = classify_transaction(None, wallet, changes)
+        self.assertEqual(result["classification"], "BUY_CANDIDATE")
+        self.assertEqual(result["confidence"], "medium")
+        self.assertEqual(result["evidence"]["wallet_balance_changes"][0]["raw_delta_amount"], "2500")
+        self.assertIn("limitations", result["evidence"])
+
+    def test_failed_transaction_is_not_a_buy_or_sell(self):
+        from engine.transaction_analysis import classify_transaction
+        result = classify_transaction(
+            {"meta": {"err": {"InstructionError": [0, "Custom"]}, "fee": 5000}},
+            "WALLET_A",
+            [{"owner": "WALLET_A", "mint": "TOKEN_A", "delta_amount": "100"}],
+        )
+        self.assertEqual(result["classification"], "FAILED_TRANSACTION")
+        self.assertEqual(result["confidence"], "high")
+        self.assertFalse(result["evidence"]["balance_changes_used"])
+
+    def test_token_receipt_alone_remains_unknown(self):
+        wallet = "WALLET_A"
+        result = classify_token_balance_changes(
+            [{"owner": wallet, "mint": "TOKEN_A", "delta_amount": "100", "decimals": 2}],
+            wallet,
+        )
+        self.assertEqual(result["classification"], "UNKNOWN")
+
+    def test_sol_decrease_without_asset_movement_is_not_a_sell(self):
+        wallet = "WALLET_A"
+        result = classify_token_balance_changes(
+            [{"owner": wallet, "mint": WRAPPED_SOL_MINT, "delta_amount": "-5000",
+              "decimals": 9, "source": "native_sol", "fee_adjusted": True}],
+            wallet,
+        )
+        self.assertEqual(result["classification"], "UNKNOWN")
+
+    def test_mismatched_decimals_do_not_create_a_delta(self):
+        meta = {
+            "preTokenBalances": [{
+                "accountIndex": 1, "mint": "TOKEN_A", "owner": "WALLET_A",
+                "uiTokenAmount": {"amount": "100", "decimals": 2},
+            }],
+            "postTokenBalances": [{
+                "accountIndex": 1, "mint": "TOKEN_A", "owner": "WALLET_A",
+                "uiTokenAmount": {"amount": "1000", "decimals": 3},
+            }],
+        }
+        self.assertEqual(analyze_token_balance_changes(meta), [])
+
+    def test_classification_keeps_raw_units_and_does_not_infer_market_value(self):
+        from engine.transaction_analysis import classify_transaction
+        wallet = "WALLET_A"
+        changes = [
+            {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "123456789",
+             "decimals": 8, "pre_amount": "0", "post_amount": "123456789"},
+            {"owner": wallet, "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+             "delta_amount": "-2500000", "decimals": 6},
+        ]
+        result = classify_transaction(None, wallet, changes)
+        evidence = result["evidence"]["wallet_balance_changes"]
+        self.assertEqual(evidence[0]["raw_delta_amount"], "123456789")
+        self.assertEqual(evidence[0]["decimals"], 8)
+        self.assertNotIn("market_value", evidence[0])
+
+    def test_multiple_asset_mints_with_mixed_directions_remain_unknown(self):
+        wallet = "WALLET_A"
+        result = classify_token_balance_changes(
+            [
+                {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "100"},
+                {"owner": wallet, "mint": "TOKEN_B", "delta_amount": "-100"},
+                {"owner": wallet, "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                 "delta_amount": "-50"},
+            ],
+            wallet,
+        )
+        self.assertEqual(result["classification"], "UNKNOWN")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -30,6 +30,11 @@ def _unknown_signer_signal():
         ),
         "asset_mints": [],
         "quote_mints": [],
+        "confidence": "low",
+        "evidence": {
+            "classification_basis": "signer ownership could not be confirmed",
+            "automatic_trade_allowed": False,
+        },
     }
 
 

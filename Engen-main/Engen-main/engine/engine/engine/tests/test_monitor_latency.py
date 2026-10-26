@@ -8,7 +8,7 @@ from engine.wallet_monitor import get_wallet_signatures
 
 
 class MonitorLatencyTests(unittest.TestCase):
-    @patch("engine.wallet_monitor.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_signature_fetch_records_rpc_latency(self, mock_urlopen):
         response = mock_urlopen.return_value.__enter__.return_value
         response.read.return_value = json.dumps({

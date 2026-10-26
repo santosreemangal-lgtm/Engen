@@ -414,6 +414,38 @@ class TransactionMonitorTests(unittest.TestCase):
         self.assertTrue(result["retryable"])
 
     @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_incomplete_metadata_stays_pending_for_reprocessing(self, mock_process):
+        wallet = "11111111111111111111111111111111"
+        signature = "1" * 63 + "4"
+        raw = {"slot": 700, "transaction": {"message": {"accountKeys": []}}}
+        with tempfile.TemporaryDirectory() as directory:
+            store = SignatureStore(Path(directory) / "signatures.db")
+            store.save(wallet, signature, slot=700)
+            mock_process.return_value = {
+                "signature": signature,
+                "available": True,
+                "metadata_complete": False,
+                "metadata_missing_fields": ["preBalances"],
+                "status": "success",
+                "token_balance_changes": [],
+                "raw_transaction": raw,
+            }
+            result = process_new_signatures(
+                signatures=[{
+                    "signature": signature,
+                    "confirmationStatus": "confirmed",
+                }],
+                wallet_address=wallet,
+                store=store,
+            )[0]
+            self.assertFalse(result["available"])
+            self.assertTrue(result["retryable"])
+            self.assertEqual(store.get_status(wallet, signature), "pending")
+            record = store.get_transaction_record(wallet, signature)
+            self.assertEqual(record["status"], "incomplete")
+            self.assertEqual(record["raw_transaction"], raw)
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
     def test_rpc_failures_are_bounded_and_move_to_review(self, mock_process):
         wallet = "11111111111111111111111111111111"
         signature = "1" * 63 + "2"

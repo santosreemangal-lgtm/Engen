@@ -165,6 +165,7 @@ class MonitorServiceTests(unittest.TestCase):
         result = service.stop_and_wait(timeout=2)
         self.assertTrue(result["worker_stopped"])
         self.assertFalse(result["enabled"])
+        self.assertEqual(result["wallets"][0]["state"], "stopped")
 
     def test_stop_and_wait_rejects_invalid_timeout(self):
         service = MonitorService(lambda address: [], interval=30)

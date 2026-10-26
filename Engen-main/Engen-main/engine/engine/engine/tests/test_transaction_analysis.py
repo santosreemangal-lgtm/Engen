@@ -663,5 +663,32 @@ class TransactionAnalysisTests(unittest.TestCase):
         self.assertEqual(result["classification"], "UNKNOWN")
 
 
+    def test_rent_or_transfer_like_native_sol_movement_is_not_auto_swap(self):
+        from engine.transaction_analysis import classify_transaction
+        wallet = "WALLET_A"
+        transaction = {
+            "transaction": {
+                "message": {
+                    "accountKeys": [wallet, "TOKEN_PROGRAM"],
+                    "instructions": [{
+                        "program": "system",
+                        "programId": "11111111111111111111111111111111",
+                        "parsed": {"type": "createAccount"},
+                    }],
+                }
+            },
+            "meta": {"err": None, "fee": 5000},
+        }
+        changes = [
+            {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "100",
+             "decimals": 2},
+            {"owner": wallet, "mint": WRAPPED_SOL_MINT, "delta_amount": "-1000000",
+             "decimals": 9, "source": "native_sol", "fee_adjusted": True},
+        ]
+        result = classify_transaction(transaction, wallet, changes)
+        self.assertEqual(result["classification"], "UNKNOWN")
+        self.assertIn("transfer", result["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()

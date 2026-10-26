@@ -8,8 +8,10 @@ import argparse
 import json
 import logging
 import time
+from contextlib import nullcontext
 from decimal import Decimal, InvalidOperation
 
+from engine.latency import LatencyRecorder
 from engine.paper_trader import PaperTrader
 from engine.signature_store import SignatureStore
 from engine.solana_public import DEFAULT_RPC_URL
@@ -120,15 +122,24 @@ def validate_args(args, parser):
         )
 
 
-def run_once(args, trader, store):
+def run_once(args, trader, store, latency_recorder=None):
     """Scan the wallet and process available transactions in paper mode."""
-    results = monitor_wallet(
-        wallet_address=args.wallet,
-        store=store,
-        limit=args.limit,
-        rpc_url=args.rpc_url,
-        defer_processed=True,
+    monitor_options = {
+        "wallet_address": args.wallet,
+        "store": store,
+        "limit": args.limit,
+        "rpc_url": args.rpc_url,
+        "defer_processed": True,
+    }
+    if latency_recorder is not None:
+        monitor_options["latency_recorder"] = latency_recorder
+    scan_timer = (
+        latency_recorder.measure("paper.monitor_scan")
+        if latency_recorder is not None
+        else nullcontext()
     )
+    with scan_timer:
+        results = monitor_wallet(**monitor_options)
 
     if not isinstance(results, list):
         raise RuntimeError(
@@ -157,7 +168,13 @@ def run_once(args, trader, store):
 
         # Process the transaction in paper mode first.
         # If processing raises an exception, it remains pending.
-        paper_result = trader.process(result)
+        decision_timer = (
+            latency_recorder.measure("paper.local_decision")
+            if latency_recorder is not None
+            else nullcontext()
+        )
+        with decision_timer:
+            paper_result = trader.process(result)
 
         # Mark processed only after paper processing returns.
         if isinstance(signature, str) and signature.strip():
@@ -207,6 +224,7 @@ def main(argv=None):
         {args.quote_mint: args.paper_balance},
         db_path=args.paper_db,
     )
+    latency_recorder = LatencyRecorder()
 
     logger.info("Paper-only monitoring started.")
     logger.info("Quote mint: %s", args.quote_mint)
@@ -238,7 +256,7 @@ def main(argv=None):
     try:
         while True:
             try:
-                run_once(args, trader, store)
+                run_once(args, trader, store, latency_recorder=latency_recorder)
 
             except KeyboardInterrupt:
                 raise
@@ -262,6 +280,7 @@ def main(argv=None):
             {
                 "final_virtual_balances": trader.get_balances(),
                 "paper_trades": trader.trades,
+                "latency_summary": latency_recorder.summary(),
                 "real_trading": False,
             },
             indent=2,

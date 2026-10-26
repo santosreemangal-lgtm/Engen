@@ -102,6 +102,31 @@ class DashboardSecurityHeaderTests(unittest.TestCase):
             urlopen(request, timeout=2)
         self.assertEqual(caught.exception.code, 400)
 
+    def test_post_rejects_non_object_json(self):
+        request = Request(
+            self.url.replace("/api/monitor", "/api/wallets"),
+            data=b"[]",
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(request, timeout=2)
+        self.assertEqual(caught.exception.code, 400)
+        self.assertIn("JSON object", caught.exception.read().decode("utf-8"))
+
+    def test_post_rejects_oversized_request_body(self):
+        with patch.object(server, "MAX_REQUEST_BODY_BYTES", 4):
+            request = Request(
+                self.url.replace("/api/monitor", "/api/wallets"),
+                data=b'{"address":"11111111111111111111111111111111"}',
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(HTTPError) as caught:
+                urlopen(request, timeout=2)
+            self.assertEqual(caught.exception.code, 400)
+            self.assertIn("Invalid JSON request", caught.exception.read().decode("utf-8"))
+
     def test_api_requires_configured_bearer_token(self):
         with patch.object(server, "DASHBOARD_AUTH_TOKEN", "a" * 32):
             with self.assertRaises(HTTPError) as caught:

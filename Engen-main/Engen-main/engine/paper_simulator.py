@@ -133,7 +133,9 @@ class PaperSimulator:
         return dict(updated)
 
     def execute_order(self, order_id, market_price, *, now, max_price_age_seconds=60,
-                      slippage_bps=50, fee_bps=10, network_cost=0, rpc_ok=True):
+                      slippage_bps=50, fee_bps=10, network_cost=0, rpc_ok=True,
+                      min_liquidity_usd=10000, max_liquidity_age_seconds=60,
+                      require_liquidity=True):
         order = self.orders.get(order_id)
         if order is None:
             raise ValueError("Order not found.")
@@ -145,6 +147,24 @@ class PaperSimulator:
             return self._reject(order, "Market price unavailable or for a different token.")
         if not market_price.is_fresh(max_age_seconds=max_price_age_seconds, now=now):
             return self._reject(order, "Market price is stale; no fill created.")
+        if not isinstance(require_liquidity, bool):
+            raise ValueError("require_liquidity must be boolean.")
+        minimum_liquidity = decimal_value(
+            min_liquidity_usd, "Minimum USD liquidity", allow_zero=True
+        )
+        if (not isinstance(max_liquidity_age_seconds, int)
+                or isinstance(max_liquidity_age_seconds, bool)
+                or max_liquidity_age_seconds < 0):
+            raise ValueError("max_liquidity_age_seconds must be a non-negative integer.")
+        if market_price.liquidity_usd is None:
+            if require_liquidity:
+                return self._reject(order, "Liquidity data unavailable; no fill created.")
+        else:
+            liquidity_age = market_price.liquidity_age_seconds(now)
+            if liquidity_age > max_liquidity_age_seconds:
+                return self._reject(order, "Liquidity data is stale; no fill created.")
+            if market_price.liquidity_usd < minimum_liquidity:
+                return self._reject(order, "Liquidity is below the configured USD minimum; no fill created.")
         for name, value in (("slippage_bps",slippage_bps),("fee_bps",fee_bps)):
             if not isinstance(value,int) or isinstance(value,bool) or not 0 <= value <= 10000:
                 raise ValueError(f"{name} must be an integer from 0 to 10000.")

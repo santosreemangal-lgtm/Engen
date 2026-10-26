@@ -113,6 +113,16 @@ def process_new_signatures(
                     result.get("error", "Transaction data is incomplete."),
                 )
                 pending_result["processing_status"] = failure["status"]
+                if result.get("raw_transaction") is not None:
+                    store.save_transaction_record(
+                        wallet_address,
+                        signature,
+                        result.get("raw_transaction"),
+                        processing_status=(
+                            "needs_review" if failure["status"] == "needs_review"
+                            else "incomplete"
+                        ),
+                    )
                 if failure["status"] == "needs_review":
                     pending_result["retryable"] = False
             results.append(_include_signature_observation(pending_result, item))

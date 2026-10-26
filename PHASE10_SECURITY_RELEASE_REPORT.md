@@ -28,7 +28,7 @@ The report and README documentation were updated after this run; those later edi
 | 275 Secure transport | Partial / deployment-specific | README requires HTTPS at a trusted reverse proxy for remote access; no TLS deployment has been configured or tested. |
 | 276 Protect state-changing endpoints | Partial | Optional bearer auth plus rejection of mismatched browser Origin. If no token is configured, the API is intended for localhost only. |
 | 277 Validate API input | Partial | JSON object/content-type/body-size checks and public-address/profile validation exist; a complete field-by-field fuzz/security audit remains. |
-| 278 Request-size/rate limits | Partial | Request body is capped at 10,000 bytes and saved wallets are bounded; API rate limiting is not implemented. |
+| 278 Request-size/rate limits | Partial | Request body is capped at 10,000 bytes, saved wallets are bounded, and an in-memory per-client API rate limit (120 requests per 60 seconds) is implemented. Multi-worker/proxy-aware limiting and deployment load testing remain. |
 | 279 Sensitive data in errors/logs | Partial | Existing redaction and sanitized RPC errors have tests; complete log/error review remains. Never place secrets in logs. |
 | 280 CORS/browser controls | Implemented for current local UI | CSP and browser security headers are set; mismatched Origin on API writes is rejected. No permissive CORS policy is added. |
 | 281 Wallet authorization boundary | Implemented for current scope | Public-address monitoring only; no wallet signing/transaction submission path is enabled. |

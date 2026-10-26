@@ -135,6 +135,7 @@ def get_new_wallet_signatures(
     limit=10,
     rpc_url=DEFAULT_RPC_URL,
     timeout=10,
+    latency_recorder=None,
 ):
     """Fetch recent signatures and filter previously seen entries."""
     signature_options = {
@@ -168,12 +169,15 @@ def get_and_store_new_wallet_signatures(
     if store is None:
         store = SignatureStore()
 
-    signatures = get_wallet_signatures(
-        wallet_address=wallet_address,
-        limit=limit,
-        rpc_url=rpc_url,
-        timeout=timeout,
-    )
+    signature_options = {
+        "wallet_address": wallet_address,
+        "limit": limit,
+        "rpc_url": rpc_url,
+        "timeout": timeout,
+    }
+    if latency_recorder is not None:
+        signature_options["latency_recorder"] = latency_recorder
+    signatures = get_wallet_signatures(**signature_options)
 
     # The first scan creates a historical baseline.
     # Historical signatures must not become new paper-trading signals.

@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from engine.signature_store import SignatureStore
+from engine.solana_public import SolanaRPCError
 from engine.wallet_monitor import (
     filter_new_signatures,
     get_and_store_new_wallet_signatures,
@@ -236,7 +237,7 @@ class WalletMonitorTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(
-            Exception,
+            SolanaRPCError,
             "Failed to fetch wallet signatures from the configured RPC endpoint\\.",
         ) as context:
             get_wallet_signatures(

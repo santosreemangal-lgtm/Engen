@@ -225,3 +225,43 @@ class AverageCostLedger:
                 "cost_basis": str(pos["cost_basis"]) if pos["basis_complete"] else None,
                 "basis_complete": pos["basis_complete"], "currency": self.currency,
                 "cost_basis_method": COST_BASIS_METHOD}
+
+
+
+def realized_pnl_from_fills(fills):
+    """Rebuild realized average-cost P&L from a chronological fill sequence."""
+    ledger = AverageCostLedger()
+    by_mint = {}
+    for fill in fills:
+        if not isinstance(fill, dict):
+            continue
+        side = fill.get("side")
+        mint = fill.get("asset_mint")
+        quantity = fill.get("quantity")
+        price = fill.get("execution_price")
+        fee = fill.get("fee", "0")
+        network = fill.get("network_cost", "0")
+        timestamp = fill.get("created_at")
+        if side == "BUY":
+            ledger.buy(mint, quantity, price, fee=fee, network_fee=network,
+                       timestamp=timestamp)
+        elif side == "SELL":
+            tracked = Decimal(ledger.snapshot(mint)["quantity"])
+            sold = decimal_value(quantity, "Quantity")
+            if sold > tracked:
+                ledger.deposit(mint, sold - tracked, unit_price=None, timestamp=timestamp)
+            event = ledger.sell(mint, quantity, price, fee=fee, network_fee=network,
+                                timestamp=timestamp)
+            item = by_mint.setdefault(mint, {"pnl": Decimal("0"), "complete": True})
+            if event["realized_pnl"] is None:
+                item["complete"] = False
+            else:
+                item["pnl"] += Decimal(event["realized_pnl"])
+        else:
+            raise ValueError("Fill side must be BUY or SELL.")
+    return {
+        mint: {"pnl": str(item["pnl"]) if item["complete"] else None,
+               "status": "calculated" if item["complete"] else "unknown_cost_basis",
+               "currency": PORTFOLIO_CURRENCY}
+        for mint, item in sorted(by_mint.items())
+    }

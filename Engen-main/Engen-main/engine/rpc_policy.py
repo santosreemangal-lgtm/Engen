@@ -10,6 +10,7 @@ import urllib.request
 
 _lock = threading.Lock()
 _last_request_at = 0.0
+MAX_RPC_RETRIES = 5
 
 
 class RPCTransportError(RuntimeError):
@@ -36,7 +37,7 @@ def _non_negative_int_env(name, default):
         value = int(raw)
     except (TypeError, ValueError):
         return default
-    return value if value >= 0 else default
+    return min(value, MAX_RPC_RETRIES) if value >= 0 else default
 
 
 def _non_negative_float_env(name, default):

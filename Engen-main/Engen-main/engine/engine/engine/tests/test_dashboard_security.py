@@ -126,6 +126,15 @@ class DashboardSecurityHeaderTests(unittest.TestCase):
             urlopen(request, timeout=2)
         self.assertEqual(caught.exception.code, 403)
 
+    def test_api_rate_limit_returns_429(self):
+        with patch.object(server, "API_RATE_LIMIT", 1):
+            with patch.dict(server._API_REQUEST_TIMES, {}, clear=True):
+                with urlopen(self.url, timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+                with self.assertRaises(HTTPError) as caught:
+                    urlopen(self.url, timeout=2)
+                self.assertEqual(caught.exception.code, 429)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -279,7 +279,7 @@ class TransactionMonitorTests(unittest.TestCase):
         }
 
         results = process_new_signatures(
-            signatures=[{"signature": "sig-buy"}],
+            signatures=[{"signature": "sig-buy", "confirmationStatus": "confirmed"}],
             wallet_address=wallet,
         )
 
@@ -316,7 +316,7 @@ class TransactionMonitorTests(unittest.TestCase):
         }
 
         results = process_new_signatures(
-            signatures=[{"signature": "sig-other-signer"}],
+            signatures=[{"signature": "sig-other-signer", "confirmationStatus": "confirmed"}],
             wallet_address=wallet,
         )
 
@@ -359,7 +359,7 @@ class TransactionMonitorTests(unittest.TestCase):
         }
 
         results = process_new_signatures(
-            signatures=[{"signature": "sig-no-signer-data"}],
+            signatures=[{"signature": "sig-no-signer-data", "confirmationStatus": "confirmed"}],
             wallet_address=wallet,
         )
 
@@ -367,6 +367,33 @@ class TransactionMonitorTests(unittest.TestCase):
             results[0]["trade_signal"]["classification"],
             "UNKNOWN",
         )
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_insufficient_confirmation_does_not_create_trade_candidate(
+        self, mock_process,
+    ):
+        wallet = "wallet-watched"
+        mock_process.return_value = {
+            "signature": "sig-unconfirmed",
+            "available": True,
+            "status": "success",
+            "signers": [wallet],
+            "token_balance_changes": [
+                {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "10"},
+                {
+                    "owner": wallet,
+                    "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    "delta_amount": "-20",
+                },
+            ],
+        }
+        result = process_new_signatures(
+            signatures=[{"signature": "sig-unconfirmed", "confirmationStatus": "processed"}],
+            wallet_address=wallet,
+        )[0]
+        self.assertEqual(result["trade_signal"]["classification"], "UNKNOWN")
+        self.assertFalse(result["confirmation_sufficient"])
+        self.assertTrue(result["retryable"])
 
     @patch("engine.transaction_monitor.process_transaction_signature")
     def test_unavailable_transaction_is_returned_for_visibility(

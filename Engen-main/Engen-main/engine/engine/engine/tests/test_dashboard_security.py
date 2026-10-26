@@ -9,11 +9,12 @@ from dashboard import server
 
 class DashboardWalletValidationTests(unittest.TestCase):
     def test_accepts_valid_32_byte_base58_public_key(self):
-        self.assertTrue(
-            server.is_valid_solana_address(
-                "11111111111111111111111111111111"
-            )
-        )
+        for address in (
+            "11111111111111111111111111111111",
+            "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+        ):
+            with self.subTest(address=address):
+                self.assertTrue(server.is_valid_solana_address(address))
 
     def test_rejects_wrong_decoded_length(self):
         self.assertFalse(

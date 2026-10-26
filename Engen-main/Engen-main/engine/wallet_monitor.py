@@ -77,7 +77,7 @@ def get_wallet_signatures(
         # Do not expose the configured RPC URL or credentials in error text.
         raise SolanaRPCError(
             "Failed to fetch wallet signatures from the configured RPC endpoint."
-        ) from exc
+        ) from None
 
     if not isinstance(data, dict):
         raise SolanaRPCError(

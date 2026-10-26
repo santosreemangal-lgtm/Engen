@@ -28,15 +28,15 @@ Tests: `engine/engine/engine/tests/test_profile_store.py`
 - [x] **202.** Historical snapshots remain stored; the `is_current` flag distinguishes current observations.
 - [x] **203.** Portfolio holdings aggregate current observations using exact decimal arithmetic and retain raw totals, decimals, provenance, and observation range.
 - [x] **204.** Zero-balance observations are retained instead of being silently deleted.
-- [~] **205.** Missing token metadata is represented as `null` and does not break the storage API; dashboard display integration remains to be implemented.
+- [x] **205.** Missing token metadata is represented as `null`; the dashboard displays provided token name/symbol or an explicit `Token metadata: unavailable` fallback and still shows the mint address.
 - [x] **206.** Profile metadata can be updated; deletion is a soft delete/archive.
 - [x] **207.** Profile edits/deletion do not delete transaction or balance history.
 - [x] **208.** Added SQLite's online backup API wrapper and automated backup/restore coverage.
 - [x] **209.** Tests cover reopening the database and duplicate transaction submissions.
-- [~] **210.** Automated tests cover profile isolation, integrity constraints, persistence, and backup/restore. The latest commit's CI run must pass before calling this fully verified; production deployment recovery still needs an operational restore exercise.
+- [x] **210.** Automated tests cover profile isolation, integrity constraints, persistence, and backup/restore. Added `tools/verify_profile_store_recovery.py` and a CI step that restores a synthetic temporary database, checks SQLite integrity, and verifies profile, transaction, zero-balance, and portfolio data.
 
 ## Verification
 
-The safety/unit workflow passed on earlier Phase 7 commits, including compilation, unit tests, the read-only health check, and the repository-root entry point. The newest changes add recursive settings validation and its regression test; verify the workflow for the latest branch head before treating the whole phase as validated.
+The safety/unit workflow passed on the prior Phase 7 commit. The dashboard metadata fallback and disposable recovery exercise have now been added; the new CI run must pass before treating the final implementation as verified. A deployment-specific production restore rehearsal remains required before any production deployment, because no production database was available to test.
 
 No changes have been merged into `main`. This module only stores read-only/paper-mode observations and does not sign or submit transactions.

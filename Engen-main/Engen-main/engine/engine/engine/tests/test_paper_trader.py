@@ -104,6 +104,36 @@ class PaperTraderTests(unittest.TestCase):
             self.assertEqual(duplicate["status"], "DUPLICATE")
             self.assertEqual(len(restarted.trades), 1)
 
+    def test_profile_max_position_percentage_rejects_oversized_buy(self):
+        trader = PaperTrader({"USDC": 10}, max_position_pct=5)
+        result = trader.process(self.make_result())
+
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertIn("maximum position percentage", result["reason"])
+        self.assertEqual(trader.get_balances(), {"USDC": "10"})
+        self.assertEqual(trader.trades, [])
+
+    def test_profile_max_open_positions_rejects_new_asset(self):
+        trader = PaperTrader(
+            {"USDC": 10, "TOKEN_B": 1},
+            max_open_positions=1,
+        )
+        result = trader.process(self.make_result())
+
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertIn("maximum open paper positions", result["reason"])
+        self.assertEqual(trader.get_balances(), {"USDC": "10", "TOKEN_B": "1"})
+
+    def test_profile_risk_limits_are_validated(self):
+        for value in (0, -1, 100.1, "nan", "invalid"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    PaperTrader({"USDC": 10}, max_position_pct=value)
+        for value in (0, -1, 101, True, 1.5):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    PaperTrader({"USDC": 10}, max_open_positions=value)
+
     def test_usdt_persistence_survives_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             usdt = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"

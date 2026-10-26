@@ -24,6 +24,7 @@ from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
 from engine.logger import redact
 from engine.pnl import realized_pnl_from_fills
+from engine.solana_public import get_public_health, SolanaRPCError
 
 WALLETS_FILE = ROOT / "wallets.json"
 PAPER_SIMULATOR_DB = Path(os.environ.get("PAPER_SIMULATOR_DB", str(PROJECT_ROOT / "data" / "paper_simulator.db")))
@@ -153,6 +154,32 @@ def load_paper_simulation_report():
     except (OSError, sqlite3.Error, ValueError) as exc:
         base["error"] = "Simulation report unavailable (" + type(exc).__name__ + ")."
     return base
+
+
+
+def rpc_health_report():
+    """Perform an independent, bounded read-only RPC health probe."""
+    checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    try:
+        status = get_public_health(timeout=5)
+        return {
+            "mode": "READ_ONLY",
+            "available": status == "ok",
+            "status": status,
+            "endpoint": "configured public Solana RPC",
+            "checked_at": checked_at,
+            "transaction_broadcast": False,
+        }
+    except (SolanaRPCError, OSError, TimeoutError) as exc:
+        return {
+            "mode": "READ_ONLY",
+            "available": False,
+            "status": "unavailable",
+            "endpoint": "configured public Solana RPC",
+            "checked_at": checked_at,
+            "error": type(exc).__name__,
+            "transaction_broadcast": False,
+        }
 
 
 def load_profiles_report():
@@ -334,6 +361,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/monitor":
             self.send_json(200, monitor_service.status())
+            return
+
+        if path == "/api/rpc-health":
+            report = rpc_health_report()
+            self.send_json(200 if report["available"] else 503, report)
             return
 
         if path == "/api/paper-simulation":

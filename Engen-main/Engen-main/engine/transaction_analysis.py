@@ -622,6 +622,53 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
         if isinstance(item, Mapping) and item.get("owner") == wallet_address
     ]
     candidate = signal.get("classification") in ("BUY_CANDIDATE", "SELL_CANDIDATE")
+    # If raw transaction context is available, a transfer/account-lifecycle
+    # pattern plus balance deltas is not enough to prove a swap. Prefer UNKNOWN
+    # unless a recognizable swap instruction/program is also present.
+    if candidate and isinstance(transaction, Mapping):
+        instruction_text = " ".join(
+            str(value).lower()
+            for instruction in instructions
+            for value in (
+                instruction.get("parsed_type"),
+                instruction.get("program"),
+                instruction.get("program_id"),
+            )
+            if value is not None
+        )
+        explicit_swap_context = any(
+            marker in instruction_text
+            for marker in (
+                "swap", "jupiter", "raydium", "orca", "lifinity",
+                "meteora", "phoenix", "openbook",
+            )
+        )
+        lifecycle_context = any(
+            marker in instruction_text
+            for marker in (
+                "transfer", "createaccount", "initializeaccount",
+                "closeaccount", "syncnative",
+            )
+        )
+        has_native_sol_delta = any(
+            isinstance(change, Mapping)
+            and change.get("owner") == wallet_address
+            and change.get("source") == NATIVE_SOL_SOURCE
+            and change.get("delta_amount") not in (None, "0", 0)
+            for change in (base_changes if isinstance(base_changes, list) else [])
+        )
+        if not explicit_swap_context and (lifecycle_context or has_native_sol_delta):
+            signal = {
+                "classification": "UNKNOWN",
+                "reason": (
+                    "Balance changes overlap with transfer, account-lifecycle, "
+                    "or native SOL activity without recognizable swap context."
+                ),
+                "asset_mints": [],
+                "quote_mints": [],
+            }
+            candidate = False
+
     signal.update({
         "confidence": "medium" if candidate else "low",
         "evidence": {

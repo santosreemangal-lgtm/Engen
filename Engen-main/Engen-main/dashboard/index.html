@@ -860,6 +860,15 @@
         overviewRpc.textContent = "Waiting for first successful scan";
       }
 
+      overviewHealth.className = "overview-value " +
+        (overviewHealth.textContent.startsWith("RUNNING") ? "status-ok" :
+         overviewHealth.textContent.startsWith("ERROR") ? "status-error" :
+         overviewHealth.textContent.startsWith("STALE") ? "status-warning" : "");
+      overviewRpc.className = "overview-value " +
+        (overviewRpc.textContent === "Recent scan succeeded" ? "status-ok" :
+         overviewRpc.textContent.includes("failed") ? "status-error" :
+         overviewRpc.textContent.startsWith("Stale") ? "status-warning" : "");
+
       monitorStatus.textContent = monitoringEnabled
         ? "Monitoring is enabled. Scans run approximately every " +
           data.interval_seconds + " seconds."
@@ -975,6 +984,11 @@
       } catch (error) {
         monitorStatus.textContent =
           "Could not load monitoring status: " + error.message;
+        overviewHealth.textContent = "UNAVAILABLE — backend error";
+        overviewHealth.className = "overview-value status-error";
+        overviewRpc.textContent = "Unknown — connectivity could not be checked";
+        overviewRpc.className = "overview-value status-warning";
+        overviewLastSuccess.textContent = "Unavailable — backend error";
 
         startButton.disabled = true;
         stopButton.disabled = true;

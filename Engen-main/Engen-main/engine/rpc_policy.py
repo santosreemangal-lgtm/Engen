@@ -12,6 +12,22 @@ _lock = threading.Lock()
 _last_request_at = 0.0
 
 
+class RPCTransportError(RuntimeError):
+    """A transport/network failure after bounded retries."""
+
+
+class RPCHTTPError(RuntimeError):
+    """An HTTP failure after bounded retries, with a safe status code."""
+
+    def __init__(self, status_code):
+        self.status_code = status_code
+        super().__init__("Public Solana RPC HTTP request failed.")
+
+
+class RPCInvalidResponseError(RuntimeError):
+    """The provider returned invalid JSON or a non-object response."""
+
+
 def _non_negative_int_env(name, default):
     raw = os.environ.get(name)
     if raw is None:
@@ -48,14 +64,10 @@ def _pace_requests(min_interval):
 
 
 def post_json_rpc(payload, rpc_url, timeout):
-    """Post a JSON-RPC payload with bounded transport retries and pacing.
+    """Post JSON-RPC with bounded retries, pacing, and typed safe errors.
 
-    Environment controls:
-      ENGEN_RPC_RETRIES: retry attempts after the first request (default 2)
-      ENGEN_RPC_BACKOFF_SECONDS: exponential backoff base (default 0.5)
-      ENGEN_RPC_MIN_INTERVAL_SECONDS: minimum gap between requests (default 0.1)
-
-    Error messages deliberately omit the configured URL and chained exceptions.
+    ENGEN_RPC_RETRIES is the number of retries after the first attempt.
+    Backoff is exponential and the retry loop is always finite.
     """
     retries = _non_negative_int_env("ENGEN_RPC_RETRIES", 2)
     backoff = _non_negative_float_env("ENGEN_RPC_BACKOFF_SECONDS", 0.5)
@@ -74,27 +86,28 @@ def post_json_rpc(payload, rpc_url, timeout):
         _pace_requests(min_interval)
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
-                data = json.loads(response.read().decode("utf-8"))
+                raw = response.read().decode("utf-8")
+            data = json.loads(raw)
             if not isinstance(data, dict):
-                raise ValueError("invalid JSON-RPC response")
+                raise RPCInvalidResponseError(
+                    "Public Solana RPC returned an invalid response."
+                )
             return data
         except urllib.error.HTTPError as exc:
             retryable = exc.code == 429 or 500 <= exc.code <= 599
             if not retryable or attempt >= retries:
-                raise RuntimeError(
-                    "Public Solana RPC request failed."
-                ) from None
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                raise RPCHTTPError(exc.code) from None
+        except (urllib.error.URLError, TimeoutError, OSError):
             if attempt >= retries:
-                raise RuntimeError(
+                raise RPCTransportError(
                     "Public Solana RPC request failed."
                 ) from None
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
-            raise RuntimeError(
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise RPCInvalidResponseError(
                 "Public Solana RPC returned an invalid response."
             ) from None
 
         if backoff:
             time.sleep(backoff * (2 ** attempt))
 
-    raise RuntimeError("Public Solana RPC request failed.")
+    raise RPCTransportError("Public Solana RPC request failed.")

@@ -6,6 +6,8 @@ import os
 import re
 import hmac
 import sys
+import time
+import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -37,6 +39,10 @@ PORT = 8000
 ADDRESS_PATTERN = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 MAX_SAVED_WALLETS = 100
 MAX_REQUEST_BODY_BYTES = 10000
+API_RATE_LIMIT = 120
+API_RATE_WINDOW_SECONDS = 60
+_API_RATE_LOCK = threading.Lock()
+_API_REQUEST_TIMES = {}
 DASHBOARD_AUTH_TOKEN = os.environ.get("DASHBOARD_AUTH_TOKEN", "")
 
 
@@ -374,6 +380,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         return payload
 
+    def _api_rate_limited(self):
+        now = time.monotonic()
+        client = self.client_address[0]
+        with _API_RATE_LOCK:
+            recent = [stamp for stamp in _API_REQUEST_TIMES.get(client, []) if now - stamp < API_RATE_WINDOW_SECONDS]
+            if len(recent) >= API_RATE_LIMIT:
+                _API_REQUEST_TIMES[client] = recent
+                return True
+            recent.append(now)
+            _API_REQUEST_TIMES[client] = recent
+            if len(_API_REQUEST_TIMES) > 1000:
+                stale_clients = [
+                    address for address, stamps in _API_REQUEST_TIMES.items()
+                    if not stamps or now - stamps[-1] >= API_RATE_WINDOW_SECONDS
+                ]
+                for address in stale_clients:
+                    _API_REQUEST_TIMES.pop(address, None)
+        return False
+
     def _api_authorized(self):
         if not DASHBOARD_AUTH_TOKEN:
             return True
@@ -385,6 +410,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
+        if path.startswith("/api/") and self._api_rate_limited():
+            self.send_json(429, {"error": "API request limit reached. Wait before retrying."})
+            return
         if path.startswith("/api/") and not self._api_authorized():
             self.send_json(401, {"error": "Dashboard API authentication required."})
             return
@@ -425,6 +453,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path.startswith("/api/") and self._api_rate_limited():
+            self.send_json(429, {"error": "API request limit reached. Wait before retrying."})
+            return
         if path.startswith("/api/") and not self._api_authorized():
             self.send_json(401, {"error": "Dashboard API authentication required."})
             return

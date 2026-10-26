@@ -148,7 +148,7 @@ class ProfileStore:
             raise ValueError("Secret authorization fields cannot be stored in profile settings.")
         settings_json = json.dumps(settings, sort_keys=True, allow_nan=False)
         pid, now = str(uuid.uuid4()), utc_now()
-        with self.connect() as db:
+        with self.session() as db:
             db.execute("INSERT INTO profiles VALUES(?,?,?,'disabled',?,?,NULL)",
                        (pid,name.strip(),destination_public_address,now,now))
             db.execute("INSERT INTO profile_settings VALUES(?,?,?)",(pid,settings_json,now))
@@ -268,6 +268,79 @@ class ProfileStore:
             return [dict(row) for row in db.execute(
                 "SELECT * FROM balance_snapshots WHERE profile_id=? AND is_current=1 ORDER BY token_mint",
                 (profile_id,))]
+
+    def list_transactions(self, profile_id):
+        """Return transaction records linked to one profile only."""
+        with self.session() as db:
+            rows = db.execute(
+                """SELECT t.* FROM transactions t
+                   JOIN profile_transactions p ON p.signature=t.signature
+                   WHERE p.profile_id=? ORDER BY t.observed_at DESC, t.signature""",
+                (profile_id,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["evidence"] = json.loads(item.pop("evidence_json"))
+            result.append(item)
+        return result
+
+    def portfolio_holdings(self, profile_id, *, max_age_seconds=None):
+        """Aggregate current snapshots without float rounding; retain zero balances."""
+        if max_age_seconds is not None and (
+            not isinstance(max_age_seconds, int) or isinstance(max_age_seconds, bool)
+            or max_age_seconds < 0
+        ):
+            raise ValueError("max_age_seconds must be a non-negative integer.")
+        rows = self.current_balances(profile_id)
+        now = datetime.now(timezone.utc)
+        totals = {}
+        for row in rows:
+            try:
+                observed = datetime.fromisoformat(row["observed_at"].replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                continue
+            if observed.tzinfo is None:
+                continue
+            age = max(0, int((now - observed).total_seconds()))
+            if max_age_seconds is not None and age > max_age_seconds:
+                continue
+            mint = row["token_mint"]
+            decimals = row["token_decimals"]
+            entry = totals.setdefault(mint, {
+                "token_mint": mint, "token_decimals": decimals,
+                "raw_amount": 0, "amount": Decimal("0"),
+                "wallet_count": 0, "oldest_observed_at": row["observed_at"],
+                "newest_observed_at": row["observed_at"], "metadata": None,
+                "provenance": [],
+            })
+            if entry["token_decimals"] != decimals:
+                raise ValueError("Conflicting decimals for the same token mint.")
+            entry["raw_amount"] += int(Decimal(row["raw_amount"]))
+            entry["amount"] += Decimal(row["raw_amount"]) / (Decimal(10) ** decimals)
+            entry["wallet_count"] += 1
+            entry["oldest_observed_at"] = min(entry["oldest_observed_at"], row["observed_at"])
+            entry["newest_observed_at"] = max(entry["newest_observed_at"], row["observed_at"])
+            entry["provenance"].append(row["source"])
+        return [
+            {**item, "raw_amount": str(item["raw_amount"]),
+             "amount": format(item["amount"], "f"),
+             "provenance": sorted(set(item["provenance"]))}
+            for item in sorted(totals.values(), key=lambda item: item["token_mint"])
+        ]
+
+    def backup_to(self, destination_path):
+        """Create a consistent SQLite backup, including committed WAL content."""
+        destination = Path(destination_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        source_db = self.connect()
+        target_db = sqlite3.connect(str(destination))
+        try:
+            source_db.backup(target_db)
+        finally:
+            target_db.close()
+            source_db.close()
+        return str(destination)
 
     def delete_profile(self, profile_id):
         now=utc_now()

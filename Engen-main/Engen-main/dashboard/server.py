@@ -546,10 +546,10 @@ if __name__ == "__main__":
     print("Monitoring is opt-in; no scan starts automatically.")
     print("Read-only mode: no trades, signing, or private keys.")
     if HOST not in ("127.0.0.1", "localhost", "::1"):
-        print(
-            "WARNING: dashboard has no authentication. Exposing it beyond "
-            "localhost may let other users change saved wallets and control "
-            "read-only monitoring. Use only behind a trusted authenticated proxy."
+        raise SystemExit(
+            "Refusing non-loopback binding. Keep DASHBOARD_HOST on localhost. "
+            "For remote access, use a trusted HTTPS reverse proxy with "
+            "authentication and keep this backend bound to localhost."
         )
 
     server = ThreadingHTTPServer((HOST, PORT), DashboardHandler)

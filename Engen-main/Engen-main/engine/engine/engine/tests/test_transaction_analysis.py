@@ -224,6 +224,37 @@ class TransactionAnalysisTests(unittest.TestCase):
         self.assertEqual(changes[0]["pre_amount"], "0")
         self.assertEqual(changes[0]["delta_amount"], "250")
 
+    def test_multiple_token_accounts_for_one_wallet_are_preserved(self):
+        meta = {
+            "preTokenBalances": [
+                {"accountIndex": 1, "mint": "TOKEN_A", "owner": "WALLET_A",
+                 "uiTokenAmount": {"amount": "100", "decimals": 0}},
+                {"accountIndex": 2, "mint": "TOKEN_A", "owner": "WALLET_A",
+                 "uiTokenAmount": {"amount": "50", "decimals": 0}},
+            ],
+            "postTokenBalances": [
+                {"accountIndex": 1, "mint": "TOKEN_A", "owner": "WALLET_A",
+                 "uiTokenAmount": {"amount": "125", "decimals": 0}},
+                {"accountIndex": 2, "mint": "TOKEN_A", "owner": "WALLET_A",
+                 "uiTokenAmount": {"amount": "60", "decimals": 0}},
+            ],
+        }
+        changes = analyze_token_balance_changes(meta)
+        self.assertEqual(len(changes), 2)
+        self.assertEqual(
+            sorted(change["delta_amount"] for change in changes),
+            ["10", "25"],
+        )
+        signal = classify_token_balance_changes(
+            changes + [{
+                "owner": "WALLET_A",
+                "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                "delta_amount": "-100",
+            }],
+            "WALLET_A",
+        )
+        self.assertEqual(signal["classification"], "BUY_CANDIDATE")
+
     def test_closed_token_account_balance(self):
         meta = {
             "preTokenBalances": [{

@@ -7,7 +7,11 @@ import re
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
+from decimal import Decimal
+from datetime import datetime, timezone
+
+from engine.profile_store import ProfileStore, LABELS, STATUSES, validate_public_address
 
 ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT.parent
@@ -23,6 +27,8 @@ from engine.pnl import realized_pnl_from_fills
 
 WALLETS_FILE = ROOT / "wallets.json"
 PAPER_SIMULATOR_DB = Path(os.environ.get("PAPER_SIMULATOR_DB", str(PROJECT_ROOT / "data" / "paper_simulator.db")))
+PROFILE_STORE_DB = Path(os.environ.get("PROFILE_STORE_DB", str(PROJECT_ROOT / "data" / "profiles.db")))
+MAX_HISTORY_PAGE_SIZE = 100
 HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT = 8000
 
@@ -149,6 +155,147 @@ def load_paper_simulation_report():
     return base
 
 
+def load_profiles_report():
+    """Read existing profile data without creating or modifying the database."""
+    base = {"database_available": PROFILE_STORE_DB.is_file(), "profiles": []}
+    if not PROFILE_STORE_DB.is_file():
+        return base
+    try:
+        import sqlite3
+        with sqlite3.connect("file:" + str(PROFILE_STORE_DB.resolve()) + "?mode=ro", uri=True) as db:
+            db.row_factory = sqlite3.Row
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            required = {"profiles", "profile_settings", "profile_source_wallets", "balance_snapshots"}
+            if not required.issubset(tables):
+                base["error"] = "Profile database schema is not initialized."
+                return base
+            rows = db.execute("""SELECT profile_id,name,destination_public_address,status,
+                created_at,updated_at FROM profiles
+                WHERE deleted_at IS NULL AND status != 'archived'
+                ORDER BY created_at,profile_id""").fetchall()
+            for row in rows:
+                profile = dict(row)
+                settings = db.execute("SELECT settings_json FROM profile_settings WHERE profile_id=?",
+                                      (profile["profile_id"],)).fetchone()
+                profile["settings"] = json.loads(settings["settings_json"]) if settings else {}
+                profile["source_wallets"] = [item[0] for item in db.execute(
+                    """SELECT wallet_address FROM profile_source_wallets
+                       WHERE profile_id=? ORDER BY wallet_address""", (profile["profile_id"],))]
+                balances = []
+                for balance in db.execute("""SELECT wallet_address,token_mint,raw_amount,token_decimals,
+                    observed_at,source,freshness_seconds FROM balance_snapshots
+                    WHERE profile_id=? AND is_current=1 ORDER BY token_mint,wallet_address""",
+                    (profile["profile_id"],)):
+                    item = dict(balance)
+                    item["amount"] = format(Decimal(item["raw_amount"]) / (Decimal(10) ** item["token_decimals"]), "f")
+                    try:
+                        observed = datetime.fromisoformat(item["observed_at"].replace("Z", "+00:00"))
+                        item["age_seconds"] = max(0, int((datetime.now(timezone.utc) - observed).total_seconds()))
+                    except (ValueError, AttributeError):
+                        item["age_seconds"] = None
+                    item["is_stale"] = (
+                        None if item["age_seconds"] is None or item["freshness_seconds"] is None
+                        else item["age_seconds"] > item["freshness_seconds"]
+                    )
+                    item["value_kind"] = "OBSERVED_ON_CHAIN_SNAPSHOT"
+                    item["simulated"] = False
+                    balances.append(item)
+                profile["balances"] = balances
+                profile["balances_source"] = "stored snapshots; not a live RPC refresh"
+                profile["simulated"] = False
+                base["profiles"].append(profile)
+    except (OSError, sqlite3.Error, ValueError, json.JSONDecodeError) as exc:
+        base["error"] = "Profile report unavailable (" + type(exc).__name__ + ")."
+    return base
+
+
+def load_profile_transactions(query):
+    """Return bounded, profile-scoped transaction history with allowlisted filters."""
+    if not PROFILE_STORE_DB.is_file():
+        return {"database_available": False, "transactions": [], "page": 1,
+                "page_size": 25, "total": 0, "pages": 0}
+    profile_id = (query.get("profile_id") or [""])[0].strip()
+    if not profile_id or len(profile_id) > 64:
+        raise ValueError("A valid profile_id is required.")
+    def positive_int(name, default, maximum):
+        raw = (query.get(name) or [str(default)])[0]
+        try:
+            value = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(name + " must be an integer.") from exc
+        if value < 1 or value > maximum:
+            raise ValueError(name + " is outside the allowed range.")
+        return value
+    page = positive_int("page", 1, 1000000)
+    page_size = positive_int("page_size", 25, MAX_HISTORY_PAGE_SIZE)
+    classification = (query.get("classification") or [""])[0].strip()
+    status = (query.get("status") or [""])[0].strip()
+    token_mint = (query.get("token_mint") or [""])[0].strip()
+    if classification and classification not in LABELS:
+        raise ValueError("Unsupported transaction classification.")
+    if status and status not in STATUSES:
+        raise ValueError("Unsupported transaction status.")
+    if token_mint:
+        validate_public_address(token_mint, "token mint")
+    filters = ["p.profile_id=?", "pr.deleted_at IS NULL"]
+    params = [profile_id]
+    if classification:
+        filters.append("t.classification=?")
+        params.append(classification)
+    if status:
+        filters.append("t.status=?")
+        params.append(status)
+    if token_mint:
+        filters.append("t.token_mint=?")
+        params.append(token_mint)
+    where = " AND ".join(filters)
+    import sqlite3
+    try:
+        with sqlite3.connect("file:" + str(PROFILE_STORE_DB.resolve()) + "?mode=ro", uri=True) as db:
+            db.row_factory = sqlite3.Row
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if not {"transactions", "profile_transactions", "profiles"}.issubset(tables):
+                return {"database_available": True, "transactions": [], "page": page,
+                        "page_size": page_size, "total": 0, "pages": 0,
+                        "error": "Transaction history schema is not initialized."}
+            if not db.execute("SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
+                              (profile_id,)).fetchone():
+                raise ValueError("Profile not found.")
+            total = db.execute("""SELECT COUNT(*) FROM transactions t
+                JOIN profile_transactions p ON p.signature=t.signature
+                JOIN profiles pr ON pr.profile_id=p.profile_id
+                WHERE """ + where, params).fetchone()[0]
+            offset = (page - 1) * page_size
+            rows = db.execute("""SELECT t.signature,t.source_wallet_address,t.slot,t.block_time,
+                t.observed_at,t.status,t.classification,t.evidence_json,t.raw_amount,
+                t.token_mint,t.token_decimals FROM transactions t
+                JOIN profile_transactions p ON p.signature=t.signature
+                JOIN profiles pr ON pr.profile_id=p.profile_id
+                WHERE """ + where + """
+                ORDER BY t.observed_at DESC,t.signature LIMIT ? OFFSET ?""",
+                params + [page_size, offset]).fetchall()
+            transactions = []
+            for row in rows:
+                item = dict(row)
+                try:
+                    item["evidence"] = json.loads(item.pop("evidence_json"))
+                except json.JSONDecodeError:
+                    item["evidence"] = {"classification_note": "Stored evidence could not be parsed."}
+                item["amount"] = None
+                if item["raw_amount"] is not None and item["token_decimals"] is not None:
+                    item["amount"] = format(
+                        Decimal(item["raw_amount"]) / (Decimal(10) ** item["token_decimals"]), "f")
+                item["value_kind"] = "OBSERVED_TRANSACTION_METADATA"
+                item["simulated"] = False
+                transactions.append(item)
+            return {"database_available": True, "transactions": transactions, "page": page,
+                    "page_size": page_size, "total": total,
+                    "pages": (total + page_size - 1) // page_size}
+    except sqlite3.Error as exc:
+        raise RuntimeError("Transaction history is temporarily unavailable (" + type(exc).__name__ + ").") from exc
+
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -193,6 +340,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_json(200, load_paper_simulation_report())
             return
 
+        if path == "/api/profiles":
+            report = load_profiles_report()
+            self.send_json(200, report)
+            return
+
+        if path == "/api/profile-transactions":
+            try:
+                report = load_profile_transactions(parse_qs(urlparse(self.path).query))
+                self.send_json(200, report)
+            except ValueError as exc:
+                self.send_json(400, {"error": str(exc)})
+            except RuntimeError as exc:
+                self.send_json(503, {"error": str(exc)})
+            return
+
         return super().do_GET()
 
     def do_POST(self):
@@ -200,6 +362,49 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         payload = self.read_json()
 
         if payload is None:
+            return
+
+        if path == "/api/profiles":
+            action = payload.get("action", "create")
+            try:
+                store = ProfileStore(PROFILE_STORE_DB)
+                if action == "create":
+                    profile_id = store.create_profile(
+                        payload.get("name"),
+                        destination_public_address=payload.get("destination_public_address"),
+                        settings=payload.get("settings", {}),
+                    )
+                    self.send_json(201, {"profile": store.get_profile(profile_id), "simulated": False})
+                    return
+                profile_id = payload.get("profile_id")
+                if not isinstance(profile_id, str) or not profile_id.strip() or len(profile_id) > 64:
+                    raise ValueError("A valid profile_id is required.")
+                if action == "update":
+                    profile = store.update_profile(
+                        profile_id,
+                        name=payload.get("name"),
+                        destination_public_address=payload.get("destination_public_address"),
+                        status=payload.get("status"),
+                    )
+                    self.send_json(200, {"profile": profile, "simulated": False})
+                    return
+                if action == "settings":
+                    store.set_settings(profile_id, payload.get("settings"))
+                    self.send_json(200, {"profile": store.get_profile(profile_id), "simulated": False})
+                    return
+                if action == "associate-source-wallet":
+                    store.associate_source_wallet(profile_id, payload.get("wallet_address"))
+                    self.send_json(200, {"profile": store.get_profile(profile_id), "simulated": False})
+                    return
+                if action == "delete":
+                    store.delete_profile(profile_id)
+                    self.send_json(200, {"deleted": True, "profile_id": profile_id, "history_preserved": True})
+                    return
+                raise ValueError("Action must be create, update, settings, associate-source-wallet, or delete.")
+            except ValueError as exc:
+                self.send_json(400, {"error": str(exc)})
+            except (OSError, RuntimeError) as exc:
+                self.send_json(503, {"error": "Profile storage unavailable (" + type(exc).__name__ + ")."})
             return
 
         if path == "/api/monitor":

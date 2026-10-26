@@ -3,6 +3,7 @@ import json
 import re
 import sqlite3
 import uuid
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -77,8 +78,14 @@ class ProfileStore:
         db.execute("PRAGMA busy_timeout=10000")
         return db
 
+    @contextmanager
+    def session(self):
+        with closing(self.connect()) as db:
+            with db:
+                yield db
+
     def initialize(self):
-        with self.connect() as db:
+        with self.session() as db:
             db.execute("PRAGMA journal_mode=WAL")
             version = db.execute("PRAGMA user_version").fetchone()[0]
             if version > 1:
@@ -97,8 +104,8 @@ class ProfileStore:
                 CREATE TABLE source_wallets(
                   wallet_address TEXT PRIMARY KEY, created_at TEXT NOT NULL);
                 CREATE TABLE profile_source_wallets(
-                  profile_id TEXT REFERENCES profiles(profile_id),
-                  wallet_address TEXT REFERENCES source_wallets(wallet_address),
+                  profile_id TEXT NOT NULL REFERENCES profiles(profile_id),
+                  wallet_address TEXT NOT NULL REFERENCES source_wallets(wallet_address),
                   associated_at TEXT NOT NULL, PRIMARY KEY(profile_id,wallet_address));
                 CREATE TABLE transactions(
                   signature TEXT PRIMARY KEY, source_wallet_address TEXT NOT NULL,
@@ -113,12 +120,12 @@ class ProfileStore:
                   CHECK(slot IS NULL OR slot>=0),
                   CHECK(token_decimals IS NULL OR token_decimals BETWEEN 0 AND 30));
                 CREATE TABLE profile_transactions(
-                  profile_id TEXT REFERENCES profiles(profile_id),
-                  signature TEXT REFERENCES transactions(signature),
+                  profile_id TEXT NOT NULL REFERENCES profiles(profile_id),
+                  signature TEXT NOT NULL REFERENCES transactions(signature),
                   linked_at TEXT NOT NULL, PRIMARY KEY(profile_id,signature));
                 CREATE TABLE balance_snapshots(
-                  snapshot_id TEXT PRIMARY KEY, profile_id TEXT REFERENCES profiles(profile_id),
-                  wallet_address TEXT NOT NULL, token_mint TEXT NOT NULL,
+                  snapshot_id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(profile_id),
+                  wallet_address TEXT NOT NULL REFERENCES source_wallets(wallet_address), token_mint TEXT NOT NULL,
                   raw_amount TEXT NOT NULL, token_decimals INTEGER NOT NULL,
                   observed_at TEXT NOT NULL, source TEXT NOT NULL,
                   freshness_seconds INTEGER, is_current INTEGER NOT NULL DEFAULT 0

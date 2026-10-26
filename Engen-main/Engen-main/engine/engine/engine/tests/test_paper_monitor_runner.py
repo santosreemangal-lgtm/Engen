@@ -1,3 +1,4 @@
+import argparse
 import io
 import tempfile
 import unittest
@@ -34,7 +35,7 @@ class PaperMonitorRunnerTests(unittest.TestCase):
     def test_timeout_rejects_zero_negative_and_non_finite_values(self):
         for value in ("0", "-1", "nan", "inf", "invalid"):
             with self.subTest(value=value):
-                with self.assertRaises(Exception):
+                with self.assertRaises(argparse.ArgumentTypeError):
                     runner.positive_timeout(value)
 
     def test_rpc_url_accepts_local_http_endpoint(self):

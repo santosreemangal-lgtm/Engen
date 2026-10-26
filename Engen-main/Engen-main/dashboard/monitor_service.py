@@ -171,7 +171,7 @@ class MonitorService:
                                         "last_scan": datetime.now(
                                             timezone.utc
                                         ).isoformat(),
-                                        "last_error": str(error)[:300],
+                                        "last_error": "Monitoring scan failed; sensitive error details are hidden.",
                                     }
                                 )
 

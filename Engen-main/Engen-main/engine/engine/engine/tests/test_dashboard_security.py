@@ -11,6 +11,20 @@ from unittest.mock import patch
 from dashboard import server
 
 
+class DashboardStartupConfigurationTests(unittest.TestCase):
+    def test_accepts_localhost_binding_without_token(self):
+        server.validate_server_config("127.0.0.1", "")
+        server.validate_server_config("localhost", "")
+
+    def test_rejects_non_loopback_binding(self):
+        with self.assertRaisesRegex(ValueError, "localhost"):
+            server.validate_server_config("0.0.0.0", "")
+
+    def test_rejects_short_configured_token(self):
+        with self.assertRaisesRegex(ValueError, "32 characters"):
+            server.validate_server_config("127.0.0.1", "too-short")
+
+
 class DashboardWalletValidationTests(unittest.TestCase):
     def test_accepts_valid_32_byte_base58_public_key(self):
         for address in (

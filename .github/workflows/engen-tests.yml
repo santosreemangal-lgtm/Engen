@@ -134,7 +134,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: solana-rpc-benchmark-report
-          path: rpc-benchmark-report.json
+          path: Engen-main/Engen-main/rpc-benchmark-report.json
           if-no-files-found: ignore
           retention-days: 14
 

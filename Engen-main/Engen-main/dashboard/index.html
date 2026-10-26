@@ -376,15 +376,32 @@
       /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
     async function apiRequest(path, options = {}) {
-      const response = await fetch(path, {
-        cache: "no-store",
-        ...options
-      });
+      let response;
+      try {
+        response = await fetch(path, {
+          cache: "no-store",
+          ...options
+        });
+      } catch (_error) {
+        throw new Error("Backend unavailable. Check that dashboard/server.py is running.");
+      }
 
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch (_error) {
+        throw new Error("The backend returned an invalid response.");
+      }
 
       if (!response.ok) {
-        throw new Error(data.error || "The request failed.");
+        const detail = data && typeof data.error === "string"
+          ? data.error
+          : "The request failed.";
+        throw new Error(detail);
+      }
+
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        throw new Error("The backend response has an unexpected format.");
       }
 
       return data;
@@ -506,6 +523,15 @@
         removeButton.disabled = !backendReady;
 
         removeButton.addEventListener("click", async () => {
+          const confirmed = window.confirm(
+            "Remove this public wallet address from the saved dashboard list?\n\n" +
+            "This does not delete blockchain data or undo past monitoring."
+          );
+          if (!confirmed) {
+            message.textContent = "Wallet removal cancelled.";
+            return;
+          }
+
           removeButton.disabled = true;
 
           try {
@@ -747,6 +773,19 @@
       simulationOrders.replaceChildren();
       simulationFills.replaceChildren();
 
+      if (
+        data.mode !== "PAPER_SIMULATION" ||
+        data.simulated !== true ||
+        data.real_trading !== false ||
+        data.transaction_broadcast !== false ||
+        data.real_wallet_balances_included !== false
+      ) {
+        simulationStatus.textContent =
+          "Simulation report rejected: safety metadata is missing or inconsistent.";
+        addText(simulationBalances, "No simulation values are shown because the report could not be verified.", "p", "empty");
+        return;
+      }
+
       simulationStatus.textContent =
         "Mode: PAPER_SIMULATION | Real trading: disabled | Transaction broadcast: disabled";
 
@@ -851,10 +890,15 @@
         addButton.disabled = true;
         startButton.disabled = true;
         stopButton.disabled = true;
+        monitorStatus.textContent = "Monitoring status unavailable while the backend is disconnected.";
+        simulationStatus.textContent = "Paper simulation report unavailable while the backend is disconnected.";
+        simulationBalances.replaceChildren();
+        simulationPnl.replaceChildren();
+        simulationOrders.replaceChildren();
+        simulationFills.replaceChildren();
 
         renderWallets();
-        message.textContent =
-          "Backend unavailable. Start dashboard/server.py first.";
+        message.textContent = error.message || "Backend unavailable. Start dashboard/server.py first.";
       }
     }
 

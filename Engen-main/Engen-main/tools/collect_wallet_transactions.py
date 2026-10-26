@@ -12,6 +12,13 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+# When executed as `python tools/collect_wallet_transactions.py`, Python puts
+# the tools directory first on sys.path. Add the project root so the engine
+# package can be imported reliably in GitHub Actions and local runs.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from engine.transaction_analysis import classify_transaction
 
 WALLET = os.environ.get("SOLANA_WALLET", "").strip()

@@ -188,13 +188,22 @@ def process_new_signatures(
         # available and confirms the monitored wallet as a signer.
         if (
             wallet_address is not None
-            and result.get("status") == "success"
+            and result.get("status") in ("success", "failed")
             and isinstance(result.get("token_balance_changes"), list)
         ):
             signers = result.get("signers")
             confirmation = item.get("confirmationStatus")
 
-            if confirmation not in ("confirmed", "finalized"):
+            if result.get("status") == "failed":
+                result = {
+                    **result,
+                    "trade_signal": classify_transaction(
+                        result.get("raw_transaction"),
+                        wallet_address,
+                        result["token_balance_changes"],
+                    ),
+                }
+            elif confirmation not in ("confirmed", "finalized"):
                 result = {
                     **result,
                     "trade_signal": {**_unknown_signer_signal(),

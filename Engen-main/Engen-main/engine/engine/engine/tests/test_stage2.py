@@ -9,14 +9,14 @@ class SolanaPublicTests(unittest.TestCase):
     @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_health_returns_ok(self, mock_urlopen):
         response = MagicMock()
-        response.read.return_value = json.dumps({"result": "ok"}).encode()
+        response.read.return_value = json.dumps({"jsonrpc": "2.0", "id": 1, "result": "ok"}).encode()
         mock_urlopen.return_value.__enter__.return_value = response
         self.assertEqual(get_public_health(), "ok")
 
     @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_slot_returns_number(self, mock_urlopen):
         response = MagicMock()
-        response.read.return_value = json.dumps({"result": 12345}).encode()
+        response.read.return_value = json.dumps({"jsonrpc": "2.0", "id": 2, "result": 12345}).encode()
         mock_urlopen.return_value.__enter__.return_value = response
         self.assertEqual(get_slot(), 12345)
 
@@ -24,7 +24,7 @@ class SolanaPublicTests(unittest.TestCase):
     def test_rpc_error_raises_exception(self, mock_urlopen):
         response = MagicMock()
         response.read.return_value = json.dumps(
-            {"error": {"code": -1, "message": "Test error"}}
+            {"jsonrpc": "2.0", "id": 2, "error": {"code": -1, "message": "Test error"}}
         ).encode()
         mock_urlopen.return_value.__enter__.return_value = response
         with self.assertRaises(SolanaRPCError):

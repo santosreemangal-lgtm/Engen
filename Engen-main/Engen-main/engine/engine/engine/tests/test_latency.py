@@ -18,6 +18,16 @@ class LatencyRecorderTests(unittest.TestCase):
         self.assertEqual(summary["p95_ms"], 100.0)
         self.assertEqual(summary["p99_ms"], 100.0)
 
+    def test_nearest_rank_percentiles_use_ceiling_rank(self):
+        recorder = LatencyRecorder()
+        for value in (1, 2, 3, 4):
+            recorder.record("analysis", value)
+
+        summary = recorder.summary()["analysis"]
+        self.assertEqual(summary["p50_ms"], 2.0)
+        self.assertEqual(summary["p95_ms"], 4.0)
+        self.assertEqual(summary["p99_ms"], 4.0)
+
     def test_samples_are_bounded(self):
         recorder = LatencyRecorder(max_samples=2)
         recorder.record("rpc", 1)

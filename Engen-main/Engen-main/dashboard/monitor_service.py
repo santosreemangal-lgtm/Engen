@@ -2,6 +2,8 @@
 """Read-only monitoring service for saved public Solana wallets."""
 
 import threading
+
+from engine.solana_validation import is_valid_solana_address
 from datetime import datetime, timezone
 
 
@@ -33,9 +35,24 @@ class MonitorService:
         return {
             "state": "waiting",
             "last_scan": None,
+            "last_successful_check": None,
             "last_error": None,
             "latest_results": [],
         }
+
+    def _status_details(self, details):
+        """Report monitors as stale when their last successful check is old."""
+        snapshot = dict(details)
+        successful = snapshot.get("last_successful_check")
+        if successful:
+            try:
+                last_success = datetime.fromisoformat(successful)
+                age = (datetime.now(timezone.utc) - last_success).total_seconds()
+                if age > self._interval * 2 and snapshot.get("state") != "error":
+                    snapshot["state"] = "stale"
+            except (TypeError, ValueError):
+                snapshot["state"] = "stale"
+        return snapshot
 
     def status(self):
         """Return a safe snapshot of monitoring state."""
@@ -46,7 +63,7 @@ class MonitorService:
                 "wallets": [
                     {
                         "address": address,
-                        **details,
+                        **self._status_details(details),
                     }
                     for address, details in self._wallets.items()
                 ],
@@ -64,6 +81,8 @@ class MonitorService:
                 continue
 
             address = address.strip()
+            if not is_valid_solana_address(address):
+                raise ValueError("A monitored wallet must be a valid Solana public address.")
 
             if address not in cleaned:
                 cleaned.append(address)
@@ -176,6 +195,9 @@ class MonitorService:
                                     {
                                         "state": "connected",
                                         "last_scan": datetime.now(
+                                            timezone.utc
+                                        ).isoformat(),
+                                        "last_successful_check": datetime.now(
                                             timezone.utc
                                         ).isoformat(),
                                         "last_error": None,

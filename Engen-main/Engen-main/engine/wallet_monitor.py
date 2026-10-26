@@ -8,6 +8,7 @@ from engine.solana_public import (
     _rpc_request,
 )
 from engine.signature_store import SignatureStore
+from engine.solana_validation import is_valid_solana_address, is_valid_transaction_signature
 
 
 def get_wallet_signatures(
@@ -19,8 +20,8 @@ def get_wallet_signatures(
     latency_recorder=None,
 ):
     """Fetch a bounded list of signatures for a public wallet."""
-    if not isinstance(wallet_address, str) or not wallet_address.strip():
-        raise ValueError("A public wallet address is required.")
+    if not is_valid_solana_address(wallet_address):
+        raise ValueError("Invalid Solana public wallet address.")
 
     if not isinstance(limit, int) or isinstance(limit, bool):
         raise ValueError("Limit must be an integer.")
@@ -63,7 +64,7 @@ def get_wallet_signatures(
         if not isinstance(item, dict):
             continue
         signature = item.get("signature")
-        if not isinstance(signature, str) or not signature.strip():
+        if not is_valid_transaction_signature(signature):
             continue
         slot = item.get("slot")
         if slot is not None and (
@@ -122,8 +123,8 @@ def get_and_store_new_wallet_signatures(
     latency_recorder=None,
 ):
     """Persist signatures, establish baseline, and return pending entries."""
-    if not isinstance(wallet_address, str) or not wallet_address.strip():
-        raise ValueError("A public wallet address is required.")
+    if not is_valid_solana_address(wallet_address):
+        raise ValueError("Invalid Solana public wallet address.")
     if store is None:
         store = SignatureStore()
 
@@ -142,8 +143,7 @@ def get_and_store_new_wallet_signatures(
         valid_signatures = [
             item["signature"] for item in signatures
             if isinstance(item, dict)
-            and isinstance(item.get("signature"), str)
-            and item["signature"].strip()
+            and is_valid_transaction_signature(item.get("signature"))
         ]
         store.save_many(wallet_address, valid_signatures)
         for signature in valid_signatures:
@@ -156,7 +156,7 @@ def get_and_store_new_wallet_signatures(
         if not isinstance(item, dict):
             continue
         signature = item.get("signature")
-        if not isinstance(signature, str) or not signature.strip():
+        if not is_valid_transaction_signature(signature):
             continue
         records_by_signature[signature] = item
         store.save(wallet_address, signature)

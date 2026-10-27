@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from engine.paper_simulator import PaperSimulator
+from engine.market_data import fetch_market_price
 from engine.transaction_analysis import QUOTE_TOKEN_MINTS
 from engine.transaction_analysis import WRAPPED_SOL_MINT
 
@@ -47,6 +48,61 @@ def _human_amount(change):
     ):
         return None
     return Decimal(raw) / (Decimal(10) ** decimals)
+
+def execute_pending_paper_orders(wallet_address=None, simulator=None, price_provider=None):
+    """Retry queued automatic paper orders using fresh public market snapshots."""
+    simulator = simulator or get_paper_simulator()
+    price_provider = price_provider or fetch_market_price
+    now = datetime.now(timezone.utc).isoformat()
+    outcomes = []
+
+    for order in list(simulator.orders.values()):
+        details = order.get("details") or {}
+        if (
+            order.get("status") != "CREATED"
+            or details.get("origin") != "AUTOMATIC_WALLET_COPY"
+            or (wallet_address is not None and details.get("source_wallet") != wallet_address)
+        ):
+            continue
+        try:
+            market_price = price_provider(order.get("asset_mint"))
+        except Exception:
+            market_price = None
+        if market_price is None:
+            outcomes.append({
+                "order_id": order.get("order_id"),
+                "signal_id": order.get("signal_id"),
+                "status": "WAITING_FOR_MARKET_DATA",
+                "reason": "No usable public USD price/liquidity snapshot; order remains queued.",
+            })
+            continue
+        try:
+            result = simulator.execute_order(
+                order["order_id"],
+                market_price,
+                now=now,
+                max_price_age_seconds=60,
+                slippage_bps=50,
+                fee_bps=10,
+                min_liquidity_usd=10000,
+                max_liquidity_age_seconds=60,
+                require_liquidity=True,
+            )
+        except Exception:
+            outcomes.append({
+                "order_id": order.get("order_id"),
+                "signal_id": order.get("signal_id"),
+                "status": "EXECUTION_ERROR",
+                "reason": "Paper execution failed; no real transaction was sent.",
+            })
+            continue
+        outcomes.append({
+            "order_id": order.get("order_id"),
+            "signal_id": order.get("signal_id"),
+            "status": result.get("status", "UNKNOWN"),
+            "reason": result.get("reason"),
+        })
+    return outcomes
 
 
 def queue_paper_orders(wallet_address, results, simulator=None):
@@ -131,10 +187,12 @@ def queue_paper_orders(wallet_address, results, simulator=None):
             side=side,
             asset_mint=asset_mint,
             quantity=str(abs(asset_amount)),
-            quote_mint=quote_mint,
+            quote_mint="USD",
             created_at=created_at,
             details={
                 "origin": "AUTOMATIC_WALLET_COPY",
+                "source_quote_mint": quote_mint,
+                "source_quote_amount": str(abs(quote_amount)),
                 "source_wallet": wallet_address,
                 "source_signature": signature,
                 "source_slot": observation.get("slot"),

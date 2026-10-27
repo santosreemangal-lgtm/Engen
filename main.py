@@ -13,7 +13,7 @@ def run_mock_analysis_test():
         t_c = analyze_token_balance_changes(tx["meta"])
         s_c = analyze_native_sol_balance_changes(tx)
         res = classify_token_balance_changes(t_c, w)
-        if res == "UNKNOWN" and s_c and s_c.get(0, 0) < 0: res = "BUY_CANDIDATE"
+        if res == "UNKNOWN" and any(change.get("account_index") == 0 and int(change.get("delta_amount", "0")) < 0 for change in s_c): res = "BUY_CANDIDATE"
         rep = {"test_status": "SUCCESS", "tx_status": tx_i.get("status"), "slot": tx_i.get("slot"), "wallet_monitored": w, "classification_result": res, "expected_classification": "BUY_CANDIDATE", "matches_expected": res == "BUY_CANDIDATE"}
         print(json.dumps(rep, indent=4)); return 0 if rep["matches_expected"] else 1
     except Exception as e:

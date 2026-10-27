@@ -2,6 +2,7 @@
 """Read-only web backend for the Solana Monitor dashboard."""
 
 import json
+import os
 import re
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -19,7 +20,10 @@ from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
 
 WALLETS_FILE = ROOT / "wallets.json"
-HOST = "0.0.0.0"
+# Bind to localhost by default because this dashboard has no authentication.
+# Set DASHBOARD_HOST=0.0.0.0 only when using a trusted, access-controlled
+# environment such as a private development container.
+HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT = 8000
 
 ADDRESS_PATTERN = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")

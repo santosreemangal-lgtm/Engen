@@ -38,3 +38,6 @@ jobs:
         env:
           PYTHONPATH: .
         run: python main.py --mock-analysis-test
+      - name: Verify root compatibility entry point
+        working-directory: Engen-main/Engen-main
+        run: python ../../main.py --mock-analysis-test

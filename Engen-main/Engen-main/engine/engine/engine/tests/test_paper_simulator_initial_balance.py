@@ -37,6 +37,16 @@ class PaperSimulatorInitialBalanceTests(unittest.TestCase):
             self.assertEqual(simulator.balances["USD"], Decimal("1000"))
 
 
+    def test_in_memory_simulator_also_locks_initial_balance(self):
+        simulator = PaperSimulator()
+        simulator.set_initial_virtual_balance("250")
+
+        with self.assertRaisesRegex(ValueError, "already been set"):
+            simulator.set_initial_virtual_balance("500")
+
+        self.assertEqual(simulator.balances["USD"], Decimal("250"))
+
+
     def test_initial_balance_cannot_change_after_a_filled_order(self):
         with tempfile.TemporaryDirectory() as directory:
             simulator = PaperSimulator(db_path=Path(directory) / "paper.db")

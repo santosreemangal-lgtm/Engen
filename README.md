@@ -12,7 +12,7 @@ Engen is an early-stage, **read-only Solana wallet monitor** intended for offlin
 
 ## Repository layout
 
-The canonical application is in `Engen-main/Engen-main/`. The repository-root `main.py` is a compatibility entry point. The test suite remains under `Engen-main/Engen-main/engine/engine/engine/tests/`; the exact duplicate nested `logger.py` and `health.py` modules were removed in the audit branch after reference searches found no imports. Review CI before merging.
+The canonical application is in `Engen-main/Engen-main/`. The repository-root `main.py` is a compatibility entry point. The test suite remains under `Engen-main/Engen-main/engine/engine/engine/tests/`. The audit branch removes two duplicate nested modules after matching their content against canonical modules and searching for references. Review CI before merging.
 
 ## Requirements
 
@@ -22,15 +22,21 @@ The canonical application is in `Engen-main/Engen-main/`. The repository-root `m
 
 ## Run offline checks
 
-From the repository root:
+From the repository root, compile the canonical project and run the mock analysis:
 
 ```bash
 python -m compileall -q Engen-main/Engen-main
-python -m unittest discover -s Engen-main/Engen-main/engine/engine/engine/tests -v
-python main.py --mock-analysis-test
+python Engen-main/Engen-main/main.py --mock-analysis-test
 ```
 
-To test the root compatibility entry point from `Engen-main/Engen-main/`:
+Run the unit tests from the canonical project directory so Python can resolve the `engine` package:
+
+```bash
+cd Engen-main/Engen-main
+PYTHONPATH=. python -m unittest discover -s engine/engine/engine/tests -v
+```
+
+Test the root compatibility entry point from the canonical project directory:
 
 ```bash
 python ../../main.py --mock-analysis-test

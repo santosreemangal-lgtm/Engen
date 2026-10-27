@@ -5,6 +5,7 @@ fetch market prices, sign transactions, or connect to a wallet.
 """
 
 from datetime import datetime, timezone
+from math import isfinite
 from threading import RLock
 
 
@@ -36,6 +37,7 @@ class PaperTrader:
         if (
             isinstance(value, bool)
             or not isinstance(value, (int, float))
+            or not isfinite(value)
             or value <= 0
         ):
             raise PaperTradingError("%s must be a positive number." % name)

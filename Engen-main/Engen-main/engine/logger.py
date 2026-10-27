@@ -1,7 +1,8 @@
 """Console logging that hides secret-looking values.
 
-If a message contains something like  api_key=abc123  or  token: xyz,
-the value is replaced with [REDACTED] before it is printed.
+Common credential assignments and HTTP bearer tokens are redacted before
+messages are written to the console. This is a defensive filter, not a
+substitute for never logging credentials in the first place.
 """
 import logging
 import re
@@ -9,13 +10,19 @@ import sys
 
 _SECRET_PATTERN = re.compile(
     r"(?i)\b(api[_-]?key|token|secret|private[_-]?key|seed(?:[_ -]?phrase)?|password)"
-    r"(\s*[=:]\s*)(\S+)"
+    r"(\s*[=:]\s*)([^\s,;&]+)"
+)
+_BEARER_PATTERN = re.compile(r"(?i)\b(Bearer\s+)[A-Za-z0-9._~+/=-]+")
+_URL_CREDENTIAL_PATTERN = re.compile(
+    r"(?i)([?&](?:api[_-]?key|access[_-]?token|auth|token|secret|password)=)[^&#\s]+"
 )
 
 
 def redact(text):
-    """Returns text with secret-looking values replaced."""
-    return _SECRET_PATTERN.sub(r"\1\2[REDACTED]", text)
+    """Returns text with common secret-looking values replaced."""
+    text = _SECRET_PATTERN.sub(r"\1\2[REDACTED]", str(text))
+    text = _BEARER_PATTERN.sub(r"\1[REDACTED]", text)
+    return _URL_CREDENTIAL_PATTERN.sub(r"\1[REDACTED]", text)
 
 
 class RedactingFilter(logging.Filter):

@@ -6,8 +6,8 @@ from engine.transaction_monitor import monitor_wallet
 from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders
 
 
-def create_scan_function(limit=10, timeout=10, side_getter=None):
-    """Create a scanner with an optional profile-specific copy-side policy."""
+def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter=None):
+    """Create a scanner with profile-specific copy-side and sizing policies."""
     store = SignatureStore()
 
     def scan_wallet(address):
@@ -21,7 +21,10 @@ def create_scan_function(limit=10, timeout=10, side_getter=None):
         )
         try:
             allowed_sides = side_getter() if side_getter is not None else "BOTH"
-            queued_orders = queue_paper_orders(address, results, allowed_sides=allowed_sides)
+            copy_settings = settings_getter() if settings_getter is not None else {}
+            queued_orders = queue_paper_orders(
+                address, results, allowed_sides=allowed_sides, copy_settings=copy_settings
+            )
             execution_outcomes = execute_pending_paper_orders(address)
             outcomes_by_signal = {
                 item["signal_id"]: item for item in execution_outcomes

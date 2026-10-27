@@ -29,7 +29,7 @@ from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
 from engine.logger import redact
 from engine.pnl import MarketPrice, realized_pnl_from_fills
-from engine.paper_simulator import PaperSimulator
+from engine.paper_copy_runner import get_paper_simulator, PAPER_SIMULATOR_LOCK as paper_simulator_lock
 from engine.solana_public import get_public_health, SolanaRPCError
 
 WALLETS_FILE = ROOT / "wallets.json"
@@ -81,19 +81,6 @@ def is_valid_solana_address(value):
 
 # Creating services does not start monitoring or make RPC requests.
 monitor_service = MonitorService(create_scan_function(), interval=30)
-paper_simulator_instance = None
-paper_simulator_lock = threading.RLock()
-
-
-def get_paper_simulator():
-    """Lazily open the persistent paper-only simulator after an explicit user action."""
-    global paper_simulator_instance
-    with paper_simulator_lock:
-        if paper_simulator_instance is None:
-            paper_simulator_instance = PaperSimulator(db_path=PAPER_SIMULATOR_DB)
-        return paper_simulator_instance
-
-
 # Each saved profile gets its own in-memory monitor lifecycle. The saved source
 # wallet list remains profile-scoped in ProfileStore.
 profile_monitor_services = {}

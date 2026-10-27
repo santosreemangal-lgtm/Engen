@@ -104,6 +104,58 @@ class PaperTraderTests(unittest.TestCase):
             self.assertEqual(duplicate["status"], "DUPLICATE")
             self.assertEqual(len(restarted.trades), 1)
 
+    def test_paper_ledger_survives_full_python_process_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "paper_process_restart.db"
+            db_literal = repr(str(db_path))
+
+            first_process = (
+                "from engine.paper_trader import PaperTrader; "
+                "t=PaperTrader({'USDC': '10'}, db_path=" + repr(str(db_path)) + "); "
+                "r=t.process({"
+                "'signature':'process-restart-signature',"
+                "'available':True,'status':'success',"
+                "'trade_signal':{'classification':'BUY_CANDIDATE',"
+                "'asset_mints':['TOKEN_A'],'quote_mints':['USDC']},"
+                "'token_balance_changes':["
+                "{'mint':'TOKEN_A','delta_amount':'500','decimals':2},"
+                "{'mint':'USDC','delta_amount':'-1000000','decimals':6}]"
+                "}); "
+                "assert r['status']=='PAPER_FILLED', r"
+            )
+            subprocess.run(
+                [sys.executable, "-c", first_process],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            second_process = (
+                "from engine.paper_trader import PaperTrader; "
+                "t=PaperTrader({'USDC':'999'}, db_path=" + repr(str(db_path)) + "); "
+                "assert t.get_balances()=={'USDC':'9','TOKEN_A':'5'}, t.get_balances(); "
+                "assert len(t.trades)==1, t.trades; "
+                "r=t.process({"
+                "'signature':'process-restart-signature',"
+                "'available':True,'status':'success',"
+                "'trade_signal':{'classification':'BUY_CANDIDATE',"
+                "'asset_mints':['TOKEN_A'],'quote_mints':['USDC']},"
+                "'token_balance_changes':["
+                "{'mint':'TOKEN_A','delta_amount':'500','decimals':2},"
+                "{'mint':'USDC','delta_amount':'-1000000','decimals':6}]"
+                "}); "
+                "assert r['status']=='DUPLICATE', r; "
+                "assert len(t.trades)==1, t.trades; "
+                "print('paper-ledger-process-restart: PASS')"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", second_process],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("paper-ledger-process-restart: PASS", result.stdout)
+
     def test_profile_max_position_percentage_rejects_oversized_buy(self):
         trader = PaperTrader({"USDC": 10}, max_position_pct=5)
         result = trader.process(self.make_result())

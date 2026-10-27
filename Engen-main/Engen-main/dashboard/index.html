@@ -1885,6 +1885,8 @@
         wallets = data.wallets;
         backendReady = true;
         addButton.disabled = false;
+        paperFundButton.disabled = false;
+        paperOrderButton.disabled = false;
 
         renderWallets();
         message.textContent = "Connected. Saved wallet list loaded.";
@@ -1895,6 +1897,8 @@
       } catch (error) {
         backendReady = false;
         addButton.disabled = true;
+        paperFundButton.disabled = true;
+        paperOrderButton.disabled = true;
         startButton.disabled = true;
         stopButton.disabled = true;
         monitorStatus.textContent = "Monitoring status unavailable while the backend is disconnected.";
@@ -2090,6 +2094,8 @@
     addButton.disabled = true;
     startButton.disabled = true;
     stopButton.disabled = true;
+    paperFundButton.disabled = true;
+    paperOrderButton.disabled = true;
 
     loadWallets();
     loadSimulationReport();

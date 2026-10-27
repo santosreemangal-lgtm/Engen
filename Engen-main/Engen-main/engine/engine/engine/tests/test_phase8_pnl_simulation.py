@@ -151,6 +151,15 @@ class PaperSimulatorTests(unittest.TestCase):
         self.assertIn("stale", result["reason"])
         self.assertEqual(simulator.fills, [])
 
+    def test_future_dated_price_rejects_order_without_fill(self):
+        simulator = self.make_simulator()
+        order = self.create(simulator)
+        future = price("10", "2026-10-26T12:00:01Z")
+        result = simulator.execute_order(order["order_id"], future, now=NOW)
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertIn("stale", result["reason"])
+        self.assertEqual(simulator.fills, [])
+
     def test_rpc_failure_rejects_without_fill(self):
         simulator = self.make_simulator()
         order = self.create(simulator)
@@ -189,6 +198,17 @@ class PaperSimulatorTests(unittest.TestCase):
         order = self.create(simulator)
         result = simulator.execute_order(
             order["order_id"], price(liquidity_timestamp="2026-10-26T11:00:00Z"),
+            now=NOW,
+        )
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertIn("Liquidity data is stale", result["reason"])
+        self.assertEqual(simulator.fills, [])
+
+    def test_future_dated_liquidity_is_rejected(self):
+        simulator = self.make_simulator()
+        order = self.create(simulator)
+        result = simulator.execute_order(
+            order["order_id"], price(liquidity_timestamp="2026-10-26T12:00:01Z"),
             now=NOW,
         )
         self.assertEqual(result["status"], "REJECTED")

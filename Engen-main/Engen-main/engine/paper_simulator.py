@@ -101,7 +101,7 @@ class PaperSimulator:
                         "execution_price","gross_quote","fee","network_cost","net_quote","currency",
                         "price_source","price_timestamp","price_age_seconds","slippage_bps","created_at")))
 
-    def create_order(self, signal_id, side, asset_mint, quantity, quote_mint, *, created_at):
+    def create_order(self, signal_id, side, asset_mint, quantity, quote_mint, *, created_at, details=None):
         if not isinstance(signal_id, str) or not signal_id.strip():
             raise ValueError("Signal ID is required for deduplication.")
         if signal_id in self.processed_signals:
@@ -115,7 +115,8 @@ class PaperSimulator:
         order = {"order_id": str(uuid.uuid4()), "signal_id": signal_id, "side": side,
                  "asset_mint": asset_mint, "quantity": str(qty), "quote_mint": quote_mint,
                  "status": "CREATED", "reason": None, "created_at": created_at, "details": {
-                     "mode": "PAPER_SIMULATION", "real_trading": False, "transaction_broadcast": False}}
+                     "mode": "PAPER_SIMULATION", "real_trading": False, "transaction_broadcast": False,
+                     **(details if isinstance(details, dict) else {})}}
         self._persist(order)
         self.orders[order["order_id"]] = order
         self.processed_signals.add(signal_id)

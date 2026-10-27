@@ -302,6 +302,81 @@
       word-break: break-word;
     }
 
+    .paper-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin: 16px 0;
+    }
+
+    .paper-form {
+      min-width: 0;
+      padding: 15px;
+      background: #111827;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .paper-form h3 {
+      margin-top: 0;
+    }
+
+    .paper-form label {
+      margin: 10px 0 6px;
+    }
+
+    .paper-form input,
+    .paper-form select {
+      width: 100%;
+      min-height: 42px;
+      padding: 10px 12px;
+      color: var(--text);
+      background: #0b1020;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+    }
+
+    .paper-form button {
+      width: 100%;
+      margin-top: 14px;
+    }
+
+    .paper-warning {
+      padding: 11px 13px;
+      color: #f6d7a8;
+      background: #2a2114;
+      border: 1px solid #594322;
+      border-radius: 10px;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .paper-history {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .paper-history > summary {
+      padding: 12px 14px;
+      color: #c7dcfb;
+      background: #111d31;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .paper-history-content {
+      padding: 0 12px 12px;
+    }
+
+    @media (max-width: 600px) {
+      .paper-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
     .notice {
       padding: 15px 17px;
       color: var(--muted);
@@ -624,16 +699,54 @@
     </section>
 
     <section class="panel" aria-labelledby="simulation-heading">
-      <h2 id="simulation-heading">Paper Trading — Simulated Only</h2>
-      <p class="muted">These virtual balances and fills are separate from real wallet balances. This panel never submits transactions.</p>
+      <h2 id="simulation-heading">Paper Trading</h2>
+      <p class="muted">One persistent virtual portfolio. Choose the paper balance and simulated order yourself.</p>
+      <p class="paper-warning">Paper mode only. The reference price and liquidity are entered by you and are not verified or live market data. Orders use a simulated 0.50% slippage and 0.10% fee, and require at least $10,000 entered liquidity. No real wallet, signing, or transaction broadcast is used.</p>
+
+      <div class="paper-grid">
+        <form id="paper-fund-form" class="paper-form">
+          <h3>Add virtual funds</h3>
+          <label for="paper-fund-mint">Paper asset / quote symbol</label>
+          <input id="paper-fund-mint" name="mint" value="USD" maxlength="128" required>
+          <label for="paper-fund-amount">Amount to add</label>
+          <input id="paper-fund-amount" name="amount" type="number" min="0.00000001" step="any" value="1000" required>
+          <button id="paper-fund-button" type="submit">Add virtual balance</button>
+        </form>
+
+        <form id="paper-order-form" class="paper-form">
+          <h3>Simulate an order</h3>
+          <label for="paper-order-side">Action</label>
+          <select id="paper-order-side" name="side">
+            <option value="BUY">Buy</option>
+            <option value="SELL">Sell</option>
+          </select>
+          <label for="paper-order-asset">Asset mint / symbol</label>
+          <input id="paper-order-asset" name="asset_mint" maxlength="128" placeholder="Token mint or symbol" required>
+          <label for="paper-order-quantity">Token quantity</label>
+          <input id="paper-order-quantity" name="quantity" type="number" min="0.00000001" step="any" required>
+          <label for="paper-order-quote">Quote asset / symbol</label>
+          <input id="paper-order-quote" name="quote_mint" maxlength="128" value="USD" required>
+          <label for="paper-order-price">Reference price (USD per token)</label>
+          <input id="paper-order-price" name="price" type="number" min="0.0000000001" step="any" required>
+          <label for="paper-order-liquidity">Entered liquidity (USD, minimum 10,000)</label>
+          <input id="paper-order-liquidity" name="liquidity_usd" type="number" min="10000" step="any" value="25000" required>
+          <button id="paper-order-button" type="submit">Run paper simulation</button>
+        </form>
+      </div>
+
       <div id="simulation-status" class="muted" aria-live="polite">Loading paper simulation report...</div>
+      <h3>Virtual balances</h3>
       <div id="simulation-balances"></div>
-      <h3>Simulated realized P&amp;L (USD)</h3>
+      <h3>Realized P&amp;L (USD)</h3>
       <div id="simulation-pnl"></div>
-      <h3>Recent simulated orders</h3>
-      <div id="simulation-orders"></div>
-      <h3>Recent simulated fills</h3>
-      <div id="simulation-fills"></div>
+      <details class="paper-history">
+        <summary>Order history</summary>
+        <div id="simulation-orders" class="paper-history-content"></div>
+      </details>
+      <details class="paper-history">
+        <summary>Fill history</summary>
+        <div id="simulation-fills" class="paper-history-content"></div>
+      </details>
     </section>
 
     <section class="panel">
@@ -686,6 +799,10 @@
     const simulationPnl = document.getElementById("simulation-pnl");
     const simulationOrders = document.getElementById("simulation-orders");
     const simulationFills = document.getElementById("simulation-fills");
+    const paperFundForm = document.getElementById("paper-fund-form");
+    const paperOrderForm = document.getElementById("paper-order-form");
+    const paperFundButton = document.getElementById("paper-fund-button");
+    const paperOrderButton = document.getElementById("paper-order-button");
 
     const ADDRESS_PATTERN =
       /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -1241,22 +1358,65 @@
     }
 
     async function loadSimulationReport() {
-      const profileId = historyProfile.value;
-      if (!profileId) {
-        simulationStatus.textContent = "Choose a wallet profile to view its isolated paper ledger.";
-        simulationBalances.replaceChildren();
-        simulationPnl.replaceChildren();
-        simulationOrders.replaceChildren();
-        simulationFills.replaceChildren();
-        return;
-      }
       try {
-        const params = new URLSearchParams({profile_id: profileId});
-        renderSimulationReport(await apiRequest("/api/paper-simulation?" + params.toString()));
+        renderSimulationReport(await apiRequest("/api/paper-simulation"));
       } catch (error) {
-        simulationStatus.textContent = "Profile paper simulation report unavailable: " + error.message;
+        simulationStatus.textContent = "Paper simulation unavailable: " + error.message;
       }
     }
+
+    async function postPaperSimulation(payload) {
+      return apiRequest("/api/paper-simulation", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+    }
+
+    paperFundForm.addEventListener("submit", async event => {
+      event.preventDefault();
+      paperFundButton.disabled = true;
+      simulationStatus.textContent = "Adding virtual funds...";
+      try {
+        const data = await postPaperSimulation({
+          action: "add-balance",
+          mint: document.getElementById("paper-fund-mint").value.trim(),
+          amount: document.getElementById("paper-fund-amount").value
+        });
+        simulationStatus.textContent = "Virtual funds added. No real funds were moved.";
+        renderSimulationReport(data.report);
+      } catch (error) {
+        simulationStatus.textContent = "Could not add virtual funds: " + error.message;
+      } finally {
+        paperFundButton.disabled = !backendReady;
+      }
+    });
+
+    paperOrderForm.addEventListener("submit", async event => {
+      event.preventDefault();
+      paperOrderButton.disabled = true;
+      simulationStatus.textContent = "Running paper simulation...";
+      try {
+        const data = await postPaperSimulation({
+          action: "create-order",
+          side: document.getElementById("paper-order-side").value,
+          asset_mint: document.getElementById("paper-order-asset").value.trim(),
+          quantity: document.getElementById("paper-order-quantity").value,
+          quote_mint: document.getElementById("paper-order-quote").value.trim(),
+          price: document.getElementById("paper-order-price").value,
+          liquidity_usd: document.getElementById("paper-order-liquidity").value
+        });
+        const result = data.result || {};
+        simulationStatus.textContent = result.status === "FILLED"
+          ? "Paper order filled. No real transaction was sent."
+          : "Paper order not filled: " + (result.reason || result.status || "unknown result");
+        renderSimulationReport(data.report);
+      } catch (error) {
+        simulationStatus.textContent = "Paper order failed: " + error.message;
+      } finally {
+        paperOrderButton.disabled = !backendReady;
+      }
+    });
 
     async function loadMonitorStatus() {
       try {
@@ -1932,6 +2092,7 @@
     stopButton.disabled = true;
 
     loadWallets();
+    loadSimulationReport();
 
     window.setInterval(() => {
       if (backendReady && !monitorRequestInProgress) {

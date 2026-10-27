@@ -28,7 +28,7 @@ _SIMULATOR_LOCK = threading.RLock()
 def get_paper_simulator():
     """Return the one persistent simulator shared by dashboard and monitor."""
     global _SIMULATOR
-    with _SIMULATOR_LOCK:
+    with PAPER_SIMULATOR_LOCK:
         if _SIMULATOR is None:
             _SIMULATOR = PaperSimulator(db_path=PAPER_SIMULATOR_DB)
         return _SIMULATOR

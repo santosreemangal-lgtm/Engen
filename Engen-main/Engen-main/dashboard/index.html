@@ -109,6 +109,12 @@
       gap: 12px;
     }
 
+    .portfolio-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .portfolio-item .overview-value { font-size: clamp(20px, 3vw, 28px); }
+    .portfolio-item .form-row { margin-top: 8px; }
+    .portfolio-item .form-row input { width: 100%; }
+    .portfolio-item .muted { font-size: 12px; }
+
     .overview-item {
       min-width: 0;
       padding: 14px;
@@ -506,7 +512,7 @@
         padding: 17px;
       }
 
-      .overview-grid {
+      .overview-grid, .portfolio-grid {
         grid-template-columns: minmax(0, 1fr);
       }
 
@@ -546,6 +552,36 @@
         <button id="clear-api-token" class="secondary-button" type="button">Clear</button>
       </div>
       <p id="api-token-message" class="muted" role="status" aria-live="polite">Token authentication is optional for localhost-only use.</p>
+    </section>
+
+    <section class="panel" aria-labelledby="portfolio-heading">
+      <h2 id="portfolio-heading">Paper Portfolio (USD)</h2>
+      <p class="muted">These values come from the persistent paper-simulation ledger. No real-wallet balance is included.</p>
+      <div class="overview-grid portfolio-grid">
+        <div class="overview-item portfolio-item">
+          <p class="overview-label">Portfolio Value</p>
+          <p id="portfolio-value" class="overview-value">—</p>
+          <label for="paper-fund-amount">Set starting balance (USD)</label>
+          <form id="paper-initial-balance-form" class="form-row">
+            <input id="paper-fund-amount" name="amount" type="number" min="0" step="any" placeholder="Enter starting balance" required>
+            <button id="paper-fund-button" type="submit" disabled>Set</button>
+          </form>
+          <p class="muted">Can be changed only before the first simulated order is filled.</p>
+        </div>
+        <div class="overview-item portfolio-item">
+          <p class="overview-label">Available Balance</p>
+          <p id="portfolio-available" class="overview-value">—</p>
+        </div>
+        <div class="overview-item portfolio-item">
+          <p class="overview-label">Realized P&amp;L</p>
+          <p id="portfolio-realized" class="overview-value">—</p>
+        </div>
+        <div class="overview-item portfolio-item">
+          <p class="overview-label">Unrealized P&amp;L</p>
+          <p id="portfolio-unrealized" class="overview-value">—</p>
+        </div>
+      </div>
+      <p id="portfolio-message" class="muted" role="status" aria-live="polite">Loading paper portfolio…</p>
     </section>
 
     <section class="panel" aria-labelledby="overview-heading">
@@ -714,14 +750,10 @@
       <p class="paper-warning">Paper mode only. The reference price and liquidity are entered by you and are not verified or live market data. Orders use a simulated 0.50% slippage and 0.10% fee, and require at least $10,000 entered liquidity. No real wallet, signing, or transaction broadcast is used.</p>
 
       <div class="paper-grid">
-        <form id="paper-fund-form" class="paper-form">
-          <h3>Add virtual funds</h3>
-          <label for="paper-fund-mint">Paper asset / quote symbol</label>
-          <input id="paper-fund-mint" name="mint" value="USD" maxlength="128" required>
-          <label for="paper-fund-amount">Amount to add</label>
-          <input id="paper-fund-amount" name="amount" type="number" min="0.00000001" step="any" value="1000" required>
-          <button id="paper-fund-button" type="submit">Add virtual balance</button>
-        </form>
+        <div class="paper-form">
+          <h3>Manual virtual funding</h3>
+          <p class="muted">Use the starting-balance control above to set your initial USD balance. Manual top-ups are intentionally hidden in this simplified dashboard.</p>
+        </div>
 
         <form id="paper-order-form" class="paper-form">
           <h3>Simulate an order</h3>
@@ -809,9 +841,14 @@
     const simulationPnl = document.getElementById("simulation-pnl");
     const simulationOrders = document.getElementById("simulation-orders");
     const simulationFills = document.getElementById("simulation-fills");
-    const paperFundForm = document.getElementById("paper-fund-form");
+    const paperFundForm = document.getElementById("paper-initial-balance-form");
     const paperOrderForm = document.getElementById("paper-order-form");
     const paperFundButton = document.getElementById("paper-fund-button");
+    const portfolioValue = document.getElementById("portfolio-value");
+    const portfolioAvailable = document.getElementById("portfolio-available");
+    const portfolioRealized = document.getElementById("portfolio-realized");
+    const portfolioUnrealized = document.getElementById("portfolio-unrealized");
+    const portfolioMessage = document.getElementById("portfolio-message");
     const paperOrderButton = document.getElementById("paper-order-button");
 
     const ADDRESS_PATTERN =
@@ -1317,6 +1354,7 @@
 
       simulationStatus.textContent =
         "Mode: PAPER_SIMULATION | Real trading: disabled | Transaction broadcast: disabled";
+      renderPortfolioSummary(data);
 
       if (data.error) {
         addText(simulationStatus, data.error);
@@ -1390,6 +1428,50 @@
       ));
     }
 
+    function money(value) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric)
+        ? new Intl.NumberFormat("en-US", {style: "currency", currency: "USD"}).format(numeric)
+        : "—";
+    }
+
+    function renderPortfolioSummary(data) {
+      if (!data || data.mode !== "PAPER_SIMULATION" || data.simulated !== true ||
+          data.real_trading !== false || data.transaction_broadcast !== false) {
+        portfolioValue.textContent = "—";
+        portfolioAvailable.textContent = "—";
+        portfolioRealized.textContent = "—";
+        portfolioUnrealized.textContent = "—";
+        portfolioMessage.textContent = "Portfolio unavailable: simulation safety metadata could not be verified.";
+        return;
+      }
+      const balances = data.balances && typeof data.balances === "object" ? data.balances : {};
+      const usdBalance = Number(balances.USD);
+      portfolioAvailable.textContent = Number.isFinite(usdBalance) ? money(usdBalance) : "—";
+      portfolioValue.textContent = "—";
+      const realizedMap = data.pnl && data.pnl.realized_by_mint && typeof data.pnl.realized_by_mint === "object"
+        ? data.pnl.realized_by_mint : {};
+      const realized = Object.values(realizedMap).map(item => item && item.pnl !== null && item.pnl !== undefined ? Number(item.pnl) : NaN);
+      portfolioRealized.textContent = realized.length && realized.every(Number.isFinite)
+        ? money(realized.reduce((sum, value) => sum + value, 0)) : "—";
+      portfolioUnrealized.textContent = "—";
+      const initial = data.initial_balance;
+      const amountInput = document.getElementById("paper-fund-amount");
+      if (initial !== null && initial !== undefined && initial !== "") {
+        amountInput.value = String(initial);
+        amountInput.disabled = true;
+        paperFundButton.disabled = true;
+        portfolioMessage.textContent = "Starting balance is set to " + money(initial) +
+          ". It is locked after setup; it cannot be changed after a paper order is filled.";
+      } else {
+        amountInput.disabled = false;
+        paperFundButton.disabled = !backendReady;
+        portfolioMessage.textContent = data.database_available
+          ? "Set your initial virtual USD balance. Portfolio value and unrealized P&L remain unavailable until a verified market valuation source is available."
+          : "No paper ledger exists yet. Set your initial virtual USD balance to initialize it.";
+      }
+    }
+
     async function loadSimulationReport() {
       try {
         renderSimulationReport(await apiRequest("/api/paper-simulation"));
@@ -1408,18 +1490,19 @@
 
     paperFundForm.addEventListener("submit", async event => {
       event.preventDefault();
+      const amount = document.getElementById("paper-fund-amount").value;
+      if (!amount || !Number.isFinite(Number(amount)) || Number(amount) < 0) {
+        portfolioMessage.textContent = "Enter a valid starting balance of zero or more USD.";
+        return;
+      }
       paperFundButton.disabled = true;
-      simulationStatus.textContent = "Adding virtual funds...";
+      portfolioMessage.textContent = "Saving starting balance...";
       try {
-        const data = await postPaperSimulation({
-          action: "add-balance",
-          mint: document.getElementById("paper-fund-mint").value.trim(),
-          amount: document.getElementById("paper-fund-amount").value
-        });
+        const data = await postPaperSimulation({action: "set-initial-balance", mint: "USD", amount});
         renderSimulationReport(data.report);
-        simulationStatus.textContent = "Virtual funds added. No real funds were moved.";
+        portfolioMessage.textContent = "Starting virtual balance saved. No real funds were moved.";
       } catch (error) {
-        simulationStatus.textContent = "Could not add virtual funds: " + error.message;
+        portfolioMessage.textContent = "Could not set starting balance: " + error.message;
       } finally {
         paperFundButton.disabled = !backendReady;
       }

@@ -455,12 +455,25 @@ def profile_copy_side(profile_id):
     return side.upper() if isinstance(side, str) and side.upper() in ("BUY", "SELL", "BOTH") else "NONE"
 
 
+def profile_paper_settings(profile_id):
+    """Return stored paper-trading settings for one profile."""
+    profile = get_profile_record(profile_id)
+    if profile is None:
+        return {}
+    settings = profile.get("settings") or {}
+    paper = settings.get("paper_trading") if isinstance(settings, dict) else {}
+    return paper if isinstance(paper, dict) else {}
+
+
 def get_profile_monitor_service(profile_id):
     """Return a dedicated monitor service for a validated profile UUID."""
     canonical = canonical_profile_id(profile_id)
     if canonical not in profile_monitor_services:
         profile_monitor_services[canonical] = MonitorService(
-            create_scan_function(side_getter=lambda: profile_copy_side(canonical)),
+            create_scan_function(
+                side_getter=lambda: profile_copy_side(canonical),
+                settings_getter=lambda: profile_paper_settings(canonical),
+            ),
             interval=30,
         )
     return profile_monitor_services[canonical]

@@ -1383,8 +1383,8 @@
           mint: document.getElementById("paper-fund-mint").value.trim(),
           amount: document.getElementById("paper-fund-amount").value
         });
-        simulationStatus.textContent = "Virtual funds added. No real funds were moved.";
         renderSimulationReport(data.report);
+        simulationStatus.textContent = "Virtual funds added. No real funds were moved.";
       } catch (error) {
         simulationStatus.textContent = "Could not add virtual funds: " + error.message;
       } finally {
@@ -1407,10 +1407,10 @@
           liquidity_usd: document.getElementById("paper-order-liquidity").value
         });
         const result = data.result || {};
+        renderSimulationReport(data.report);
         simulationStatus.textContent = result.status === "FILLED"
           ? "Paper order filled. No real transaction was sent."
           : "Paper order not filled: " + (result.reason || result.status || "unknown result");
-        renderSimulationReport(data.report);
       } catch (error) {
         simulationStatus.textContent = "Paper order failed: " + error.message;
       } finally {

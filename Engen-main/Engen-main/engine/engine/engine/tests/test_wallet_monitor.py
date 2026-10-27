@@ -262,5 +262,33 @@ class WalletMonitorTests(unittest.TestCase):
         )
 
 
+    @patch("engine.wallet_monitor.get_wallet_signatures")
+    def test_paginates_past_known_pending_signatures(
+        self,
+        mock_get_signatures,
+    ):
+        self.store.mark_baseline(self.wallet)
+        self.store.save(self.wallet, "pending_old")
+        mock_get_signatures.side_effect = [
+            [{"signature": "new_A"}, {"signature": "pending_old"}],
+            [{"signature": "processed_old"}],
+        ]
+        self.store.save(self.wallet, "processed_old")
+        self.store.mark_processed(self.wallet, "processed_old")
+
+        result = get_and_store_new_wallet_signatures(
+            wallet_address=self.wallet,
+            store=self.store,
+            limit=2,
+        )
+
+        self.assertEqual(result, [{"signature": "new_A"}, {"signature": "pending_old"}])
+        self.assertEqual(mock_get_signatures.call_count, 2)
+        self.assertEqual(
+            mock_get_signatures.call_args_list[1].kwargs["before"],
+            "pending_old",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

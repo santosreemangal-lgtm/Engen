@@ -71,18 +71,27 @@ class MarketPrice:
         current = now or datetime.now(timezone.utc)
         if isinstance(current, str):
             current = parse_timestamp(current)
-        return max(0, int((current - parse_timestamp(self.liquidity_observed_at)).total_seconds()))
+        observed = parse_timestamp(self.liquidity_observed_at)
+        # Treat future-dated observations as invalid, not as fresh data.
+        if observed > current:
+            return -1
+        return int((current - observed).total_seconds())
 
     def age_seconds(self, now=None):
         current = now or datetime.now(timezone.utc)
         if isinstance(current, str):
             current = parse_timestamp(current)
-        return max(0, int((current - parse_timestamp(self.observed_at)).total_seconds()))
+        observed = parse_timestamp(self.observed_at)
+        # Preserve an explicit invalid marker for timestamps in the future.
+        if observed > current:
+            return -1
+        return int((current - observed).total_seconds())
 
     def is_fresh(self, *, max_age_seconds=60, now=None):
         if not isinstance(max_age_seconds, int) or isinstance(max_age_seconds, bool) or max_age_seconds < 0:
             raise ValueError("max_age_seconds must be a non-negative integer.")
-        return self.age_seconds(now) <= max_age_seconds
+        age = self.age_seconds(now)
+        return 0 <= age <= max_age_seconds
 
 
 class AverageCostLedger:

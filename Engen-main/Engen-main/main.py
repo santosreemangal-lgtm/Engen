@@ -82,10 +82,12 @@ def run_mock_analysis_test():
         return 1
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--mock-analysis-test", action="store_true")
-    args = parser.parse_args()
+    # unittest discovery may pass its own flags (such as -v) in sys.argv.
+    parse_args = [] if argv is None and "unittest" in sys.modules else argv
+    args = parser.parse_args(parse_args)
 
     if args.mock_analysis_test:
         return run_mock_analysis_test()

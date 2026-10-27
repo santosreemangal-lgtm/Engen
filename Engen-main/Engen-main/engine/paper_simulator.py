@@ -128,6 +128,14 @@ class PaperSimulator:
             raise ValueError("A token mint or paper asset symbol (max 128 characters) is required.")
         mint = mint.strip()
         value = decimal_value(amount, "Initial virtual balance", allow_zero=True)
+        stored_initial_balance = self._stored_initial_balance()
+        if stored_initial_balance is not None:
+            if Decimal(stored_initial_balance) != value:
+                raise ValueError("Starting balance has already been set and cannot be changed.")
+            if self.balances.get(mint) != value:
+                raise ValueError("The stored starting balance does not match this asset balance.")
+            return {"mint": mint, "initial_balance": str(value), "balance": str(value),
+                    "simulated": True, "real_trading": False, "transaction_broadcast": False}
         if any(order.get("status") == "FILLED" for order in self.orders.values()):
             raise ValueError("Starting balance cannot be changed after a paper order has filled.")
         if self.db_path is not None:

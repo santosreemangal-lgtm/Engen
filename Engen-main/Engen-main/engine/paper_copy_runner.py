@@ -41,7 +41,7 @@ def _human_amount(change):
     decimals = change.get("decimals")
     if (
         not isinstance(raw, str)
-        or not raw.lstrip("-").isdigit()
+        or not (raw[1:].isdigit() if raw.startswith("-") else raw.isdigit())
         or not isinstance(decimals, int)
         or isinstance(decimals, bool)
         or not 0 <= decimals <= 30

@@ -22,7 +22,7 @@ PAPER_SIMULATOR_DB = Path(
     )
 )
 _SIMULATOR = None
-_SIMULATOR_LOCK = threading.RLock()
+PAPER_SIMULATOR_LOCK = threading.RLock()
 
 
 def get_paper_simulator():

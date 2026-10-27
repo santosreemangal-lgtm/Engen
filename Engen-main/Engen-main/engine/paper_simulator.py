@@ -22,9 +22,14 @@ class PaperSimulator:
         self.orders = {}
         self.fills = []
         self.processed_signals = set()
+        self._initial_balance_value = None
+        self._initial_balance_mint = None
         self._rebuild_pnl_ledger()
         if self.db_path:
             self._initialize()
+            self._initial_balance_value = self._stored_initial_balance()
+            if self._initial_balance_value is not None:
+                self._initial_balance_mint = "USD"
 
     def _connect(self):
         return sqlite3.connect(str(self.db_path))
@@ -129,8 +134,10 @@ class PaperSimulator:
         mint = mint.strip()
         value = decimal_value(amount, "Initial virtual balance", allow_zero=True)
         stored_initial_balance = self._stored_initial_balance()
+        if stored_initial_balance is None:
+            stored_initial_balance = self._initial_balance_value
         if stored_initial_balance is not None:
-            if Decimal(stored_initial_balance) != value:
+            if Decimal(stored_initial_balance) != value or self._initial_balance_mint != mint:
                 raise ValueError("Starting balance has already been set and cannot be changed.")
             if self.balances.get(mint) != value:
                 raise ValueError("The stored starting balance does not match this asset balance.")
@@ -152,6 +159,8 @@ class PaperSimulator:
                         (str(value),),
                     )
         self.balances[mint] = value
+        self._initial_balance_value = str(value)
+        self._initial_balance_mint = mint
         return {"mint": mint, "initial_balance": str(value), "balance": str(value),
                 "simulated": True, "real_trading": False, "transaction_broadcast": False}
 

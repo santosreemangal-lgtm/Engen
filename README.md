@@ -10,7 +10,8 @@ Engen is an early-stage, **read-only Solana wallet monitor** intended for offlin
 - The dashboard API has no user authentication. Run it only in a trusted development environment and do not expose it publicly.
 - Paper-trading results are simulations, not evidence of real-world profitability.
 - The paper portfolio is in-memory and resets when the dashboard process restarts. It is not connected to live prices or wallet balances.
-- The Telegram bot is not implemented in this audit branch. Do not assume Telegram commands work until a separately tested bot adapter is added.
+- Telegram commands are implemented for the virtual paper portfolio only. Configure an authorized chat ID before running the bot; it does not mirror wallet transactions into trades.
+- The demo paper ledger is currently in-memory and resets when the dashboard or bot process restarts.
 - The dashboard currently has no authentication or CSRF protection. Keep it on localhost or behind trusted access controls.
 
 ## Repository layout
@@ -55,6 +56,21 @@ The dashboard exposes virtual-only endpoints:
 - `POST /api/paper/trade` with `{"side":"buy","token":"DEMO","quantity":1,"price":10}` or the equivalent `sell` payload. These are manually priced simulations, not market orders.
 
 The default virtual starting balance is 1,000 units. Position cost is capped at 25% of the starting balance per token by default. These limits are basic demo guardrails, not a complete trading risk engine.
+
+## Telegram paper bot
+
+The bot uses the Python standard library and controls only the virtual paper portfolio. Set these environment variables in your private terminal session (do not commit them):
+
+- `TELEGRAM_BOT_TOKEN` — token from BotFather; keep it secret.
+- `TELEGRAM_ALLOWED_CHAT_IDS` — comma-separated numeric Telegram chat IDs allowed to use commands. If unset, the bot refuses to start.
+
+From `Engen-main/Engen-main/`, start it with:
+
+```bash
+python -m engine.telegram_bot
+```
+
+Supported commands: `/start`, `/help`, `/status`, `/balance`, `/settings`, `/history`, `/pause`, and `/resume`. These commands do not place trades; they only report/control the simulated ledger. The bot is a separate process from the dashboard, so its in-memory ledger is separate and resets on restart.
 
 ## Configuration
 

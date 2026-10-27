@@ -121,6 +121,26 @@ class PaperSimulator:
         self.processed_signals.add(signal_id)
         return dict(order)
 
+    def add_virtual_balance(self, mint, amount):
+        """Add explicitly virtual funds to one paper token balance; never touches a real wallet."""
+        if not isinstance(mint, str) or not mint.strip() or len(mint.strip()) > 128:
+            raise ValueError("A token mint or paper asset symbol (max 128 characters) is required.")
+        mint = mint.strip()
+        value = decimal_value(amount, "Virtual funding amount")
+        updated = self.balances.get(mint, Decimal("0")) + value
+        if self.db_path is not None:
+            with closing(self._connect()) as db:
+                with db:
+                    db.execute(
+                        """INSERT INTO simulator_balances(mint, amount) VALUES(?, ?)
+                        ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount""",
+                        (mint, str(updated)),
+                    )
+        self.balances[mint] = updated
+        return {"mint": mint, "added": str(value), "balance": str(updated),
+                "simulated": True, "real_trading": False,
+                "transaction_broadcast": False}
+
     def cancel_order(self, order_id):
         order = self.orders.get(order_id)
         if order is None:

@@ -312,6 +312,45 @@
     </section>
 
     <section class="panel">
+      <h2>Paper Portfolio</h2>
+      <p class="muted">Virtual funds only. Prices are manually supplied to the API; no real transactions are sent.</p>
+      <p id="paper-status" class="muted" aria-live="polite">Loading virtual balance...</p>
+      <form id="paper-trade-form">
+        <div class="form-row">
+          <div style="flex: 1; min-width: 0;">
+            <label for="paper-side">Action</label>
+            <select id="paper-side" name="side" style="width:100%;padding:14px;background:#101114;color:#f4f4f5;border:1px solid #30313a;border-radius:10px;">
+              <option value="buy">Simulated Buy</option>
+              <option value="sell">Simulated Sell</option>
+            </select>
+          </div>
+          <div style="flex: 2; min-width: 0;">
+            <label for="paper-token">Token symbol or identifier</label>
+            <input id="paper-token" name="token" type="text" maxlength="80" placeholder="e.g. DEMO_TOKEN" required>
+          </div>
+        </div>
+        <div class="form-row" style="margin-top:10px;">
+          <div style="flex:1;min-width:0;">
+            <label for="paper-quantity">Quantity</label>
+            <input id="paper-quantity" name="quantity" type="number" min="0.00000001" step="any" required>
+          </div>
+          <div style="flex:1;min-width:0;">
+            <label for="paper-price">Price per token (virtual units)</label>
+            <input id="paper-price" name="price" type="number" min="0.00000001" step="any" required>
+          </div>
+        </div>
+        <button id="paper-submit" type="submit" style="margin-top:12px;" disabled>Place Simulated Trade</button>
+        <p id="paper-message" class="muted" aria-live="polite">This is a manual simulation, not an automatic copy trade.</p>
+      </form>
+      <div class="form-row">
+        <button id="paper-pause" type="button" disabled>Pause Paper Trading</button>
+        <button id="paper-resume" type="button" disabled>Resume Paper Trading</button>
+        <button id="paper-refresh" type="button" disabled>Refresh Portfolio</button>
+      </div>
+      <div id="paper-history" class="muted">Paper trade history will appear here.</div>
+    </section>
+
+    <section class="panel">
       <h2>Your wallets</h2>
 
       <div id="wallet-list">
@@ -353,6 +392,14 @@
     const monitorResults = document.getElementById("monitor-results");
     const startButton = document.getElementById("start-monitoring");
     const stopButton = document.getElementById("stop-monitoring");
+    const paperStatus = document.getElementById("paper-status");
+    const paperHistory = document.getElementById("paper-history");
+    const paperPauseButton = document.getElementById("paper-pause");
+    const paperResumeButton = document.getElementById("paper-resume");
+    const paperRefreshButton = document.getElementById("paper-refresh");
+    const paperTradeForm = document.getElementById("paper-trade-form");
+    const paperTradeSubmit = document.getElementById("paper-submit");
+    const paperMessage = document.getElementById("paper-message");
 
     const ADDRESS_PATTERN =
       /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -390,6 +437,80 @@
         },
         body: JSON.stringify({ action })
       });
+    }
+
+    async function requestPaperControl(action) {
+      return apiRequest("/api/paper/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action })
+      });
+    }
+
+    async function loadPaperPortfolio() {
+      try {
+        const status = await apiRequest("/api/paper/status");
+        paperStatus.textContent =
+          "Mode: PAPER | Virtual cash: " + status.cash +
+          " | Paused: " + status.paused +
+          " | Positions: " + Object.keys(status.positions || {}).length +
+          " | Live trading: disabled";
+        paperPauseButton.disabled = !backendReady || status.paused;
+        paperResumeButton.disabled = !backendReady || !status.paused;
+        paperRefreshButton.disabled = !backendReady;
+        paperTradeSubmit.disabled = !backendReady || status.paused;
+
+        const data = await apiRequest("/api/paper/history");
+        paperHistory.replaceChildren();
+        if (!Array.isArray(data.history) || data.history.length === 0) {
+          addText(paperHistory, "No simulated trades yet.", "p", "muted");
+        } else {
+          data.history.slice().reverse().forEach(trade => {
+            addText(
+              paperHistory,
+              trade.timestamp + " | " + trade.side.toUpperCase() +
+              " | " + trade.token + " | quantity " + trade.quantity +
+              " @ " + trade.price + " | realized P/L " + trade.realized_pnl,
+              "p",
+              "result-item"
+            );
+          });
+        }
+      } catch (error) {
+        paperStatus.textContent = "Paper portfolio unavailable: " + error.message;
+        paperPauseButton.disabled = true;
+        paperResumeButton.disabled = true;
+        paperRefreshButton.disabled = true;
+        paperTradeSubmit.disabled = true;
+      }
+    }
+
+    async function submitPaperTrade(event) {
+      event.preventDefault();
+      const formData = new FormData(paperTradeForm);
+      const payload = {
+        side: String(formData.get("side") || ""),
+        token: String(formData.get("token") || "").trim(),
+        quantity: Number(formData.get("quantity")),
+        price: Number(formData.get("price"))
+      };
+      paperTradeSubmit.disabled = true;
+      paperMessage.textContent = "Submitting simulated trade...";
+      try {
+        const result = await apiRequest("/api/paper/trade", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        paperMessage.textContent =
+          "Paper " + result.trade.side + " recorded. Realized P/L: " +
+          result.trade.realized_pnl + ". No real transaction was sent.";
+        paperTradeForm.reset();
+        await loadPaperPortfolio();
+      } catch (error) {
+        paperMessage.textContent = "Trade rejected: " + error.message;
+        await loadPaperPortfolio();
+      }
     }
 
     function getMonitorWallet(address) {
@@ -837,11 +958,37 @@
       }
     });
 
+    paperPauseButton.addEventListener("click", async () => {
+      try {
+        await requestPaperControl("pause");
+        await loadPaperPortfolio();
+      } catch (error) {
+        paperStatus.textContent = error.message;
+      }
+    });
+
+    paperResumeButton.addEventListener("click", async () => {
+      try {
+        await requestPaperControl("resume");
+        await loadPaperPortfolio();
+      } catch (error) {
+        paperStatus.textContent = error.message;
+      }
+    });
+
+    paperRefreshButton.addEventListener("click", loadPaperPortfolio);
+    paperTradeForm.addEventListener("submit", submitPaperTrade);
+
     addButton.disabled = true;
     startButton.disabled = true;
     stopButton.disabled = true;
+    paperPauseButton.disabled = true;
+    paperResumeButton.disabled = true;
+    paperRefreshButton.disabled = true;
+    paperTradeSubmit.disabled = true;
 
     loadWallets();
+    loadPaperPortfolio();
 
     window.setInterval(() => {
       if (backendReady && !monitorRequestInProgress) {

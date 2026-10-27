@@ -1,0 +1,25 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Python bytecode and test/build artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+build/
+dist/
+
+# Local runtime data
+*.db
+*.sqlite
+*.sqlite3
+
+# Backup files are intentionally NOT ignored here: keep them visible for review
+# and compare them before deciding whether to archive or delete them.

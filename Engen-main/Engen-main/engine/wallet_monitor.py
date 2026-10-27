@@ -181,26 +181,67 @@ def get_and_store_new_wallet_signatures(
         store.mark_baseline(wallet_address)
         return []
 
-    # Save newly observed signatures as pending.
-    # Existing records retain their current status.
+    # Walk backward through pages until a known signature is reached.
+    # A single latest-page scan can silently miss transactions when more than
+    # the limit arrive between polls. Bound pagination to avoid runaway RPC use.
     records_by_signature = {}
+    cursor = None
+    max_pages = 10
 
-    for item in signatures:
-        if not isinstance(item, dict):
-            continue
+    for _ in range(max_pages):
+        page = signatures if cursor is None else get_wallet_signatures(
+            wallet_address=wallet_address,
+            limit=limit,
+            rpc_url=rpc_url,
+            timeout=timeout,
+            before=cursor,
+        )
 
-        signature = item.get("signature")
+        if not page:
+            break
+
+        stop_at_known_signature = False
+
+        for item in page:
+            if not isinstance(item, dict):
+                continue
+
+            signature = item.get("signature")
+
+            if not isinstance(signature, str) or not signature.strip():
+                continue
+
+            status = store.get_status(wallet_address, signature)
+            if status == "processed":
+                # Reaching a processed signature marks the end of the new
+                # history. Known-but-pending signatures must not stop paging:
+                # otherwise a large backlog can permanently hide older items.
+                stop_at_known_signature = True
+                break
+
+            records_by_signature[signature] = item
+            if status is None:
+                store.save(wallet_address, signature)
+
+        valid_page_signatures = [
+            item.get("signature")
+            for item in page
+            if isinstance(item, dict)
+            and isinstance(item.get("signature"), str)
+            and item.get("signature").strip()
+        ]
 
         if (
-            not isinstance(signature, str)
-            or not signature.strip()
+            stop_at_known_signature
+            or len(page) < limit
+            or not valid_page_signatures
         ):
-            continue
+            break
 
-        records_by_signature[signature] = item
-        store.save(wallet_address, signature)
+        cursor = valid_page_signatures[-1]
 
     # Include pending signatures from earlier scans so they can be retried.
+    # Processing remains bounded per poll; unprocessed items stay pending.
     pending_signatures = store.get_pending_signatures(
         wallet_address,
         limit=limit,

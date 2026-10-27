@@ -105,9 +105,11 @@ class MonitorBaselineTests(unittest.TestCase):
 
         self.assertTrue(reopened_store.has_baseline(self.wallet))
 
+        # RPC results are newest-first, so the unseen signature precedes
+        # the previously recorded baseline signature.
         mock_get_signatures.return_value = [
-            {"signature": "old_A"},
             {"signature": "new_B"},
+            {"signature": "old_A"},
         ]
 
         result = get_and_store_new_wallet_signatures(

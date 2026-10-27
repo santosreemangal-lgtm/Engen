@@ -60,7 +60,6 @@ def run_mock_analysis_test():
         token_changes = analyze_token_balance_changes(transaction["meta"])
         sol_changes = analyze_native_sol_balance_changes(transaction)
         classification = classify_token_balance_changes(token_changes, wallet)
-
         if classification.get("classification") == "UNKNOWN":
             classification = classify_token_balance_changes(
                 token_changes + sol_changes, wallet
@@ -89,14 +88,14 @@ def main():
     args = parser.parse_args()
 
     if args.mock_analysis_test:
-        sys.exit(run_mock_analysis_test())
+        return run_mock_analysis_test()
 
     started = time.perf_counter()
     try:
         config = load_config()
     except ConfigError as error:
-        print(f"CONFIG ERROR: {error}", file=sys.stderr)
-        sys.exit(1)
+        print(f"CONFIG ERROR: {error}")
+        return 1
 
     setup_logging(config.log_level)
     checks = run_checks(config)
@@ -105,11 +104,12 @@ def main():
         {"name": item.name, "passed": item.passed, "detail": item.detail}
         for item in checks
     ]
+    passed = all(item.passed for item in checks)
+    status["status"] = "ok" if passed else "failed"
     status["startup_ms"] = (time.perf_counter() - started) * 1000
-    status["status"] = "ok" if all(item.passed for item in checks) else "error"
     print(json.dumps(status, indent=2))
-    sys.exit(0 if all(item.passed for item in checks) else 1)
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

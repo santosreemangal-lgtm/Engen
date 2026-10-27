@@ -105,8 +105,12 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
     return outcomes
 
 
-def queue_paper_orders(wallet_address, results, simulator=None):
-    """Queue only unambiguous, confirmed swap candidates for guarded paper execution."""
+def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="BOTH"):
+    """Queue confirmed swap candidates allowed by BUY, SELL, or BOTH copy mode."""
+    if not isinstance(allowed_sides, str) or allowed_sides.upper() not in ("BUY", "SELL", "BOTH", "NONE"):
+        raise ValueError("allowed_sides must be BUY, SELL, BOTH, or NONE")
+    mode = allowed_sides.upper()
+    allowed = {"BUY", "SELL"} if mode == "BOTH" else ({mode} if mode in ("BUY", "SELL") else set())
     if not isinstance(wallet_address, str) or not wallet_address.strip():
         raise ValueError("A monitored public wallet address is required.")
     if not isinstance(results, list):
@@ -178,6 +182,9 @@ def queue_paper_orders(wallet_address, results, simulator=None):
         ) or (
             side == "SELL" and (asset_amount >= 0 or quote_amount <= 0)
         ):
+            continue
+
+        if side not in allowed:
             continue
 
         signal_id = f"wallet-copy:{wallet_address}:{signature}"

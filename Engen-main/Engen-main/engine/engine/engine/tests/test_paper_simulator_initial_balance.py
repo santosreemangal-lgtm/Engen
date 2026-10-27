@@ -23,6 +23,20 @@ class PaperSimulatorInitialBalanceTests(unittest.TestCase):
             self.assertEqual(reopened.balances["USD"], Decimal("1250.50"))
             self.assertEqual(reopened.report()["initial_balance"], "1250.50")
 
+    def test_initial_balance_cannot_be_changed_after_initial_setup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            simulator = PaperSimulator(db_path=Path(directory) / "paper.db")
+            simulator.set_initial_virtual_balance("1000")
+
+            with self.assertRaisesRegex(ValueError, "already been set"):
+                simulator.set_initial_virtual_balance("2000")
+
+            # Repeating the same value is safe and idempotent.
+            result = simulator.set_initial_virtual_balance("1000")
+            self.assertEqual(result["initial_balance"], "1000")
+            self.assertEqual(simulator.balances["USD"], Decimal("1000"))
+
+
     def test_initial_balance_cannot_change_after_a_filled_order(self):
         with tempfile.TemporaryDirectory() as directory:
             simulator = PaperSimulator(db_path=Path(directory) / "paper.db")

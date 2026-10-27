@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
 
 from engine.paper_simulator import PaperSimulator
@@ -14,7 +15,7 @@ class PaperSimulatorInitialBalanceTests(unittest.TestCase):
             result = simulator.set_initial_virtual_balance("1250.50")
 
             self.assertEqual(result["initial_balance"], "1250.50")
-            self.assertEqual(simulator.balances["USD"], __import__("decimal").Decimal("1250.50"))
+            self.assertEqual(simulator.balances["USD"], Decimal("1250.50"))
             self.assertFalse(result["real_trading"])
             self.assertFalse(result["transaction_broadcast"])
 

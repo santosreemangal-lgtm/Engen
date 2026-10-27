@@ -642,6 +642,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             raise ValueError("Enter a quote mint or paper quote symbol (max 128 characters).")
                         if asset_mint.strip() == quote_mint.strip():
                             raise ValueError("Asset and quote assets must be different.")
+                        if quote_mint.strip().upper() != "USD":
+                            raise ValueError("This paper simulator currently supports USD as the quote currency only.")
                         market_price = MarketPrice(
                             mint=asset_mint.strip(),
                             price=payload.get("price"),

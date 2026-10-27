@@ -28,7 +28,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
 from engine.logger import redact
-from engine.pnl import realized_pnl_from_fills
+from engine.pnl import MarketPrice, realized_pnl_from_fills
+from engine.paper_simulator import PaperSimulator
 from engine.solana_public import get_public_health, SolanaRPCError
 
 WALLETS_FILE = ROOT / "wallets.json"
@@ -78,8 +79,21 @@ def is_valid_solana_address(value):
     return len(decoded) == 32
 
 
-# Creating the service does not start monitoring or make RPC requests.
+# Creating services does not start monitoring or make RPC requests.
 monitor_service = MonitorService(create_scan_function(), interval=30)
+paper_simulator_instance = None
+paper_simulator_lock = threading.RLock()
+
+
+def get_paper_simulator():
+    """Lazily open the persistent paper-only simulator after an explicit user action."""
+    global paper_simulator_instance
+    with paper_simulator_lock:
+        if paper_simulator_instance is None:
+            paper_simulator_instance = PaperSimulator(db_path=PAPER_SIMULATOR_DB)
+        return paper_simulator_instance
+
+
 # Each saved profile gets its own in-memory monitor lifecycle. The saved source
 # wallet list remains profile-scoped in ProfileStore.
 profile_monitor_services = {}
@@ -604,6 +618,64 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         payload = self.read_json()
 
         if payload is None:
+            return
+
+        if path == "/api/paper-simulation":
+            action = payload.get("action")
+            try:
+                with paper_simulator_lock:
+                    simulator = get_paper_simulator()
+                    if action == "add-balance":
+                        result = simulator.add_virtual_balance(
+                            payload.get("mint"), payload.get("amount")
+                        )
+                        self.send_json(200, {"result": result, "report": simulator.report()})
+                        return
+                    if action == "create-order":
+                        side = payload.get("side")
+                        asset_mint = payload.get("asset_mint")
+                        quote_mint = payload.get("quote_mint", "USD")
+                        now = datetime.now(timezone.utc).isoformat()
+                        if not isinstance(asset_mint, str) or not asset_mint.strip() or len(asset_mint.strip()) > 128:
+                            raise ValueError("Enter an asset mint or paper asset symbol (max 128 characters).")
+                        if not isinstance(quote_mint, str) or not quote_mint.strip() or len(quote_mint.strip()) > 128:
+                            raise ValueError("Enter a quote mint or paper quote symbol (max 128 characters).")
+                        if asset_mint.strip() == quote_mint.strip():
+                            raise ValueError("Asset and quote assets must be different.")
+                        market_price = MarketPrice(
+                            mint=asset_mint.strip(),
+                            price=payload.get("price"),
+                            currency="USD",
+                            source="user-entered-unverified",
+                            observed_at=now,
+                            liquidity_usd=payload.get("liquidity_usd"),
+                            liquidity_source="user-entered-unverified",
+                            liquidity_observed_at=now,
+                        )
+                        order = simulator.create_order(
+                            payload.get("signal_id") or str(uuid.uuid4()),
+                            side,
+                            asset_mint.strip(),
+                            payload.get("quantity"),
+                            quote_mint.strip(),
+                            created_at=now,
+                        )
+                        if order.get("status") == "DUPLICATE":
+                            self.send_json(409, {"error": "This paper order signal was already processed."})
+                            return
+                        result = simulator.execute_order(
+                            order["order_id"], market_price, now=now,
+                            max_price_age_seconds=60, slippage_bps=50, fee_bps=10,
+                            min_liquidity_usd=10000, max_liquidity_age_seconds=60,
+                            require_liquidity=True,
+                        )
+                        self.send_json(200, {"result": result, "report": simulator.report()})
+                        return
+                    self.send_json(400, {"error": "Action must be add-balance or create-order."})
+            except ValueError as exc:
+                self.send_json(400, {"error": str(exc)})
+            except (OSError, sqlite3.Error) as exc:
+                self.send_json(503, {"error": "Paper simulation storage unavailable (" + type(exc).__name__ + ")."})
             return
 
         if path == "/api/profile-monitor":

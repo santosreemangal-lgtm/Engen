@@ -84,6 +84,40 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertFalse(order["details"]["real_trading"])
         self.assertFalse(order["details"]["transaction_broadcast"])
 
+    def test_source_percentage_scales_source_token_quantity(self):
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(
+            WALLET, [candidate_result()], simulator,
+            copy_settings={"sizing_mode": "SOURCE_PERCENT", "sizing_value": 20},
+        )
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["quantity"], "0.5")
+        self.assertEqual(queued[0]["sizing_mode"], "SOURCE_PERCENT")
+
+    def test_fixed_usd_size_is_recorded_for_verified_price_conversion(self):
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(
+            WALLET, [candidate_result()], simulator,
+            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "25"},
+        )
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["sizing_mode"], "FIXED_USD")
+        self.assertEqual(queued[0]["target_notional_usd"], "25")
+        order = next(iter(simulator.orders.values()))
+        self.assertEqual(order["details"]["target_notional_usd"], "25")
+
+    def test_invalid_sizing_settings_are_rejected(self):
+        with self.assertRaises(ValueError):
+            queue_paper_orders(
+                WALLET, [candidate_result()], FakeSimulator(),
+                copy_settings={"sizing_mode": "SOURCE_PERCENT", "sizing_value": 101},
+            )
+        with self.assertRaises(ValueError):
+            queue_paper_orders(
+                WALLET, [candidate_result()], FakeSimulator(),
+                copy_settings={"sizing_mode": "UNSUPPORTED", "sizing_value": 10},
+            )
+
     def test_unconfirmed_or_unknown_transaction_is_not_copied(self):
         simulator = FakeSimulator()
         unconfirmed = candidate_result(confirmation="processed")

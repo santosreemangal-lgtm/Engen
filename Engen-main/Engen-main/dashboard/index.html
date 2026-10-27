@@ -4,21 +4,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#101114">
+  <meta name="theme-color" content="#0B1120">
   <title>Solana Monitor</title>
 
   <style>
     :root {
       color-scheme: dark;
-      --bg: #0b1020;
-      --panel: #121a2b;
-      --border: #26334a;
-      --text: #f4f7fb;
-      --muted: #9ba9bd;
-      --accent: #7cafff;
-      --danger: #ff8c9b;
-      --positive: #72e0b1;
-      --negative: #ff9ba7;
+      --bg: #0B1120;
+      --panel: rgba(24, 36, 56, 0.78);
+      --panel-solid: #182438;
+      --border: rgba(215, 224, 239, 0.12);
+      --text: #D7E0EF;
+      --muted: #94A3B8;
+      --accent: #7C9DFF;
+      --danger: #F17C8B;
+      --positive: #48D6A0;
+      --negative: #F17C8B;
     }
 
     * {
@@ -70,7 +71,7 @@
 
     main {
       width: 100%;
-      max-width: 880px;
+      max-width: 1180px;
       margin: 0 auto;
     }
 
@@ -148,7 +149,7 @@
     label {
       display: block;
       margin-bottom: 9px;
-      color: #d4d4d8;
+      color: var(--text);
       font-size: 13px;
     }
 

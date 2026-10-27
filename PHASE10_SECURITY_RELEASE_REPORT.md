@@ -7,6 +7,12 @@
 
 ## Verified CI evidence
 
+Latest fully successful runs before the additional paper-ledger subprocess test:
+- PR run on commit `c1f3be9ee6d34a5c76c277d46fab066a561e51cb`: https://github.com/santosreemangal-lgtm/Engen/actions/runs/40444046927 — success.
+- Push run on the same commit: https://github.com/santosreemangal-lgtm/Engen/actions/runs/40444042732 — success.
+- Both runs passed repository-history secret scanning, `pip-audit`, Python compilation, offline unit tests, and mock-analysis check.
+- Commit `37911d587f757dc1f670525a67506e61b45379d3` adds a paper-ledger process-restart test that verifies balances, trade history, and duplicate-signal suppression from a separate Python interpreter. Its CI result is pending at the time of this report update.
+
 Baseline code run: https://github.com/santosreemangal-lgtm/Engen/actions/runs/40382166246
 
 On commit `98df43f6f9b21d65c1d040c7c65f9b988d77a084`:
@@ -41,7 +47,7 @@ On commit `6dd9a12c7289b848ae44e436eb6213c6deb3903a`:
 - 060 — plan approval: pending explicit owner approval. A written baseline and passing CI do not count as owner approval.
 - 069 — environment example: .env.example has placeholders and the root .gitignore excludes .env/.env.* except .env.example, key/seed/secret files, databases and logs. Repository-history secret scanning has not been evidenced, so this task is not fully certified.
 - 273 — profile authorization: partially implemented for single-user profile isolation. Profile monitor status, paper ledgers, and transaction/balance history are scoped by profile UUID; the paper runner requires an active profile and associated public source wallet. A shared bearer token still does not provide separate human-user identity or ownership checks, so multi-user authorization remains incomplete.
-- 294 — restart recovery: partial. Unit tests exercise store persistence and monitor recovery/lifecycle, but a full process-level crash/restart rehearsal with active monitoring and paper-simulation state remains outstanding.
+- 294 — restart recovery: improved but still partial. Subprocess-level tests cover signature status/deduplication and paper-ledger balance/history/deduplication across separate Python interpreters. A full application crash/restart rehearsal with active monitoring, real RPC recovery, and documented operational observations remains outstanding.
 - 296 — dependency/deployment review: not verified. A current independent dependency vulnerability scan and deployment security review must be recorded before closing.
 - 298 — readiness: not complete. This release is not production-ready while access-control, deployment, process-recovery and security-review gates remain open.
 - 299 — live mode: deferred and not authorized. No signing/broadcast path is implemented. Any future proposal requires separate review and explicit approval for the exact commit and environment.

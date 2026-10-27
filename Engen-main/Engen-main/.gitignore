@@ -1,0 +1,24 @@
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.seed
+*.sqlite
+*.sqlite3
+*.db
+
+# Local logs and editor/backup files
+*.log
+*.bak
+*.pre_classification.bak
+*.tmp
+.DS_Store

@@ -567,7 +567,7 @@
             <input id="paper-fund-amount" name="amount" type="number" min="0" step="any" placeholder="Enter starting balance" required>
             <button id="paper-fund-button" type="submit" disabled>Set</button>
           </form>
-          <p class="muted">Can be changed only before the first simulated order is filled.</p>
+          <p class="muted">Set once before paper trading begins. The starting balance cannot be changed afterward.</p>
         </div>
         <div class="overview-item portfolio-item">
           <p class="overview-label">Available Balance</p>
@@ -1463,7 +1463,7 @@
         amountInput.disabled = true;
         paperFundButton.disabled = true;
         portfolioMessage.textContent = "Starting balance is set to " + money(initial) +
-          ". It is locked after setup; it cannot be changed after a paper order is filled.";
+          ". It is locked after setup and cannot be changed.";
       } else {
         amountInput.disabled = false;
         paperFundButton.disabled = !backendReady;

@@ -703,7 +703,7 @@
     <section class="panel" aria-labelledby="simulation-heading">
       <h2 id="simulation-heading">Paper Trading</h2>
       <p class="muted">One persistent virtual portfolio. When monitoring is running, newly observed confirmed swaps from watched wallets are automatically converted into deduplicated paper orders when the transaction evidence is unambiguous.</p>
-      <p class="paper-warning">Automatic copy orders are queued, not auto-filled: the repository has no connected trusted live market-price/liquidity provider yet. Orders remain CREATED / awaiting verified market data until safe execution pricing is available. Unsupported, ambiguous, failed, unconfirmed, or duplicate transactions are not copied. Paper mode only; no real wallet, signing, or transaction broadcast.</p>
+      <p class="paper-warning">Automatic copy orders use read-only DEX Screener public price/liquidity snapshots for paper execution. A fill is attempted only when a usable USD price, at least $10,000 reported pool liquidity, and sufficient virtual balances are available. If market data is unavailable, the order remains queued; third-party snapshots are estimates, not guaranteed executable quotes. Unsupported, ambiguous, failed, unconfirmed, or duplicate transactions are not copied. Paper mode only; no real wallet, signing, or transaction broadcast.</p>
       <p class="paper-warning">Paper mode only. The reference price and liquidity are entered by you and are not verified or live market data. Orders use a simulated 0.50% slippage and 0.10% fee, and require at least $10,000 entered liquidity. No real wallet, signing, or transaction broadcast is used.</p>
 
       <div class="paper-grid">

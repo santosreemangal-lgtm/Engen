@@ -686,6 +686,14 @@
             <option value="SELL">Sell only</option>
             <option value="BOTH" selected>Buy and sell</option>
           </select>
+          <label for="profile-sizing-mode">Automatic paper order size</label>
+          <select id="profile-sizing-mode">
+            <option value="SOURCE_PERCENT" selected>Percentage of source trader's token quantity</option>
+            <option value="FIXED_USD">Fixed USD amount</option>
+          </select>
+          <label for="profile-sizing-value">Sizing value (percentage 1–100, or USD)</label>
+          <input id="profile-sizing-value" type="number" min="0.000001" max="1000000" step="any" value="100" required>
+          <p class="muted">Paper only. Percentage scales the source trade's token quantity; fixed USD is converted to token quantity only after a fresh verified USD price is available.</p>
           <p class="muted">This setting controls automatic paper-copy orders for this profile. Manual paper orders are unaffected. Paper trading only.</p>
           <p class="muted">Optional paper_trading settings example: {"paper_trading":{"initial_quote_balance":"100","max_position_pct":25,"max_open_positions":5}}. These limits apply to the paper-only runner when started with this profile.</p>
         </div>
@@ -870,6 +878,8 @@
     const profileDestinationInput = document.getElementById("profile-destination");
     const profileSettingsInput = document.getElementById("profile-settings-json");
     const profileCopySideInput = document.getElementById("profile-copy-side");
+    const profileSizingModeInput = document.getElementById("profile-sizing-mode");
+    const profileSizingValueInput = document.getElementById("profile-sizing-value");
     const profileCreateButton = document.getElementById("profile-create-button");
     const profileRefreshButton = document.getElementById("profile-refresh-button");
     const profileMessage = document.getElementById("profile-message");
@@ -2101,6 +2111,16 @@
         settings.paper_trading = {};
       }
       settings.paper_trading.copy_side = profileCopySideInput.value;
+      const sizingValue = Number(profileSizingValueInput.value);
+      if (!Number.isFinite(sizingValue) || sizingValue <= 0 ||
+          (profileSizingModeInput.value === "SOURCE_PERCENT" && sizingValue > 100) ||
+          (profileSizingModeInput.value === "FIXED_USD" && sizingValue > 1000000)) {
+        profileMessage.textContent = "Sizing value must be positive; percentage cannot exceed 100 and USD cannot exceed 1,000,000.";
+        profileSizingValueInput.focus();
+        return;
+      }
+      settings.paper_trading.sizing_mode = profileSizingModeInput.value;
+      settings.paper_trading.sizing_value = String(sizingValue);
       profileCreateButton.disabled = true;
       try {
         await postProfile({action: "create", name,
@@ -2108,6 +2128,8 @@
         profileForm.reset();
         profileSettingsInput.value = "{}";
         profileCopySideInput.value = "BOTH";
+        profileSizingModeInput.value = "SOURCE_PERCENT";
+        profileSizingValueInput.value = "100";
         profileMessage.textContent = "Profile created disabled by default. No monitoring or trading was started.";
         await loadProfiles();
       } catch (error) {

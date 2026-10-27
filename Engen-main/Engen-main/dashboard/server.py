@@ -32,7 +32,7 @@ from engine.pnl import MarketPrice, realized_pnl_from_fills
 from engine.paper_copy_runner import get_paper_simulator, PAPER_SIMULATOR_LOCK as paper_simulator_lock
 from engine.solana_public import get_public_health, SolanaRPCError
 
-WALLETS_FILE = ROOT / "wallets.json"
+WALLETS_FILE = Path(os.environ.get("WALLETS_FILE", str(ROOT / "wallets.json")))
 PAPER_SIMULATOR_DB = Path(os.environ.get("PAPER_SIMULATOR_DB", str(PROJECT_ROOT / "data" / "paper_simulator.db")))
 PROFILE_STORE_DB = Path(os.environ.get("PROFILE_STORE_DB", str(PROJECT_ROOT / "data" / "profiles.db")))
 PROFILE_DATA_DIR = Path(os.environ.get("PROFILE_DATA_DIR", str(PROFILE_STORE_DB.parent / "profiles")))

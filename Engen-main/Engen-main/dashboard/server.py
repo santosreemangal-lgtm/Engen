@@ -629,7 +629,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         result = simulator.add_virtual_balance(
                             payload.get("mint"), payload.get("amount")
                         )
-                        self.send_json(200, {"result": result, "report": simulator.report()})
+                        self.send_json(200, {"result": result, "report": dict(simulator.report(), database_available=True)})
                         return
                     if action == "create-order":
                         side = payload.get("side")
@@ -669,7 +669,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             min_liquidity_usd=10000, max_liquidity_age_seconds=60,
                             require_liquidity=True,
                         )
-                        self.send_json(200, {"result": result, "report": simulator.report()})
+                        self.send_json(200, {"result": result, "report": dict(simulator.report(), database_available=True)})
                         return
                     self.send_json(400, {"error": "Action must be add-balance or create-order."})
             except ValueError as exc:

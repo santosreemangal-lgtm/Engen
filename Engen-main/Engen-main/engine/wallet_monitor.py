@@ -211,12 +211,17 @@ def get_and_store_new_wallet_signatures(
             if not isinstance(signature, str) or not signature.strip():
                 continue
 
-            if store.has_seen(wallet_address, signature):
+            status = store.get_status(wallet_address, signature)
+            if status == "processed":
+                # Reaching a processed signature marks the end of the new
+                # history. Known-but-pending signatures must not stop paging:
+                # otherwise a large backlog can permanently hide older items.
                 stop_at_known_signature = True
                 break
 
             records_by_signature[signature] = item
-            store.save(wallet_address, signature)
+            if status is None:
+                store.save(wallet_address, signature)
 
         valid_page_signatures = [
             item.get("signature")

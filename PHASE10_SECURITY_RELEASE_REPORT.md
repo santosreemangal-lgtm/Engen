@@ -11,7 +11,7 @@ Latest fully successful runs before the additional paper-ledger subprocess test:
 - PR run on commit `c1f3be9ee6d34a5c76c277d46fab066a561e51cb`: https://github.com/santosreemangal-lgtm/Engen/actions/runs/40444046927 — success.
 - Push run on the same commit: https://github.com/santosreemangal-lgtm/Engen/actions/runs/40444042732 — success.
 - Both runs passed repository-history secret scanning, `pip-audit`, Python compilation, offline unit tests, and mock-analysis check.
-- Commit `37911d587f757dc1f670525a67506e61b45379d3` adds a paper-ledger process-restart test that verifies balances, trade history, and duplicate-signal suppression from a separate Python interpreter. Its CI result is pending at the time of this report update.
+- Commit `9dc6c5190659928a74fa841d60ae6b9447eddb4a` adds the subprocess imports required by the paper-ledger process-restart test; the push workflow passed, including compilation, offline unit tests, mock analysis, Gitleaks, and pip-audit: https://github.com/santosreemangal-lgtm/Engen/actions/runs/40444796879. The corresponding PR workflow was still running when this report text was prepared: https://github.com/santosreemangal-lgtm/Engen/actions/runs/40444803663.
 
 Baseline code run: https://github.com/santosreemangal-lgtm/Engen/actions/runs/40382166246
 
@@ -45,7 +45,7 @@ On commit `6dd9a12c7289b848ae44e436eb6213c6deb3903a`:
 - 055 — 1–5 users: target requirement only. The currently supported design remains one trusted localhost user; no multi-user capacity claim is made.
 - 059 — architecture decisions: architecture document exists; the checklist wording is corrected to “Document architecture decisions that materially affect future work.” Open decisions must be resolved or explicitly deferred.
 - 060 — plan approval: pending explicit owner approval. A written baseline and passing CI do not count as owner approval.
-- 069 — environment example: .env.example has placeholders and the root .gitignore excludes .env/.env.* except .env.example, key/seed/secret files, databases and logs. Repository-history secret scanning has not been evidenced, so this task is not fully certified.
+- 069 — environment example: .env.example has placeholders and the root .gitignore excludes .env/.env.* except .env.example, key/seed/secret files, databases and logs. The configured Gitleaks full-history scan passed in CI; this is useful automated evidence but not an absolute guarantee that no secret was ever exposed.
 - 273 — profile authorization: partially implemented for single-user profile isolation. Profile monitor status, paper ledgers, and transaction/balance history are scoped by profile UUID; the paper runner requires an active profile and associated public source wallet. A shared bearer token still does not provide separate human-user identity or ownership checks, so multi-user authorization remains incomplete.
 - 294 — restart recovery: improved but still partial. Subprocess-level tests cover signature status/deduplication and paper-ledger balance/history/deduplication across separate Python interpreters. A full application crash/restart rehearsal with active monitoring, real RPC recovery, and documented operational observations remains outstanding.
 - 296 — dependency/deployment review: not verified. A current independent dependency vulnerability scan and deployment security review must be recorded before closing.

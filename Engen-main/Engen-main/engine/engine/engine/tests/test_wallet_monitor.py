@@ -225,5 +225,42 @@ class WalletMonitorTests(unittest.TestCase):
         )
 
 
+    @patch("engine.wallet_monitor.get_wallet_signatures")
+    def test_paginates_until_it_reaches_a_known_signature(
+        self,
+        mock_get_signatures,
+    ):
+        self.store.mark_baseline(self.wallet)
+        self.store.save(self.wallet, "known_signature")
+        self.store.mark_processed(self.wallet, "known_signature")
+
+        mock_get_signatures.side_effect = [
+            [
+                {"signature": "new_A"},
+                {"signature": "new_B"},
+            ],
+            [{"signature": "known_signature"}],
+        ]
+
+        result = get_and_store_new_wallet_signatures(
+            wallet_address=self.wallet,
+            store=self.store,
+            limit=2,
+        )
+
+        self.assertEqual(
+            result,
+            [
+                {"signature": "new_A"},
+                {"signature": "new_B"},
+            ],
+        )
+        self.assertEqual(mock_get_signatures.call_count, 2)
+        self.assertEqual(
+            mock_get_signatures.call_args_list[1].kwargs["before"],
+            "new_B",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

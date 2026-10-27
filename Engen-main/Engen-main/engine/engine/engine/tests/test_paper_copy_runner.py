@@ -101,6 +101,46 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertEqual(len(queued), 1)
         self.assertEqual(queued[0]["side"], "SELL")
 
+    def test_buy_only_mode_does_not_queue_sell_orders(self):
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(
+            WALLET,
+            [candidate_result(classification="SELL_CANDIDATE")],
+            simulator,
+            allowed_sides="BUY",
+        )
+        self.assertEqual(queued, [])
+        self.assertEqual(simulator.orders, {})
+
+    def test_sell_only_mode_does_not_queue_buy_orders(self):
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(
+            WALLET,
+            [candidate_result(classification="BUY_CANDIDATE")],
+            simulator,
+            allowed_sides="SELL",
+        )
+        self.assertEqual(queued, [])
+        self.assertEqual(simulator.orders, {})
+
+    def test_both_mode_allows_buy_and_sell_orders(self):
+        buy_simulator = FakeSimulator()
+        sell_simulator = FakeSimulator()
+        buy = queue_paper_orders(
+            WALLET, [candidate_result(classification="BUY_CANDIDATE")],
+            buy_simulator, allowed_sides="BOTH",
+        )
+        sell = queue_paper_orders(
+            WALLET, [candidate_result(classification="SELL_CANDIDATE")],
+            sell_simulator, allowed_sides="BOTH",
+        )
+        self.assertEqual([item["side"] for item in buy], ["BUY"])
+        self.assertEqual([item["side"] for item in sell], ["SELL"])
+
+    def test_invalid_copy_direction_is_rejected(self):
+        with self.assertRaises(ValueError):
+            queue_paper_orders(WALLET, [], FakeSimulator(), allowed_sides="SOMETHING")
+
     def test_pending_copy_order_fills_only_with_fresh_liquid_market_data(self):
         simulator = PaperSimulator()
         simulator.add_virtual_balance("USD", "1000")

@@ -106,7 +106,7 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
 
 
 def queue_paper_orders(wallet_address, results, simulator=None):
-    """Queue only unambiguous, confirmed swap candidates; never auto-fill."""
+    """Queue only unambiguous, confirmed swap candidates for guarded paper execution."""
     if not isinstance(wallet_address, str) or not wallet_address.strip():
         raise ValueError("A monitored public wallet address is required.")
     if not isinstance(results, list):
@@ -211,7 +211,7 @@ def queue_paper_orders(wallet_address, results, simulator=None):
             "side": side,
             "asset_mint": asset_mint,
             "quantity": str(abs(asset_amount)),
-            "quote_mint": quote_mint,
+            "source_quote_mint": quote_mint,
             "status": order.get("status"),
             "execution_state": "AWAITING_VERIFIED_MARKET_DATA",
         })

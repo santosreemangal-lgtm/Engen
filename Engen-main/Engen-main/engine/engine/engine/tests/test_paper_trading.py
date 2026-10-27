@@ -13,7 +13,7 @@ class PaperTraderTests(unittest.TestCase):
         status = self.trader.status()
         self.assertEqual(buy["side"], "buy")
         self.assertEqual(sell["realized_pnl"], 25)
-        self.assertEqual(status["cash"], 825)
+        self.assertEqual(status["cash"], 925)
         self.assertEqual(status["positions"]["TOKEN"]["quantity"], 1)
         self.assertFalse(status["live_trading_enabled"])
 

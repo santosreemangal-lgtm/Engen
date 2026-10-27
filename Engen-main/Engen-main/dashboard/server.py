@@ -38,7 +38,12 @@ PROFILE_STORE_DB = Path(os.environ.get("PROFILE_STORE_DB", str(PROJECT_ROOT / "d
 PROFILE_DATA_DIR = Path(os.environ.get("PROFILE_DATA_DIR", str(PROFILE_STORE_DB.parent / "profiles")))
 MAX_HISTORY_PAGE_SIZE = 100
 HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1").strip() or "127.0.0.1"
-PORT = 8000
+PORT = int(os.environ.get("PORT", "8000"))
+TRUST_PROXY = os.environ.get("DASHBOARD_TRUST_PROXY", "").strip().lower() == "true"
+MONITOR_STATE_FILE = Path(os.environ.get(
+    "MONITOR_STATE_FILE", str(PROFILE_STORE_DB.parent / "monitoring_state.json")
+))
+_MONITOR_STATE_LOCK = threading.RLock()
 
 ADDRESS_PATTERN = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 MAX_SAVED_WALLETS = 100
@@ -50,12 +55,16 @@ _API_REQUEST_TIMES = {}
 DASHBOARD_AUTH_TOKEN = os.environ.get("DASHBOARD_AUTH_TOKEN", "")
 
 
-def validate_server_config(host, auth_token):
-    """Reject unsafe bind addresses and weak configured API tokens."""
-    if host not in ("127.0.0.1", "localhost", "::1"):
-        raise ValueError("Dashboard backend must bind to localhost.")
+def validate_server_config(host, auth_token, trust_proxy=False):
+    """Allow remote binding only behind a trusted HTTPS proxy with strong API auth."""
     if auth_token and len(auth_token) < 32:
         raise ValueError("DASHBOARD_AUTH_TOKEN must contain at least 32 characters.")
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        if not trust_proxy or not auth_token or len(auth_token) < 32:
+            raise ValueError(
+                "Non-localhost binding requires DASHBOARD_TRUST_PROXY=true and "
+                "a DASHBOARD_AUTH_TOKEN of at least 32 characters."
+            )
 
 
 def is_valid_solana_address(value):
@@ -84,6 +93,91 @@ monitor_service = MonitorService(create_scan_function(), interval=30)
 # Each saved profile gets its own in-memory monitor lifecycle. The saved source
 # wallet list remains profile-scoped in ProfileStore.
 profile_monitor_services = {}
+
+
+def load_monitor_state():
+    """Load only explicit monitor opt-ins saved before a process restart."""
+    with _MONITOR_STATE_LOCK:
+        try:
+            value = json.loads(MONITOR_STATE_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"global_enabled": False, "profile_ids": []}
+        if not isinstance(value, dict):
+            return {"global_enabled": False, "profile_ids": []}
+        ids = value.get("profile_ids", [])
+        valid_ids = []
+        if isinstance(ids, list):
+            for item in ids:
+                try:
+                    canonical = canonical_profile_id(item)
+                except ValueError:
+                    continue
+                if canonical not in valid_ids:
+                    valid_ids.append(canonical)
+        return {"global_enabled": value.get("global_enabled") is True, "profile_ids": valid_ids}
+
+
+def save_monitor_state(state):
+    """Atomically persist explicit monitoring opt-ins on durable storage."""
+    if not isinstance(state, dict):
+        raise ValueError("Monitor state must be an object.")
+    profile_ids = state.get("profile_ids", [])
+    if not isinstance(profile_ids, list):
+        raise ValueError("Monitor profile_ids must be a list.")
+    normalized = []
+    for item in profile_ids:
+        canonical = canonical_profile_id(item)
+        if canonical not in normalized:
+            normalized.append(canonical)
+    clean = {"global_enabled": state.get("global_enabled") is True, "profile_ids": normalized}
+    with _MONITOR_STATE_LOCK:
+        MONITOR_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temporary = MONITOR_STATE_FILE.with_suffix(MONITOR_STATE_FILE.suffix + ".tmp")
+        temporary.write_text(json.dumps(clean, indent=2), encoding="utf-8")
+        temporary.replace(MONITOR_STATE_FILE)
+    return clean
+
+
+def set_global_monitor_persistence(enabled):
+    state = load_monitor_state()
+    state["global_enabled"] = enabled is True
+    return save_monitor_state(state)
+
+
+def set_profile_monitor_persistence(profile_id, enabled):
+    canonical = canonical_profile_id(profile_id)
+    state = load_monitor_state()
+    ids = [item for item in state["profile_ids"] if item != canonical]
+    if enabled:
+        ids.append(canonical)
+    state["profile_ids"] = ids
+    return save_monitor_state(state)
+
+
+def restore_persisted_monitors():
+    """Resume only monitors that the user explicitly started before a restart."""
+    state = load_monitor_state()
+    cleaned = {"global_enabled": False, "profile_ids": []}
+    if state["global_enabled"]:
+        wallets = load_wallets()
+        if wallets:
+            monitor_service.start(wallets)
+            cleaned["global_enabled"] = True
+    for profile_id in state["profile_ids"]:
+        try:
+            profile = get_profile_record(profile_id)
+            if profile is None or profile.get("status") != "active":
+                continue
+            addresses = profile.get("source_wallets", [])
+            if not addresses:
+                continue
+            get_profile_monitor_service(profile_id).start(addresses)
+            cleaned["profile_ids"].append(profile_id)
+        except (OSError, RuntimeError, ValueError):
+            # Keep the server available; a bad/deleted profile must not block boot.
+            continue
+    save_monitor_state(cleaned)
+    return cleaned
 
 
 def load_wallets():
@@ -698,16 +792,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         self.send_json(400, {"error": "Associate at least one source public wallet with this profile first."})
                         return
                     service = get_profile_monitor_service(profile_id)
-                    self.send_json(200, {
-                        "profile_id": profile_id,
-                        "monitor": service.start(addresses),
-                    })
+                    status = service.start(addresses)
+                    try:
+                        set_profile_monitor_persistence(profile_id, True)
+                    except OSError:
+                        service.stop()
+                        raise
+                    self.send_json(200, {"profile_id": profile_id, "monitor": status})
                     return
                 if action == "stop":
                     service = profile_monitor_services.get(profile_id)
                     status = service.stop() if service is not None else {
                         "enabled": False, "interval_seconds": 30, "wallets": [],
                     }
+                    set_profile_monitor_persistence(profile_id, False)
                     self.send_json(200, {"profile_id": profile_id, "monitor": status})
                     return
                 self.send_json(400, {"error": "Action must be start or stop."})
@@ -760,6 +858,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     if service is not None:
                         service.stop_and_wait(timeout=15)
                         profile_monitor_services.pop(profile_id, None)
+                    set_profile_monitor_persistence(profile_id, False)
                     store.delete_profile(profile_id)
                     self.send_json(200, {"deleted": True, "profile_id": profile_id, "history_preserved": True})
                     return
@@ -782,14 +881,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     )
                     return
 
-                self.send_json(
-                    200,
-                    monitor_service.start(wallets),
-                )
+                status = monitor_service.start(wallets)
+                try:
+                    set_global_monitor_persistence(True)
+                except OSError:
+                    monitor_service.stop()
+                    raise
+                self.send_json(200, status)
                 return
 
             if action == "stop":
-                self.send_json(200, monitor_service.stop())
+                status = monitor_service.stop()
+                set_global_monitor_persistence(False)
+                self.send_json(200, status)
                 return
 
             self.send_json(
@@ -850,7 +954,7 @@ if __name__ == "__main__":
     print("Monitoring is opt-in; no scan starts automatically.")
     print("Read-only mode: no trades, signing, or private keys.")
     try:
-        validate_server_config(HOST, DASHBOARD_AUTH_TOKEN)
+        validate_server_config(HOST, DASHBOARD_AUTH_TOKEN, TRUST_PROXY)
     except ValueError as exc:
         raise SystemExit(
             "%s For remote access, use a trusted HTTPS reverse proxy with "
@@ -858,6 +962,11 @@ if __name__ == "__main__":
         ) from exc
 
     server = ThreadingHTTPServer((HOST, PORT), DashboardHandler)
+    try:
+        resumed = restore_persisted_monitors()
+        print("Restored explicit monitoring opt-ins: %s" % resumed)
+    except (OSError, RuntimeError, ValueError) as exc:
+        print("WARNING: persisted monitoring could not be restored (%s)." % type(exc).__name__)
 
     try:
         server.serve_forever()

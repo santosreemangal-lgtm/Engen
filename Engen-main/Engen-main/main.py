@@ -92,7 +92,7 @@ def run_mock_analysis_test():
         return 1
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Run the read-only Solana engine health checks."
     )
@@ -101,17 +101,20 @@ def main():
         action="store_true",
         help="Run an offline mock transaction-analysis check.",
     )
-    args = parser.parse_args()
+    # Unit tests call main() from inside unittest; don't parse unittest's own CLI flags.
+    if argv is None and "unittest" in sys.modules:
+        argv = []
+    args = parser.parse_args(argv)
 
     if args.mock_analysis_test:
-        sys.exit(run_mock_analysis_test())
+        return run_mock_analysis_test()
 
     start_time = time.perf_counter()
     try:
         config = load_config()
     except ConfigError as exc:
         print(f"CONFIG ERROR: {exc}", file=sys.stderr)
-        sys.exit(1)
+        return 1
 
     setup_logging(config.log_level)
     checks = run_checks(config)
@@ -121,10 +124,11 @@ def main():
         for check in checks
     ]
     status["startup_ms"] = round((time.perf_counter() - start_time) * 1000, 3)
-    status["status"] = "ok" if all(check.passed for check in checks) else "error"
+    all_passed = all(check.passed for check in checks)
+    status["status"] = "ok" if all_passed else "failed"
     print(json.dumps(status, indent=2))
-    sys.exit(0 if all(check.passed for check in checks) else 1)
+    return 0 if all_passed else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

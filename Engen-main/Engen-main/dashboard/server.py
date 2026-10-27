@@ -312,6 +312,14 @@ def load_paper_simulation_report(profile_id=None):
                 return base
             base["balances"] = {mint: amount for mint, amount in db.execute(
                 "SELECT mint, amount FROM simulator_balances ORDER BY mint")}
+            meta_table = db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='simulator_meta'"
+            ).fetchone()
+            if meta_table:
+                initial = db.execute(
+                    "SELECT value FROM simulator_meta WHERE key='initial_balance'"
+                ).fetchone()
+                base["initial_balance"] = initial[0] if initial else None
             base["orders"] = [
                 {"order_id": row[0], "signal_id": row[1], "side": row[2],
                  "asset_mint": row[3], "quantity": row[4], "quote_mint": row[5],

@@ -205,6 +205,32 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertFalse(report["real_trading"])
         self.assertFalse(report["transaction_broadcast"])
 
+    def test_fixed_usd_paper_order_uses_fresh_price_to_calculate_quantity(self):
+        simulator = PaperSimulator()
+        simulator.add_virtual_balance("USD", "1000")
+        queued = queue_paper_orders(
+            WALLET, [candidate_result()], simulator,
+            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "25"},
+        )
+        self.assertEqual(len(queued), 1)
+        observed_at = datetime.now(timezone.utc).isoformat()
+
+        def provider(mint):
+            return MarketPrice(
+                mint=mint, price=Decimal("4"), currency="USD",
+                source="test-provider", observed_at=observed_at,
+                liquidity_usd=Decimal("20000"), liquidity_source="test-provider",
+                liquidity_observed_at=observed_at,
+            )
+
+        outcomes = execute_pending_paper_orders(WALLET, simulator, provider)
+        self.assertEqual(outcomes[0]["status"], "FILLED")
+        report = simulator.report()
+        self.assertEqual(report["orders"][0]["quantity"], "6.25")
+        self.assertEqual(report["balances"][ASSET], "6.25")
+        self.assertFalse(report["real_trading"])
+        self.assertFalse(report["transaction_broadcast"])
+
     def test_missing_market_data_leaves_copy_order_queued(self):
         simulator = PaperSimulator()
         simulator.add_virtual_balance("USD", "1000")

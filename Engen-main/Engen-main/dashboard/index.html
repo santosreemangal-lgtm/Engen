@@ -724,8 +724,8 @@
           <input id="paper-order-asset" name="asset_mint" maxlength="128" placeholder="Token mint or symbol" required>
           <label for="paper-order-quantity">Token quantity</label>
           <input id="paper-order-quantity" name="quantity" type="number" min="0.00000001" step="any" required>
-          <label for="paper-order-quote">Quote asset / symbol</label>
-          <input id="paper-order-quote" name="quote_mint" maxlength="128" value="USD" required>
+          <label for="paper-order-quote">Quote currency</label>
+          <input id="paper-order-quote" name="quote_mint" value="USD" readonly aria-readonly="true">
           <label for="paper-order-price">Reference price (USD per token)</label>
           <input id="paper-order-price" name="price" type="number" min="0.0000000001" step="any" required>
           <label for="paper-order-liquidity">Entered liquidity (USD, minimum 10,000)</label>

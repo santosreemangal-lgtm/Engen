@@ -702,7 +702,8 @@
 
     <section class="panel" aria-labelledby="simulation-heading">
       <h2 id="simulation-heading">Paper Trading</h2>
-      <p class="muted">One persistent virtual portfolio. Choose the paper balance and simulated order yourself.</p>
+      <p class="muted">One persistent virtual portfolio. When monitoring is running, newly observed confirmed swaps from watched wallets are automatically converted into deduplicated paper orders when the transaction evidence is unambiguous.</p>
+      <p class="paper-warning">Automatic copy orders are queued, not auto-filled: the repository has no connected trusted live market-price/liquidity provider yet. Orders remain CREATED / awaiting verified market data until safe execution pricing is available. Unsupported, ambiguous, failed, unconfirmed, or duplicate transactions are not copied. Paper mode only; no real wallet, signing, or transaction broadcast.</p>
       <p class="paper-warning">Paper mode only. The reference price and liquidity are entered by you and are not verified or live market data. Orders use a simulated 0.50% slippage and 0.10% fee, and require at least $10,000 entered liquidity. No real wallet, signing, or transaction broadcast is used.</p>
 
       <div class="paper-grid">
@@ -1215,6 +1216,17 @@
             }
           }
 
+          if (result.paper_copy_order) {
+            parts.push(
+              "AUTO PAPER ORDER: " + result.paper_copy_order.side +
+              " " + result.paper_copy_order.quantity + " " +
+              result.paper_copy_order.asset_mint +
+              " | " + result.paper_copy_order.execution_state
+            );
+          }
+          if (result.paper_copy_error) {
+            parts.push("Paper-copy queue error: " + result.paper_copy_error);
+          }
           if (result.error) {
             parts.push("Error: " + result.error);
           }
@@ -1339,11 +1351,22 @@
 
       const orders = Array.isArray(data.orders) ? data.orders : [];
       if (orders.length === 0) addText(simulationOrders, "No simulated orders.", "p", "empty");
-      orders.forEach(order => addText(
-        simulationOrders,
-        [order.side, order.quantity + " " + order.asset_mint, order.status,
-         order.reason || ""].filter(Boolean).join(" | "), "p"
-      ));
+      orders.forEach(order => {
+        const details = order.details || {};
+        const label = details.origin === "AUTOMATIC_WALLET_COPY"
+          ? "AUTO COPY from " + (details.source_wallet || "unknown wallet")
+          : "MANUAL";
+        const state = details.execution_state || "";
+        const signature = details.source_signature
+          ? "source signature " + details.source_signature
+          : "";
+        addText(
+          simulationOrders,
+          [label, order.side, order.quantity + " " + order.asset_mint,
+           order.status, state, signature, order.reason || ""]
+            .filter(Boolean).join(" | "), "p"
+        );
+      });
 
       const fills = Array.isArray(data.fills) ? data.fills : [];
       if (fills.length === 0) addText(simulationFills, "No simulated fills.", "p", "empty");

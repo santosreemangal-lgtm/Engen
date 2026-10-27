@@ -10,15 +10,15 @@
   <style>
     :root {
       color-scheme: dark;
-      --bg: #101114;
-      --panel: #191a20;
-      --border: #30313a;
-      --text: #f4f4f5;
-      --muted: #a1a1aa;
-      --accent: #a78bfa;
-      --danger: #f87171;
-      --positive: #86efac;
-      --negative: #fca5a5;
+      --bg: #0b1020;
+      --panel: #121a2b;
+      --border: #26334a;
+      --text: #f4f7fb;
+      --muted: #9ba9bd;
+      --accent: #7cafff;
+      --danger: #ff8c9b;
+      --positive: #72e0b1;
+      --negative: #ff9ba7;
     }
 
     * {
@@ -62,14 +62,15 @@
       min-height: 100vh;
       padding: 32px 16px;
       background:
-        radial-gradient(ellipse at top, #29213d 0%, var(--bg) 52%);
+        radial-gradient(ellipse at top, #172849 0%, var(--bg) 58%);
+      background-attachment: fixed;
       color: var(--text);
       font-family: Arial, Helvetica, sans-serif;
     }
 
     main {
       width: 100%;
-      max-width: 760px;
+      max-width: 880px;
       margin: 0 auto;
     }
 
@@ -96,9 +97,10 @@
     .panel {
       margin: 18px 0;
       padding: 22px;
-      background: rgba(25, 26, 32, 0.96);
+      background: rgba(18, 26, 43, 0.94);
       border: 1px solid var(--border);
-      border-radius: 18px;
+      border-radius: 16px;
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.14);
     }
 
     .overview-grid {

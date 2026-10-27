@@ -342,11 +342,25 @@ def get_profile_record(profile_id):
                  if item.get("profile_id") == canonical), None)
 
 
+def profile_copy_side(profile_id):
+    """Return a validated profile copy-side mode; default to BOTH for legacy profiles."""
+    profile = get_profile_record(profile_id)
+    if profile is None:
+        return "NONE"
+    settings = profile.get("settings") or {}
+    paper_settings = settings.get("paper_trading") if isinstance(settings, dict) else {}
+    side = paper_settings.get("copy_side", "BOTH") if isinstance(paper_settings, dict) else "BOTH"
+    return side.upper() if isinstance(side, str) and side.upper() in ("BUY", "SELL", "BOTH") else "NONE"
+
+
 def get_profile_monitor_service(profile_id):
     """Return a dedicated monitor service for a validated profile UUID."""
     canonical = canonical_profile_id(profile_id)
     if canonical not in profile_monitor_services:
-        profile_monitor_services[canonical] = MonitorService(create_scan_function(), interval=30)
+        profile_monitor_services[canonical] = MonitorService(
+            create_scan_function(side_getter=lambda: profile_copy_side(canonical)),
+            interval=30,
+        )
     return profile_monitor_services[canonical]
 
 

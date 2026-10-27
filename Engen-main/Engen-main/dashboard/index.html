@@ -10,15 +10,15 @@
   <style>
     :root {
       color-scheme: dark;
-      --bg: #101114;
-      --panel: #191a20;
-      --border: #30313a;
-      --text: #f4f4f5;
-      --muted: #a1a1aa;
-      --accent: #a78bfa;
-      --danger: #f87171;
-      --positive: #86efac;
-      --negative: #fca5a5;
+      --bg: #0b1020;
+      --panel: #121a2b;
+      --border: #26334a;
+      --text: #f4f7fb;
+      --muted: #9ba9bd;
+      --accent: #7cafff;
+      --danger: #ff8c9b;
+      --positive: #72e0b1;
+      --negative: #ff9ba7;
     }
 
     * {
@@ -62,14 +62,15 @@
       min-height: 100vh;
       padding: 32px 16px;
       background:
-        radial-gradient(ellipse at top, #29213d 0%, var(--bg) 52%);
+        radial-gradient(ellipse at top, #172849 0%, var(--bg) 58%);
+      background-attachment: fixed;
       color: var(--text);
       font-family: Arial, Helvetica, sans-serif;
     }
 
     main {
       width: 100%;
-      max-width: 760px;
+      max-width: 880px;
       margin: 0 auto;
     }
 
@@ -96,9 +97,10 @@
     .panel {
       margin: 18px 0;
       padding: 22px;
-      background: rgba(25, 26, 32, 0.96);
+      background: rgba(18, 26, 43, 0.94);
       border: 1px solid var(--border);
-      border-radius: 18px;
+      border-radius: 16px;
+      box-shadow: 0 12px 34px rgba(0, 0, 0, 0.14);
     }
 
     h2 {
@@ -139,17 +141,77 @@
 
     button {
       padding: 13px 17px;
-      color: #15121f;
+      color: #071226;
       background: var(--accent);
-      border: 0;
+      border: 1px solid transparent;
       border-radius: 10px;
       font-weight: 700;
       cursor: pointer;
+      transition: filter 140ms ease, transform 140ms ease;
+    }
+
+    button:hover:not(:disabled) {
+      filter: brightness(1.08);
+      transform: translateY(-1px);
     }
 
     button:disabled {
       cursor: not-allowed;
-      opacity: 0.6;
+      opacity: 0.55;
+    }
+
+    .topline {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .mode-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 11px;
+      color: #b8d7ff;
+      background: #132642;
+      border: 1px solid #294b75;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .mode-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #72e0b1;
+      box-shadow: 0 0 0 3px rgba(114, 224, 177, 0.12);
+    }
+
+    .history-details {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      overflow: hidden;
+    }
+
+    .history-details > summary {
+      cursor: pointer;
+      padding: 12px 14px;
+      color: #c7dcfb;
+      background: #111d31;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .history-details[open] > summary {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .history-content {
+      padding: 0 12px 12px;
     }
 
     #stop-monitoring {
@@ -289,12 +351,14 @@
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <main id="main-content">
-    <p class="eyebrow">Read-only dashboard</p>
-    <h1>SOLANA MONITOR</h1>
+    <div class="topline">
+      <p class="eyebrow">SOLANA · WALLET MONITOR</p>
+      <span class="mode-pill"><span class="mode-dot"></span>READ-ONLY · NO LIVE TRADES</span>
+    </div>
+    <h1>Dashboard</h1>
 
     <p class="subtitle">
-      Manage public Solana wallet addresses from one dashboard.
-      Saved addresses remain available after refreshing the page.
+      Choose which public wallets to monitor. Transaction details stay collapsed until you open them.
     </p>
 
     <section class="panel">
@@ -323,7 +387,7 @@
     </section>
 
     <section class="panel">
-      <h2>Monitoring Controls</h2>
+      <h2>Monitoring</h2>
 
       <p id="monitor-status" class="muted" aria-live="polite">
         Checking monitoring status...
@@ -340,12 +404,12 @@
       </div>
 
       <div id="monitor-results" class="muted" aria-live="polite">
-        Monitoring results will appear here.
+        Transaction details will appear here when you open a wallet's history.
       </div>
     </section>
 
     <section class="panel">
-      <h2>Your wallets</h2>
+      <h2>Selected wallets</h2>
 
       <div id="wallet-list">
         <p class="empty">Loading saved wallets...</p>
@@ -359,11 +423,9 @@
       endpoint https://api.mainnet-beta.solana.com.
       The endpoint may be rate-limited. The first scan establishes a
       baseline; later scans look for new transaction signatures.
-      Token balance changes are shown when transaction metadata provides them.
-      A balance change alone does not establish whether a wallet bought or sold.
-      This is not a complete token buy/sell tracker.
-      Never enter a seed phrase or private key.
-      No signing or live trading is performed by this interface.
+      This screen is read-only monitoring, not a paper-trading execution dashboard.
+      A balance change alone does not prove a buy or sell. Never enter a seed phrase or private key.
+      No signing or live trading is performed.
     </p>
   </main>
 
@@ -661,10 +723,22 @@
           ? wallet.latest_results
           : [];
 
+        const history = document.createElement("details");
+        history.className = "history-details";
+        const summary = document.createElement("summary");
+        summary.textContent = "View transaction history (" + results.length + ")";
+        history.appendChild(summary);
+
+        const historyContent = document.createElement("div");
+        historyContent.className = "history-content";
+        history.appendChild(historyContent);
+
         if (results.length === 0 && !wallet.last_error) {
           addText(
-            card,
-            "No new transaction results reported by the latest scan."
+            historyContent,
+            "No new transaction results reported by the latest scan.",
+            "p",
+            "muted"
           );
         }
 
@@ -698,10 +772,14 @@
             parts.push("Error: " + result.error);
           }
 
-          addText(card, parts.join(" | "));
-          renderTokenBalanceChanges(card, result);
+          const resultCard = document.createElement("div");
+          resultCard.className = "result-item";
+          addText(resultCard, parts.join(" | "));
+          renderTokenBalanceChanges(resultCard, result);
+          historyContent.appendChild(resultCard);
         });
 
+        card.appendChild(history);
         monitorResults.appendChild(card);
       });
     }

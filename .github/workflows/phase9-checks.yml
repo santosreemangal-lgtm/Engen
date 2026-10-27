@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: ["feature/phase-7-profile-storage"]
   push:
-    branches: ["feature/phase-7-profile-storage"]
+    branches: ["feature/phase-7-profile-storage", "feature/phase-9-dashboard-hardening"]
   workflow_dispatch:
 
 permissions:

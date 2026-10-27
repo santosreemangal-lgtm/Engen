@@ -9,6 +9,9 @@ Engen is an early-stage, **read-only Solana wallet monitor** intended for offlin
 - Monitoring is opt-in; starting the dashboard server does not automatically start a scan.
 - The dashboard API has no user authentication. Run it only in a trusted development environment and do not expose it publicly.
 - Paper-trading results are simulations, not evidence of real-world profitability.
+- The paper portfolio is in-memory and resets when the dashboard process restarts. It is not connected to live prices or wallet balances.
+- The Telegram bot is not implemented in this audit branch. Do not assume Telegram commands work until a separately tested bot adapter is added.
+- The dashboard currently has no authentication or CSRF protection. Keep it on localhost or behind trusted access controls.
 
 ## Repository layout
 
@@ -41,6 +44,17 @@ Test the root compatibility entry point from the canonical project directory:
 ```bash
 python ../../main.py --mock-analysis-test
 ```
+
+## Paper trading API
+
+The dashboard exposes virtual-only endpoints:
+
+- `GET /api/paper/status` — virtual cash, positions, pause state, and live-trading-disabled flag.
+- `GET /api/paper/history` — recent simulated trade records.
+- `POST /api/paper/control` with `{"action":"pause"}` or `{"action":"resume"}`.
+- `POST /api/paper/trade` with `{"side":"buy","token":"DEMO","quantity":1,"price":10}` or the equivalent `sell` payload. These are manually priced simulations, not market orders.
+
+The default virtual starting balance is 1,000 units. Position cost is capped at 25% of the starting balance per token by default. These limits are basic demo guardrails, not a complete trading risk engine.
 
 ## Configuration
 

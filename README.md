@@ -46,6 +46,19 @@ Test the root compatibility entry point from the canonical project directory:
 python ../../main.py --mock-analysis-test
 ```
 
+## Start today's manual paper-trading demo
+
+From the repository root, run:
+
+```bash
+cd Engen-main/Engen-main
+python -m dashboard.server
+```
+
+Open the forwarded port `8000` in your Codespaces environment if you are using Codespaces, or visit `http://127.0.0.1:8000` on the same computer. Keep the port private; the API has no authentication. In the Paper Portfolio panel, choose Buy or Sell, enter a demo token label, quantity, and a manually chosen price, then submit. The default virtual balance is 1,000 units. Use a small example such as token `DEMO`, quantity `1`, price `10` to test a simulated buy.
+
+**Scope of this demo:** it records manual virtual trades only. It does not yet automatically mirror monitored wallet transactions, fetch reliable token market prices, persist the paper portfolio across restarts, or share one ledger between dashboard and Telegram. Do not treat it as an automated copy-trading demo yet.
+
 ## Paper trading API
 
 The dashboard exposes virtual-only endpoints:

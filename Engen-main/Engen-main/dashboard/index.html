@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0B1120">
-  <title>Solana Monitor</title>
+  <title>Solana Copy-Trading Engine</title>
 
   <style>
     :root {
@@ -110,7 +110,9 @@
       gap: 12px;
     }
 
-    .portfolio-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .portfolio-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
     .portfolio-item .overview-value { font-size: clamp(20px, 3vw, 28px); }
     .portfolio-item .form-row { margin-top: 8px; }
     .portfolio-item .form-row input { width: 100%; }
@@ -380,6 +382,11 @@
       padding: 0 12px 12px;
     }
 
+    @media (max-width: 900px) {
+      .portfolio-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      main { max-width: 100%; }
+    }
+
     @media (max-width: 600px) {
       .paper-grid {
         grid-template-columns: 1fr;
@@ -536,7 +543,7 @@
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <main id="main-content">
     <p class="eyebrow">Read-only dashboard</p>
-    <h1>SOLANA MONITOR</h1>
+    <h1>SOLANA COPY-TRADING ENGINE</h1>
 
     <p class="subtitle">
       Manage public Solana wallet addresses from one dashboard.

@@ -36,7 +36,13 @@ class PaperTraderTests(unittest.TestCase):
         self.assertEqual(len(self.trader.history()), 1)
 
     def test_invalid_values_are_rejected(self):
-        for args in [("", 1, 10), ("TOKEN", 0, 10), ("TOKEN", 1, -1)]:
+        for args in [
+            ("", 1, 10),
+            ("TOKEN", 0, 10),
+            ("TOKEN", 1, -1),
+            ("TOKEN", float("nan"), 10),
+            ("TOKEN", 1, float("inf")),
+        ]:
             with self.assertRaises(PaperTradingError):
                 self.trader.buy(*args)
 

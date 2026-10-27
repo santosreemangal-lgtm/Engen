@@ -219,6 +219,7 @@ class PaperSimulator:
                 "price_age_seconds":market_price.age_seconds(now),"slippage_bps":slippage_bps,
                 "created_at":now}
         updated = dict(order, status="FILLED", reason=None, details={**order["details"],
+                       "execution_state":"FILLED",
                        "reference_price":str(reference),"execution_price":str(execution),
                        "fee":str(fee),"network_cost":str(network),"fill_id":fill["fill_id"]})
         self._persist(updated, balances=balances, fill=fill)
@@ -232,7 +233,8 @@ class PaperSimulator:
                 "transaction_broadcast":False,"order":dict(updated),"fill":dict(fill)}
 
     def _reject(self, order, reason):
-        updated = dict(order, status="REJECTED", reason=reason)
+        updated = dict(order, status="REJECTED", reason=reason,
+                       details={**order["details"], "execution_state":"REJECTED"})
         self._persist(updated)
         self.orders[order["order_id"]] = updated
         return {"status":"REJECTED","reason":reason,"real_trading":False,"transaction_broadcast":False}

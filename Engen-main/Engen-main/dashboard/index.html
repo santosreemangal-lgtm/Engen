@@ -636,6 +636,13 @@
         <div class="profile-field">
           <label for="profile-settings-json">Initial profile settings (JSON object)</label>
           <textarea id="profile-settings-json" rows="3" required>{}</textarea>
+          <label for="profile-copy-side">Automatic copy direction</label>
+          <select id="profile-copy-side">
+            <option value="BUY">Buy only</option>
+            <option value="SELL">Sell only</option>
+            <option value="BOTH" selected>Buy and sell</option>
+          </select>
+          <p class="muted">This setting controls automatic paper-copy orders for this profile. Manual paper orders are unaffected. Paper trading only.</p>
           <p class="muted">Optional paper_trading settings example: {"paper_trading":{"initial_quote_balance":"100","max_position_pct":25,"max_open_positions":5}}. These limits apply to the paper-only runner when started with this profile.</p>
         </div>
         <div class="profile-actions">
@@ -817,6 +824,7 @@
     const profileNameInput = document.getElementById("profile-name");
     const profileDestinationInput = document.getElementById("profile-destination");
     const profileSettingsInput = document.getElementById("profile-settings-json");
+    const profileCopySideInput = document.getElementById("profile-copy-side");
     const profileCreateButton = document.getElementById("profile-create-button");
     const profileRefreshButton = document.getElementById("profile-refresh-button");
     const profileMessage = document.getElementById("profile-message");
@@ -1568,6 +1576,24 @@
         settingsInput.value = JSON.stringify(profile.settings || {}, null, 2);
         settingsLabel.appendChild(settingsInput);
         editForm.appendChild(settingsLabel);
+        const copySideLabel = document.createElement("label");
+        copySideLabel.textContent = "Automatic copy direction";
+        const copySideSelect = document.createElement("select");
+        [
+          ["BUY", "Buy only"],
+          ["SELL", "Sell only"],
+          ["BOTH", "Buy and sell"],
+        ].forEach(([value, label]) => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = label;
+          copySideSelect.appendChild(option);
+        });
+        const currentPaperSettings = (profile.settings && profile.settings.paper_trading) || {};
+        copySideSelect.value = ["BUY", "SELL", "BOTH"].includes(currentPaperSettings.copy_side)
+          ? currentPaperSettings.copy_side : "BOTH";
+        copySideLabel.appendChild(copySideSelect);
+        editForm.appendChild(copySideLabel);
         const statusLabel = document.createElement("label");
         statusLabel.textContent = "Profile status";
         const statusSelect = document.createElement("select");
@@ -1607,6 +1633,10 @@
             settingsInput.focus();
             return;
           }
+          if (!settings.paper_trading || typeof settings.paper_trading !== "object" || Array.isArray(settings.paper_trading)) {
+            settings.paper_trading = {};
+          }
+          settings.paper_trading.copy_side = copySideSelect.value;
           saveButton.disabled = true;
           try {
             await postProfile({action: "update", profile_id: profile.profile_id,
@@ -1976,12 +2006,17 @@
         profileSettingsInput.focus();
         return;
       }
+      if (!settings.paper_trading || typeof settings.paper_trading !== "object" || Array.isArray(settings.paper_trading)) {
+        settings.paper_trading = {};
+      }
+      settings.paper_trading.copy_side = profileCopySideInput.value;
       profileCreateButton.disabled = true;
       try {
         await postProfile({action: "create", name,
           destination_public_address: destination || null, settings});
         profileForm.reset();
         profileSettingsInput.value = "{}";
+        profileCopySideInput.value = "BOTH";
         profileMessage.textContent = "Profile created disabled by default. No monitoring or trading was started.";
         await loadProfiles();
       } catch (error) {

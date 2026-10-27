@@ -312,6 +312,18 @@
     </section>
 
     <section class="panel">
+      <h2>Paper Portfolio</h2>
+      <p class="muted">Virtual funds only. Prices are manually supplied to the API; no real transactions are sent.</p>
+      <p id="paper-status" class="muted" aria-live="polite">Loading virtual balance...</p>
+      <div class="form-row">
+        <button id="paper-pause" type="button" disabled>Pause Paper Trading</button>
+        <button id="paper-resume" type="button" disabled>Resume Paper Trading</button>
+        <button id="paper-refresh" type="button" disabled>Refresh Portfolio</button>
+      </div>
+      <div id="paper-history" class="muted">Paper trade history will appear here.</div>
+    </section>
+
+    <section class="panel">
       <h2>Your wallets</h2>
 
       <div id="wallet-list">
@@ -353,6 +365,11 @@
     const monitorResults = document.getElementById("monitor-results");
     const startButton = document.getElementById("start-monitoring");
     const stopButton = document.getElementById("stop-monitoring");
+    const paperStatus = document.getElementById("paper-status");
+    const paperHistory = document.getElementById("paper-history");
+    const paperPauseButton = document.getElementById("paper-pause");
+    const paperResumeButton = document.getElementById("paper-resume");
+    const paperRefreshButton = document.getElementById("paper-refresh");
 
     const ADDRESS_PATTERN =
       /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -390,6 +407,50 @@
         },
         body: JSON.stringify({ action })
       });
+    }
+
+    async function requestPaperControl(action) {
+      return apiRequest("/api/paper/control", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action })
+      });
+    }
+
+    async function loadPaperPortfolio() {
+      try {
+        const status = await apiRequest("/api/paper/status");
+        paperStatus.textContent =
+          "Mode: PAPER | Virtual cash: " + status.cash +
+          " | Paused: " + status.paused +
+          " | Positions: " + Object.keys(status.positions || {}).length +
+          " | Live trading: disabled";
+        paperPauseButton.disabled = !backendReady || status.paused;
+        paperResumeButton.disabled = !backendReady || !status.paused;
+        paperRefreshButton.disabled = !backendReady;
+
+        const data = await apiRequest("/api/paper/history");
+        paperHistory.replaceChildren();
+        if (!Array.isArray(data.history) || data.history.length === 0) {
+          addText(paperHistory, "No simulated trades yet.", "p", "muted");
+        } else {
+          data.history.slice().reverse().forEach(trade => {
+            addText(
+              paperHistory,
+              trade.timestamp + " | " + trade.side.toUpperCase() +
+              " | " + trade.token + " | quantity " + trade.quantity +
+              " @ " + trade.price + " | realized P/L " + trade.realized_pnl,
+              "p",
+              "result-item"
+            );
+          });
+        }
+      } catch (error) {
+        paperStatus.textContent = "Paper portfolio unavailable: " + error.message;
+        paperPauseButton.disabled = true;
+        paperResumeButton.disabled = true;
+        paperRefreshButton.disabled = true;
+      }
     }
 
     function getMonitorWallet(address) {
@@ -837,11 +898,35 @@
       }
     });
 
+    paperPauseButton.addEventListener("click", async () => {
+      try {
+        await requestPaperControl("pause");
+        await loadPaperPortfolio();
+      } catch (error) {
+        paperStatus.textContent = error.message;
+      }
+    });
+
+    paperResumeButton.addEventListener("click", async () => {
+      try {
+        await requestPaperControl("resume");
+        await loadPaperPortfolio();
+      } catch (error) {
+        paperStatus.textContent = error.message;
+      }
+    });
+
+    paperRefreshButton.addEventListener("click", loadPaperPortfolio);
+
     addButton.disabled = true;
     startButton.disabled = true;
     stopButton.disabled = true;
+    paperPauseButton.disabled = true;
+    paperResumeButton.disabled = true;
+    paperRefreshButton.disabled = true;
 
     loadWallets();
+    loadPaperPortfolio();
 
     window.setInterval(() => {
       if (backendReady && !monitorRequestInProgress) {

@@ -722,6 +722,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             try:
                 with paper_simulator_lock:
                     simulator = get_paper_simulator()
+                    if action == "set-initial-balance":
+                        result = simulator.set_initial_virtual_balance(
+                            payload.get("amount"), payload.get("mint", "USD")
+                        )
+                        self.send_json(200, {"result": result, "report": dict(simulator.report(), database_available=True)})
+                        return
                     if action == "add-balance":
                         result = simulator.add_virtual_balance(
                             payload.get("mint"), payload.get("amount")
@@ -770,7 +776,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         )
                         self.send_json(200, {"result": result, "report": dict(simulator.report(), database_available=True)})
                         return
-                    self.send_json(400, {"error": "Action must be add-balance or create-order."})
+                    self.send_json(400, {"error": "Action must be set-initial-balance, add-balance, or create-order."})
             except ValueError as exc:
                 self.send_json(400, {"error": str(exc)})
             except (OSError, sqlite3.Error) as exc:

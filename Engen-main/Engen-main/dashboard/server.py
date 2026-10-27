@@ -18,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
+from engine.paper_trading import PaperTrader, PaperTradingError
 
 WALLETS_FILE = ROOT / "wallets.json"
 # Bind to localhost by default because this dashboard has no authentication.
@@ -30,6 +31,8 @@ ADDRESS_PATTERN = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
 # Creating the service does not start monitoring or make RPC requests.
 monitor_service = MonitorService(create_scan_function(), interval=30)
+# Deliberately in-memory and virtual-only; restart resets this demo ledger.
+paper_trader = PaperTrader()
 
 
 def load_wallets():
@@ -98,6 +101,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_json(200, monitor_service.status())
             return
 
+        if path == "/api/paper/status":
+            self.send_json(200, paper_trader.status())
+            return
+
+        if path == "/api/paper/history":
+            self.send_json(200, {"history": paper_trader.history()})
+            return
+
         return super().do_GET()
 
     def do_POST(self):
@@ -105,6 +116,37 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         payload = self.read_json()
 
         if payload is None:
+            return
+
+        if path == "/api/paper/control":
+            action = payload.get("action")
+            if action == "pause":
+                self.send_json(200, paper_trader.pause())
+                return
+            if action == "resume":
+                self.send_json(200, paper_trader.resume())
+                return
+            self.send_json(400, {"error": "Action must be pause or resume"})
+            return
+
+        if path == "/api/paper/trade":
+            try:
+                side = payload.get("side")
+                if side == "buy":
+                    result = paper_trader.buy(
+                        payload.get("token"), payload.get("quantity"), payload.get("price")
+                    )
+                elif side == "sell":
+                    result = paper_trader.sell(
+                        payload.get("token"), payload.get("quantity"), payload.get("price")
+                    )
+                else:
+                    self.send_json(400, {"error": "Side must be buy or sell"})
+                    return
+            except PaperTradingError as error:
+                self.send_json(400, {"error": str(error)})
+                return
+            self.send_json(200, {"trade": result, "status": paper_trader.status()})
             return
 
         if path == "/api/monitor":

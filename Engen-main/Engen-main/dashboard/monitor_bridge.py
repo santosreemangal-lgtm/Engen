@@ -3,7 +3,7 @@
 
 from engine.signature_store import SignatureStore
 from engine.transaction_monitor import monitor_wallet
-from engine.paper_copy_runner import queue_paper_orders
+from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders
 
 
 def create_scan_function(limit=10, timeout=10):
@@ -21,6 +21,11 @@ def create_scan_function(limit=10, timeout=10):
         )
         try:
             queued_orders = queue_paper_orders(address, results)
+            execution_outcomes = execute_pending_paper_orders(address)
+            outcomes_by_signal = {
+                item["signal_id"]: item for item in execution_outcomes
+                if item.get("signal_id")
+            }
             # Queue persistence succeeded. Mark complete, non-retryable scans
             # processed so unsupported transactions do not loop forever.
             for item in results:
@@ -39,7 +44,21 @@ def create_scan_function(limit=10, timeout=10):
                     {
                         **item,
                         **(
-                            {"paper_copy_order": queued_by_signature[item.get("signature")]}
+                            {
+                                "paper_copy_order": {
+                                    **queued_by_signature[item.get("signature")],
+                                    **(
+                                        {"execution_status": outcomes_by_signal[
+                                            "wallet-copy:" + address + ":" + item.get("signature")
+                                        ]["status"]}
+                                        if (
+                                            "wallet-copy:" + address + ":" + item.get("signature")
+                                            in outcomes_by_signal
+                                        )
+                                        else {}
+                                    ),
+                                }
+                            }
                             if item.get("signature") in queued_by_signature
                             else {}
                         ),

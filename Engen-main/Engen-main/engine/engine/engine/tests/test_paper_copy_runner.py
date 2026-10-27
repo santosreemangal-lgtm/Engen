@@ -1,0 +1,107 @@
+import unittest
+
+from engine.paper_copy_runner import queue_paper_orders
+from engine.transaction_analysis import QUOTE_TOKEN_MINTS
+
+
+WALLET = "11111111111111111111111111111111"
+ASSET = "TokenMint1111111111111111111111111111111111"
+QUOTE = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+
+class FakeSimulator:
+    def __init__(self):
+        self.orders = {}
+
+    def create_order(self, signal_id, side, asset_mint, quantity, quote_mint, *, created_at, details=None):
+        if signal_id in self.orders:
+            return {"status": "DUPLICATE", "signal_id": signal_id}
+        order = {
+            "order_id": "paper-order-1",
+            "signal_id": signal_id,
+            "side": side,
+            "asset_mint": asset_mint,
+            "quantity": quantity,
+            "quote_mint": quote_mint,
+            "status": "CREATED",
+            "details": details or {},
+        }
+        self.orders[signal_id] = order
+        return order
+
+
+def candidate_result(*, confirmation="finalized", classification="BUY_CANDIDATE"):
+    asset_delta = "2500000" if classification == "BUY_CANDIDATE" else "-2500000"
+    quote_delta = "-10000000" if classification == "BUY_CANDIDATE" else "10000000"
+    return {
+        "signature": "sig-test-1",
+        "status": "success",
+        "metadata_complete": True,
+        "signers": [WALLET],
+        "signature_observation": {
+            "confirmation_status": confirmation,
+            "slot": 123,
+            "block_time": 1700000000,
+        },
+        "trade_signal": {
+            "classification": classification,
+            "asset_mints": [ASSET],
+            "quote_mints": [QUOTE],
+        },
+        "token_balance_changes": [
+            {
+                "owner": WALLET, "mint": ASSET, "decimals": 6,
+                "delta_amount": asset_delta,
+            },
+            {
+                "owner": WALLET, "mint": QUOTE, "decimals": 6,
+                "delta_amount": quote_delta,
+            },
+        ],
+    }
+
+
+class PaperCopyRunnerTests(unittest.TestCase):
+    def test_confirmed_candidate_creates_deduplicated_paper_order(self):
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(WALLET, [candidate_result()], simulator)
+
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["side"], "BUY")
+        self.assertEqual(queued[0]["quantity"], "2.5")
+        self.assertEqual(queued[0]["quote_mint"], QUOTE)
+        self.assertEqual(queued[0]["execution_state"], "AWAITING_VERIFIED_MARKET_DATA")
+        self.assertEqual(len(simulator.orders), 1)
+        order = next(iter(simulator.orders.values()))
+        self.assertEqual(order["details"]["origin"], "AUTOMATIC_WALLET_COPY")
+        self.assertFalse(order["details"]["real_trading"])
+        self.assertFalse(order["details"]["transaction_broadcast"])
+
+    def test_unconfirmed_or_unknown_transaction_is_not_copied(self):
+        simulator = FakeSimulator()
+        unconfirmed = candidate_result(confirmation="processed")
+        unknown = candidate_result(classification="UNKNOWN")
+        queued = queue_paper_orders(WALLET, [unconfirmed, unknown], simulator)
+
+        self.assertEqual(queued, [])
+        self.assertEqual(simulator.orders, {})
+
+    def test_sell_candidate_maps_to_sell_order(self):
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(
+            WALLET, [candidate_result(classification="SELL_CANDIDATE")], simulator
+        )
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["side"], "SELL")
+
+    def test_only_recognized_quote_tokens_are_eligible(self):
+        simulator = FakeSimulator()
+        result = candidate_result()
+        result["trade_signal"]["quote_mints"] = ["unrecognized-quote"]
+        queued = queue_paper_orders(WALLET, [result], simulator)
+        self.assertEqual(queued, [])
+        self.assertEqual(simulator.orders, {})
+
+
+if __name__ == "__main__":
+    unittest.main()

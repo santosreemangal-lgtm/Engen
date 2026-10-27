@@ -20,7 +20,7 @@ class PaperSimulatorInitialBalanceTests(unittest.TestCase):
             self.assertFalse(result["transaction_broadcast"])
 
             reopened = PaperSimulator(db_path=database)
-            self.assertEqual(reopened.balances["USD"], __import__("decimal").Decimal("1250.50"))
+            self.assertEqual(reopened.balances["USD"], Decimal("1250.50"))
             self.assertEqual(reopened.report()["initial_balance"], "1250.50")
 
     def test_initial_balance_cannot_change_after_a_filled_order(self):

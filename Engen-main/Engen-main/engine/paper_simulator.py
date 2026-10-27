@@ -161,8 +161,8 @@ class PaperSimulator:
                 return self._reject(order, "Liquidity data unavailable; no fill created.")
         else:
             liquidity_age = market_price.liquidity_age_seconds(now)
-            if liquidity_age > max_liquidity_age_seconds:
-                return self._reject(order, "Liquidity data is stale; no fill created.")
+            if liquidity_age < 0 or liquidity_age > max_liquidity_age_seconds:
+                return self._reject(order, "Liquidity data is stale or future-dated; no fill created.")
             if market_price.liquidity_usd < minimum_liquidity:
                 return self._reject(order, "Liquidity is below the configured USD minimum; no fill created.")
         for name, value in (("slippage_bps",slippage_bps),("fee_bps",fee_bps)):

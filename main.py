@@ -7,7 +7,7 @@ from engine.transaction_analysis import analyze_transaction, analyze_token_balan
 def run_mock_analysis_test():
     print("=== Running Offline Transaction Analysis Mock Test ===")
     w, t, s = "MOCK_WALLET_A", "MOCK_TOKEN_XYZ_MINT", "So11111111111111111111111111111111111111112"
-    tx = {"transaction": {"message": {"accountKeys": [w, t, s, "FEE_PAYER"], "header": {"numRequiredSignatures": 1, "numReadonlySignedAccounts": 0, "numReadonlyUnsignedAccounts": 0}}}, "meta": {"err": None, "fee": 5000, "slot": 250000000, "preBalances":, "postBalances":, "preTokenBalances": [{"accountIndex": 1, "mint": t, "owner": w, "uiTokenAmount": {"amount": "10000000", "decimals": 6}}], "postTokenBalances": [{"accountIndex": 1, "mint": t, "owner": w, "uiTokenAmount": {"amount": "22851247", "decimals": 6}}]}}
+    tx = {"transaction": {"message": {"accountKeys": [w, t, s, "FEE_PAYER"], "header": {"numRequiredSignatures": 1, "numReadonlySignedAccounts": 0, "numReadonlyUnsignedAccounts": 0}}}, "meta": {"err": None, "fee": 5000, "slot": 250000000, "preBalances": [1000000000, 0, 0, 0], "postBalances": [990000000, 0, 0, 0], "preTokenBalances": [{"accountIndex": 1, "mint": t, "owner": w, "uiTokenAmount": {"amount": "10000000", "decimals": 6}}], "postTokenBalances": [{"accountIndex": 1, "mint": t, "owner": w, "uiTokenAmount": {"amount": "22851247", "decimals": 6}}]}}
     try:
         tx_i = analyze_transaction(tx)
         t_c = analyze_token_balance_changes(tx["meta"])

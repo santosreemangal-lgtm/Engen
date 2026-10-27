@@ -17,9 +17,19 @@ def create_scan_function(limit=10, timeout=10):
             store=store,
             limit=limit,
             timeout=timeout,
+            defer_processed=True,
         )
         try:
             queued_orders = queue_paper_orders(address, results)
+            # Queue persistence succeeded. Mark complete, non-retryable scans
+            # processed so unsupported transactions do not loop forever.
+            for item in results:
+                signature = item.get("signature")
+                if (
+                    isinstance(signature, str)
+                    and item.get("retryable") is not True
+                ):
+                    store.mark_processed(address, signature)
             if queued_orders:
                 # Keep the monitor response auditable without exposing raw transactions.
                 queued_by_signature = {
@@ -37,8 +47,21 @@ def create_scan_function(limit=10, timeout=10):
                     for item in results
                 ]
         except Exception:
-            # Monitoring remains available, but paper-order failures must be
-            # visible in the scan result instead of silently claiming success.
+            # If queue persistence fails, leave potential swap candidates pending
+            # so the next scan can retry; mark only clearly non-candidate results.
+            for item in results:
+                signature = item.get("signature")
+                signal = item.get("trade_signal")
+                is_candidate = (
+                    isinstance(signal, dict)
+                    and signal.get("classification") in ("BUY_CANDIDATE", "SELL_CANDIDATE")
+                )
+                if (
+                    isinstance(signature, str)
+                    and item.get("retryable") is not True
+                    and not is_candidate
+                ):
+                    store.mark_processed(address, signature)
             results = [
                 {**item, "paper_copy_error": "Paper-copy order queue failed."}
                 for item in results

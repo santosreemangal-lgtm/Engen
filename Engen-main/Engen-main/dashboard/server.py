@@ -677,6 +677,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             except ValueError as exc:
                 status = 404 if str(exc) == "Profile not found." else 400
                 self.send_json(status, {"error": str(exc)})
+            except OSError as exc:
+                self.send_json(503, {"error": "Monitor state storage unavailable (" + type(exc).__name__ + ")."})
             return
 
         if path == "/api/profiles":
@@ -801,11 +803,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     self.send_json(200, {"profile_id": profile_id, "monitor": status})
                     return
                 if action == "stop":
+                    set_profile_monitor_persistence(profile_id, False)
                     service = profile_monitor_services.get(profile_id)
                     status = service.stop() if service is not None else {
                         "enabled": False, "interval_seconds": 30, "wallets": [],
                     }
-                    set_profile_monitor_persistence(profile_id, False)
                     self.send_json(200, {"profile_id": profile_id, "monitor": status})
                     return
                 self.send_json(400, {"error": "Action must be start or stop."})
@@ -881,18 +883,23 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     )
                     return
 
-                status = monitor_service.start(wallets)
                 try:
                     set_global_monitor_persistence(True)
-                except OSError:
+                    status = monitor_service.start(wallets)
+                except OSError as exc:
                     monitor_service.stop()
-                    raise
+                    self.send_json(503, {"error": "Monitor state storage unavailable (" + type(exc).__name__ + ")."})
+                    return
                 self.send_json(200, status)
                 return
 
             if action == "stop":
+                try:
+                    set_global_monitor_persistence(False)
+                except OSError as exc:
+                    self.send_json(503, {"error": "Monitor state storage unavailable (" + type(exc).__name__ + ")."})
+                    return
                 status = monitor_service.stop()
-                set_global_monitor_persistence(False)
                 self.send_json(200, status)
                 return
 

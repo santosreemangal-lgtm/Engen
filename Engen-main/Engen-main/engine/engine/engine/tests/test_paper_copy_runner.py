@@ -75,8 +75,12 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertEqual(queued[0]["source_quote_mint"], QUOTE)
         self.assertEqual(queued[0]["execution_state"], "AWAITING_VERIFIED_MARKET_DATA")
         self.assertEqual(len(simulator.orders), 1)
+        duplicate = queue_paper_orders(WALLET, [candidate_result()], simulator)
+        self.assertEqual(duplicate, [])
         order = next(iter(simulator.orders.values()))
         self.assertEqual(order["details"]["origin"], "AUTOMATIC_WALLET_COPY")
+        self.assertEqual(order["details"]["source_quote_mint"], QUOTE)
+        self.assertEqual(order["quote_mint"], "USD")
         self.assertFalse(order["details"]["real_trading"])
         self.assertFalse(order["details"]["transaction_broadcast"])
 

@@ -105,8 +105,8 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
     return outcomes
 
 
-def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="BOTH"):
-    """Queue confirmed swap candidates allowed by BUY, SELL, or BOTH copy mode."""
+def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="BOTH", copy_settings=None):
+    """Queue confirmed swaps using source-trade percentage or fixed USD paper sizing."""
     if not isinstance(allowed_sides, str) or allowed_sides.upper() not in ("BUY", "SELL", "BOTH", "NONE"):
         raise ValueError("allowed_sides must be BUY, SELL, BOTH, or NONE")
     mode = allowed_sides.upper()
@@ -116,6 +116,21 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
     if not isinstance(results, list):
         raise ValueError("Monitor results must be a list.")
     simulator = simulator or get_paper_simulator()
+    settings = copy_settings if isinstance(copy_settings, dict) else {}
+    sizing_mode = settings.get("sizing_mode", "SOURCE_PERCENT")
+    if sizing_mode not in ("SOURCE_PERCENT", "FIXED_USD"):
+        raise ValueError("sizing_mode must be SOURCE_PERCENT or FIXED_USD")
+    from decimal import Decimal
+    try:
+        sizing_value = Decimal(str(settings.get("sizing_value", 100 if sizing_mode == "SOURCE_PERCENT" else 10)))
+    except Exception as exc:
+        raise ValueError("sizing_value must be a positive number.") from exc
+    if not sizing_value.is_finite() or sizing_value <= 0:
+        raise ValueError("sizing_value must be a positive finite number.")
+    if sizing_mode == "SOURCE_PERCENT" and sizing_value > 100:
+        raise ValueError("Source-trade percentage must be between 0 and 100.")
+    if sizing_mode == "FIXED_USD" and sizing_value > Decimal("1000000"):
+        raise ValueError("Fixed USD paper size exceeds the safety limit.")
     queued = []
 
     for result in results:
@@ -189,14 +204,28 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
 
         signal_id = f"wallet-copy:{wallet_address}:{signature}"
         created_at = datetime.now(timezone.utc).isoformat()
+        source_quantity = abs(asset_amount)
+        target_notional_usd = None
+        if sizing_mode == "SOURCE_PERCENT":
+            order_quantity = source_quantity * sizing_value / Decimal("100")
+            if order_quantity <= 0:
+                continue
+        else:
+            # Convert USD notional to token quantity only after a fresh verified price is available.
+            order_quantity = Decimal("1")
+            target_notional_usd = str(sizing_value)
         order = simulator.create_order(
             signal_id=signal_id,
             side=side,
             asset_mint=asset_mint,
-            quantity=str(abs(asset_amount)),
+            quantity=str(order_quantity),
             quote_mint="USD",
             created_at=created_at,
             details={
+                "sizing_mode": sizing_mode,
+                "sizing_value": str(sizing_value),
+                "target_notional_usd": target_notional_usd,
+                "source_asset_quantity": str(source_quantity),
                 "origin": "AUTOMATIC_WALLET_COPY",
                 "source_quote_mint": quote_mint,
                 "source_quote_amount": str(abs(quote_amount)),
@@ -217,7 +246,10 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
             "order_id": order.get("order_id"),
             "side": side,
             "asset_mint": asset_mint,
-            "quantity": str(abs(asset_amount)),
+            "quantity": str(order_quantity),
+            "sizing_mode": sizing_mode,
+            "sizing_value": str(sizing_value),
+            "target_notional_usd": target_notional_usd,
             "source_quote_mint": quote_mint,
             "status": order.get("status"),
             "execution_state": "AWAITING_VERIFIED_MARKET_DATA",

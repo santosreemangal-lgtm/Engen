@@ -232,6 +232,16 @@ class PaperSimulator:
             if not isinstance(value,int) or isinstance(value,bool) or not 0 <= value <= 10000:
                 raise ValueError(f"{name} must be an integer from 0 to 10000.")
         qty = Decimal(order["quantity"])
+        target_notional = (order.get("details") or {}).get("target_notional_usd")
+        if target_notional is not None:
+            target_value = decimal_value(target_notional, "Target USD paper order size")
+            if target_value <= 0:
+                return self._reject(order, "Target USD paper order size must be positive.")
+            qty = target_value / market_price.price
+            if qty <= 0:
+                return self._reject(order, "Target USD paper order size produced an invalid quantity.")
+            order["quantity"] = str(qty)
+            self._persist(order)
         reference = market_price.price
         multiplier = Decimal(10000 + slippage_bps if order["side"] == "BUY" else 10000 - slippage_bps) / Decimal(10000)
         execution = reference * multiplier

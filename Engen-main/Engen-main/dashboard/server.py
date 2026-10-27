@@ -1,5 +1,5 @@
 
-"""Read-only web backend for the Solana Monitor dashboard."""
+"""Dashboard backend for read-only chain monitoring and paper-only simulation."""
 
 import json
 import os

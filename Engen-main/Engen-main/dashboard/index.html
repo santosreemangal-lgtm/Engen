@@ -58,6 +58,30 @@ footer.hint{padding:10px 4px;line-height:1.7}
 .profile-option{background:#26344d;color:var(--text);border:1px solid #3a4c68;box-shadow:none}
 .profile-option[aria-pressed="true"]{background:linear-gradient(120deg,#3a4d73,#263b54);border-color:#9aafff;box-shadow:inset 0 0 0 1px #829cff55}
 @media(max-width:760px){.profile-controls{grid-template-columns:1fr}}
+/* Organized wallet/profile workspace */
+.wallet-workspace{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:14px;align-items:start}
+.wallet-subsection{min-width:0;padding:18px;border:1px solid #2b3b55;border-radius:16px;background:linear-gradient(145deg,rgba(17,27,45,.96),rgba(11,18,31,.96))}
+.wallet-subsection.full{grid-column:1/-1}
+.wallet-section-head{display:flex;align-items:flex-start;gap:12px;margin:0 0 15px}
+.wallet-step{display:grid;place-items:center;flex:0 0 34px;height:34px;border:1px solid #40557a;border-radius:11px;background:#1c2b45;color:#b9c8ff;font-size:12px;font-weight:800;letter-spacing:.4px}
+.wallet-section-head h3{margin:0 0 4px;font-size:15px;letter-spacing:.1px}
+.wallet-section-head p{margin:0;color:var(--muted);font-size:12px;line-height:1.6}
+.wallet-subsection .field{margin:13px 0}
+.wallet-subsection .field:first-child{margin-top:0}
+.wallet-subsection .field:last-child{margin-bottom:0}
+.profile-controls{grid-template-columns:minmax(0,1fr) auto auto}
+.profile-options{padding-top:2px}
+.profile-options:empty{display:none}
+.wallet-profile-help{padding:10px 12px;border:1px solid #273852;border-radius:11px;background:#0b1423;color:#9eafcb;font-size:12px;line-height:1.6}
+.wallet-source-actions{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end}
+.wallet-source-actions .field{margin:0}
+.wallet-source-search{max-width:460px}
+.wallet-source-list{margin-top:12px;padding:0 14px;border:1px solid #273852;border-radius:12px;background:#0b1423}
+.wallet-source-list:empty{display:block}
+.wallet-activate{display:flex;align-items:center;justify-content:space-between;gap:16px}
+.wallet-activate p{margin:0;max-width:560px;color:var(--muted);font-size:12px;line-height:1.6}
+#wallet-message{padding:2px 2px;overflow-wrap:anywhere}
+@media(max-width:760px){.wallet-workspace{grid-template-columns:1fr}.wallet-subsection.full{grid-column:auto}.profile-controls{grid-template-columns:1fr}.wallet-source-actions{grid-template-columns:1fr}.wallet-source-search{max-width:none}.wallet-activate{align-items:stretch;flex-direction:column}.wallet-activate button{width:100%}}
 </style>
 </head>
 <body><main>
@@ -78,15 +102,29 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <p id="balance-message" class="message" role="status"></p>
 </section>
 
-<section class="panel"><div class="panel-head"><h2>Wallets &amp; Source Selection</h2><span id="wallet-count" class="status">0 saved</span></div>
-<div class="field"><label for="profile-select">Select your wallet profile</label><div class="profile-controls"><select id="profile-select" aria-label="Select your wallet profile"><option value="">No profile selected</option></select><button id="create-profile" type="button" class="secondary">Add Wallet Profile</button><button id="delete-profile" type="button" class="danger" disabled title="Select a saved profile before deleting it.">Delete Saved Profile</button></div><div id="profile-options" class="profile-options" aria-label="Saved profiles"></div><p id="profile-load-status" class="hint" role="status">Loading saved profiles…</p><p class="hint">Each profile has its own destination address and source-wallet list. Monitoring never starts automatically. Deleting a profile removes it from this list; its existing history is preserved.</p></div>
-<form id="profile-form" class="hidden field"><label for="profile-name">Wallet/profile name</label><div class="row"><input id="profile-name" maxlength="80" placeholder="e.g. Main wallet" required><input id="profile-address" placeholder="Your destination public address (optional)" autocomplete="off" spellcheck="false"><button id="create-profile-submit" type="submit">Create</button></div><p class="hint">Public address only. Never enter a seed phrase or private key.</p><p id="profile-form-message" class="message" role="status" aria-live="polite"></p></form>
-<div class="field"><label for="profile-address-edit">My Wallet · Destination public address</label><div class="row"><input id="profile-address-edit" placeholder="Your own Solana public address" autocomplete="off" spellcheck="false"><button id="save-destination" type="button">Save Address</button></div><p class="hint">This is your destination address, not a source trader to copy.</p></div>
-<div class="field"><label for="wallet-search">Search your saved source wallets</label><input id="wallet-search" placeholder="Filter saved public addresses…" autocomplete="off" spellcheck="false"><p class="hint">This searches addresses you have saved here; it does not discover or copy every public wallet on Solana.</p></div>
-<form id="wallet-form" class="row"><input id="wallet-address" autocomplete="off" spellcheck="false" placeholder="Add source trader public address" aria-label="Source trader public address" required><button id="add-wallet" type="submit">Add Source Wallet</button></form>
-<div class="field"><h3>Saved source wallets</h3><div id="wallet-list"><p class="empty">Loading wallets…</p></div></div>
-<div class="field"><button id="activate-profile" class="secondary" type="button">Activate Selected Profile</button><p class="hint">Only source wallets explicitly associated with this profile can be monitored.</p></div>
-<p id="wallet-message" class="message" role="status"></p>
+<section class="panel wallet-panel"><div class="panel-head"><div><h2>Wallets &amp; Source Selection</h2><p class="hint">Manage saved profiles first, then set the destination address and choose source wallets.</p></div><span id="wallet-count" class="status">0 saved</span></div>
+<div class="wallet-workspace">
+ <section class="wallet-subsection" aria-labelledby="profiles-heading">
+  <div class="wallet-section-head"><span class="wallet-step">01</span><div><h3 id="profiles-heading">Wallet Profiles</h3><p>Select a saved profile, create a new one, or remove a profile you no longer need.</p></div></div>
+  <div class="field"><label for="profile-select">Selected profile</label><div class="profile-controls"><select id="profile-select" aria-label="Select your wallet profile"><option value="">No profile selected</option></select><button id="create-profile" type="button" class="secondary">Add Profile</button><button id="delete-profile" type="button" class="danger" disabled title="Select a saved profile before deleting it.">Delete Profile</button></div><div id="profile-options" class="profile-options" aria-label="Saved profiles"></div><p id="profile-load-status" class="hint" role="status">Loading saved profiles…</p></div>
+  <div class="wallet-profile-help">Profiles keep their destination address and source-wallet selection separate. Creating or selecting a profile does not start monitoring. Existing history is preserved when a profile is deleted.</div>
+  <form id="profile-form" class="hidden field"><label for="profile-name">New profile name</label><div class="stack"><input id="profile-name" maxlength="80" placeholder="e.g. Main wallet" required><input id="profile-address" placeholder="Destination public address (optional)" autocomplete="off" spellcheck="false><button id="create-profile-submit" type="submit">Create Profile</button></div><p class="hint">Use a public address only. Never enter a seed phrase or private key.</p><p id="profile-form-message" class="message" role="status" aria-live="polite"></p></form>
+ </section>
+ <section class="wallet-subsection" aria-labelledby="destination-heading">
+  <div class="wallet-section-head"><span class="wallet-step">02</span><div><h3 id="destination-heading">Destination Wallet</h3><p>Your own public address. This is not a trader wallet to follow.</p></div></div>
+  <div class="field"><label for="profile-address-edit">Your Solana public address</label><div class="stack"><input id="profile-address-edit" placeholder="Enter your destination public address" autocomplete="off" spellcheck="false"><button id="save-destination" type="button">Save Destination Address</button></div><p class="hint">The destination address is saved to the selected profile. It must be a valid public address before the profile can be activated.</p></div>
+ </section>
+ <section class="wallet-subsection full" aria-labelledby="source-heading">
+  <div class="wallet-section-head"><span class="wallet-step">03</span><div><h3 id="source-heading">Source Wallets</h3><p>Add public trader addresses, then attach only the wallets you want associated with the selected profile.</p></div></div>
+  <form id="wallet-form" class="wallet-source-actions"><div class="field"><label for="wallet-address">Add source trader public address</label><input id="wallet-address" autocomplete="off" spellcheck="false" placeholder="Paste a source wallet public address" aria-label="Source trader public address" required></div><button id="add-wallet" type="submit">Add Source Wallet</button></form>
+  <div class="field wallet-source-search"><label for="wallet-search">Search saved source wallets</label><input id="wallet-search" placeholder="Filter by public address…" autocomplete="off" spellcheck="false><p class="hint">Searches only the addresses saved here; it does not discover wallets automatically.</p></div>
+  <div class="field"><h3>Saved Source Wallets</h3><div id="wallet-list" class="wallet-source-list"><p class="empty">Loading wallets…</p></div></div>
+ </section>
+ <section class="wallet-subsection full" aria-labelledby="activate-heading">
+  <div class="wallet-activate"><div class="wallet-section-head"><span class="wallet-step">04</span><div><h3 id="activate-heading">Review &amp; Activate</h3><p>Check the selected profile, destination address, and source wallet list before activating it. Monitoring still requires a separate explicit start action.</p></div></div><button id="activate-profile" class="secondary" type="button">Activate Selected Profile</button></div>
+ </section>
+</div>
+<p id="wallet-message" class="message" role="status" aria-live="polite"></p>
 </section>
 
 <section class="panel"><h2>Copy Settings</h2>

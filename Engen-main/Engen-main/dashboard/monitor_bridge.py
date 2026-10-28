@@ -2,6 +2,7 @@
 """Bridge between the dashboard and the read-only Solana engine."""
 
 import sqlite3
+from decimal import Decimal, InvalidOperation
 
 from engine.signature_store import SignatureStore
 from engine.transaction_monitor import monitor_wallet
@@ -52,6 +53,34 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             block_time = observation.get("block_time", item.get("block_time"))
             if not isinstance(block_time, int) or isinstance(block_time, bool) or block_time < 0:
                 block_time = None
+            # Preserve token amount only when RPC metadata supplies a mint, decimals,
+            # and an exact decimal change that converts cleanly to raw integer units.
+            token_mint = None
+            token_decimals = None
+            raw_amount = None
+            changes = item.get("token_balance_changes")
+            if isinstance(changes, list):
+                candidate_mints = signal.get("asset_mints")
+                candidate_mints = candidate_mints if isinstance(candidate_mints, list) else []
+                ordered_changes = sorted(
+                    (change for change in changes if isinstance(change, dict)),
+                    key=lambda change: 0 if change.get("mint") in candidate_mints else 1,
+                )
+                for change in ordered_changes:
+                    mint = change.get("mint")
+                    decimals = change.get("decimals")
+                    if not isinstance(mint, str) or not isinstance(decimals, int) or isinstance(decimals, bool) or not 0 <= decimals <= 30:
+                        continue
+                    try:
+                        scaled = abs(Decimal(str(change.get("delta_amount"))) * (Decimal(10) ** decimals))
+                    except (InvalidOperation, TypeError, ValueError):
+                        continue
+                    if not scaled.is_finite() or scaled != scaled.to_integral_value():
+                        continue
+                    token_mint = mint
+                    token_decimals = decimals
+                    raw_amount = str(int(scaled))
+                    break
             evidence = {
                 "metadata_status": str(item.get("metadata_status", "available"))[:80],
                 "confirmation_status": confirmation,
@@ -65,6 +94,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 profile_store.save_transaction(
                     signature, address, classification=classification, status=status,
                     evidence=evidence, slot=slot, block_time=block_time,
+                    raw_amount=raw_amount, token_mint=token_mint, token_decimals=token_decimals,
                     profile_ids=(profile_id,),
                 )
                 persisted.append({**item, "profile_history_status": "saved"})

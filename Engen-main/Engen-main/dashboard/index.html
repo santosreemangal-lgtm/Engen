@@ -217,7 +217,11 @@ async function loadMonitor(){
   const observed=Array.isArray(report.wallets)?report.wallets:[];
   const failed=observed.find(x=>x.state==="error");
   const connected=observed.filter(x=>x.state==="connected");
-  if(failed){say("monitor-message","Monitoring is enabled, but a source-wallet scan failed. "+(failed.last_error||"Check the configured RPC connection."));}
+  const historyFailed=observed.some(x=>(x.latest_results||[]).some(tx=>tx.profile_history_status==="save_failed"));
+  const queueFailed=observed.some(x=>(x.latest_results||[]).some(tx=>tx.paper_copy_error));
+  if(historyFailed){say("monitor-message","Read-only scanning is active, but transaction-history storage failed for at least one observation. The history may be incomplete.");}
+  else if(queueFailed){say("monitor-message","Read-only scanning is active, but a paper-order queue step failed. No real transaction was sent; check the paper-trade history and server logs.");}
+  else if(failed){say("monitor-message","Monitoring is enabled, but a source-wallet scan failed. "+(failed.last_error||"Check the configured RPC connection."));}
   else if(connected.length){const newest=connected.map(x=>x.last_successful_check).filter(Boolean).sort().at(-1);say("monitor-message","Read-only scan completed for "+connected.length+" wallet(s). Last successful check: "+(newest?new Date(newest).toLocaleString():"time unavailable")+". Paper-order outcomes are shown in Paper Trade History.");}
   else if(currentMonitor){say("monitor-message","Monitoring is enabled. Waiting for the first read-only RPC scan to finish.");}
   else if(!eligible){say("monitor-message",String(p.status||"").toLowerCase()!=="active"?"Activate this paper profile before starting monitoring.":"Add at least one public source wallet to this profile first.");}
@@ -321,8 +325,8 @@ async function loadTransactionHistory(){
  if(!selectedProfile){const p=document.createElement("p");p.className="empty";p.textContent="Select a profile to view observed transactions.";list.append(p);say("transaction-history-message","");return;}
  try{
   const d=await api("/api/profile-transactions?profile_id="+encodeURIComponent(selectedProfile)+"&page=1&page_size=25");
-  if(d.database_available===false){const p=document.createElement("p");p.className="empty";p.textContent="Transaction history storage is not available yet.";list.append(p);}
-  else if(!d.transactions?.length){const p=document.createElement("p");p.className="empty";p.textContent="No observed on-chain transactions stored for this profile yet. Start read-only monitoring to collect source-wallet activity.";list.append(p);}
+  if(d.database_available===false){const p=document.createElement("p");p.className="empty";p.textContent="Transaction history storage is not available yet.";list.append(p);say("transaction-history-message","History storage unavailable.");return;}
+  if(!d.transactions?.length){const p=document.createElement("p");p.className="empty";p.textContent="No observed on-chain transactions stored for this profile yet. Start read-only monitoring to collect source-wallet activity.";list.append(p);}
   (d.transactions||[]).forEach(tx=>{
    const item=document.createElement("article");item.className="history-item";
    const title=document.createElement("strong");title.textContent=(tx.classification||"UNKNOWN").replaceAll("_"," ")+" · "+(tx.status||"unknown");item.append(title);
@@ -362,7 +366,7 @@ let refreshInProgress = false;
 setInterval(async()=> {
   if(!backendReady || refreshInProgress) return;
   refreshInProgress = true;
-  try { await Promise.all([loadMonitor(), loadPortfolioForProfile()]); }
+  try { await Promise.all([loadMonitor(), loadPortfolioForProfile(), loadTransactionHistory()]); }
   finally { refreshInProgress = false; }
 },15000);
 </script></body></html>

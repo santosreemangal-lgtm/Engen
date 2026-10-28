@@ -578,6 +578,7 @@
         <div class="overview-item portfolio-item">
           <p class="overview-label">Portfolio Value</p>
           <p id="portfolio-value" class="overview-value">—</p>
+          <p class="muted">Requires verified USD prices for held tokens; unavailable until a price source is connected.</p>
           <label for="paper-fund-amount">Set starting balance (USD)</label>
           <form id="paper-initial-balance-form" class="form-row">
             <input id="paper-fund-amount" name="amount" type="number" min="0" step="any" placeholder="Enter starting balance" required>
@@ -588,14 +589,17 @@
         <div class="overview-item portfolio-item">
           <p class="overview-label">Available Balance</p>
           <p id="portfolio-available" class="overview-value">—</p>
+          <p class="muted">Unspent virtual USD in the paper-simulation ledger.</p>
         </div>
         <div class="overview-item portfolio-item">
           <p class="overview-label">Realized P&amp;L</p>
           <p id="portfolio-realized" class="overview-value">—</p>
+          <p class="muted">Calculated from recorded simulated fills; unavailable if no complete sale cost basis exists.</p>
         </div>
         <div class="overview-item portfolio-item">
           <p class="overview-label">Unrealized P&amp;L</p>
           <p id="portfolio-unrealized" class="overview-value">—</p>
+          <p class="muted">Requires fresh, verified USD prices for open token holdings.</p>
         </div>
       </div>
       <p id="portfolio-message" class="muted" role="status" aria-live="polite">Loading paper portfolio…</p>

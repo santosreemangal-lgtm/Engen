@@ -311,10 +311,43 @@ class ProfileStore:
               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
               (signature,source_wallet_address,slot,block_time,now,status,classification,
                evidence_json,amount,token_mint,token_decimals))
-            stored=db.execute("SELECT source_wallet_address FROM transactions WHERE signature=?",
+            stored=db.execute("SELECT * FROM transactions WHERE signature=?",
                               (signature,)).fetchone()
             if stored["source_wallet_address"] != source_wallet_address:
                 raise ValueError("Signature already stored for a different source wallet.")
+            # An RPC scan may first observe a pending signature and later receive
+            # confirmed metadata. Refresh details without downgrading terminal states.
+            old_status = stored["status"]
+            if old_status in {"confirmed", "failed"}:
+                effective_status = old_status
+            elif status == "unknown":
+                effective_status = old_status
+            else:
+                effective_status = status
+            effective_classification = (
+                classification if classification != "UNKNOWN" else stored["classification"]
+            )
+            try:
+                previous_evidence = json.loads(stored["evidence_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                previous_evidence = {}
+            merged_evidence = {**previous_evidence, **(evidence or {})}
+            merged_evidence_json = json.dumps(merged_evidence, sort_keys=True, allow_nan=False)
+            token_changed = token_mint is not None and stored["token_mint"] not in (None, token_mint)
+            effective_amount = (
+                amount if amount is not None or token_changed else stored["raw_amount"]
+            )
+            effective_mint = token_mint if token_mint is not None else stored["token_mint"]
+            effective_decimals = (
+                token_decimals if token_decimals is not None else stored["token_decimals"]
+            )
+            db.execute("""UPDATE transactions SET
+                slot=COALESCE(?,slot), block_time=COALESCE(?,block_time),
+                status=?, classification=?, evidence_json=?, raw_amount=?,
+                token_mint=?, token_decimals=? WHERE signature=?""",
+                (slot, block_time, effective_status, effective_classification,
+                 merged_evidence_json, effective_amount, effective_mint,
+                 effective_decimals, signature))
             for pid in dict.fromkeys(profile_ids):
                 if not db.execute("SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
                                   (pid,)).fetchone():

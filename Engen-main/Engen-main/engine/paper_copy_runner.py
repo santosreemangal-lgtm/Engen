@@ -122,7 +122,7 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
         raise ValueError("sizing_mode must be SOURCE_PERCENT or FIXED_USD")
     from decimal import Decimal
     try:
-        sizing_value = Decimal(str(settings.get("sizing_value", 100 if sizing_mode == "SOURCE_PERCENT" else 10)))
+        sizing_value = Decimal(str(settings.get("sizing_value", 5 if sizing_mode == "SOURCE_PERCENT" else 10)))
     except Exception as exc:
         raise ValueError("sizing_value must be a positive number.") from exc
     if not sizing_value.is_finite() or sizing_value <= 0:

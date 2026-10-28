@@ -127,8 +127,8 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
         raise ValueError("sizing_value must be a positive number.") from exc
     if not sizing_value.is_finite() or sizing_value <= 0:
         raise ValueError("sizing_value must be a positive finite number.")
-    if sizing_mode == "SOURCE_PERCENT" and sizing_value > 100:
-        raise ValueError("Source-trade percentage must be between 0 and 100.")
+    if sizing_mode == "SOURCE_PERCENT" and sizing_value >= 100:
+        raise ValueError("Source-trade percentage must be greater than 0 and strictly less than 100.")
     if sizing_mode == "FIXED_USD" and sizing_value > Decimal("1000000"):
         raise ValueError("Fixed USD paper size exceeds the safety limit.")
     queued = []

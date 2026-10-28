@@ -217,5 +217,78 @@ class MonitorServiceTests(unittest.TestCase):
                 worker.join(timeout=3)
 
 
+
+    def test_handles_available_result_and_acknowledges_signature(self):
+        handled = []
+        acknowledged = []
+        completed = threading.Event()
+
+        scan_count = 0
+
+        def fake_scan(address):
+            nonlocal scan_count
+            scan_count += 1
+            if scan_count == 1:
+                return [{"signature": "paper-signature", "available": True}]
+            return []
+
+        fake_scan.mark_processed = lambda address, signature: acknowledged.append(
+            (address, signature)
+        )
+
+        def on_result(address, result):
+            handled.append((address, result["signature"]))
+            completed.set()
+
+        service = MonitorService(fake_scan, interval=30, on_result=on_result)
+        service._interval = 0
+        try:
+            service.start(["public_wallet"])
+            self.assertTrue(completed.wait(timeout=3))
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline and not acknowledged:
+                time.sleep(0.01)
+            self.assertEqual(handled, [("public_wallet", "paper-signature")])
+            self.assertEqual(acknowledged, [("public_wallet", "paper-signature")])
+        finally:
+            service.stop()
+            worker = service._thread
+            if worker is not None:
+                worker.join(timeout=3)
+
+
+    def test_rejects_empty_wallet_list(self):
+        service = MonitorService(lambda address: [], interval=30)
+        with self.assertRaises(ValueError):
+            service.start([])
+        self.assertFalse(service.status()["enabled"])
+
+
+    def test_does_not_acknowledge_without_result_handler(self):
+        acknowledged = []
+        scan_count = 0
+
+        def fake_scan(address):
+            nonlocal scan_count
+            scan_count += 1
+            if scan_count == 1:
+                return [{"signature": "pending-signature", "available": True}]
+            return []
+
+        fake_scan.mark_processed = lambda address, signature: acknowledged.append(
+            (address, signature)
+        )
+        service = MonitorService(fake_scan, interval=30)
+        service._interval = 0
+        try:
+            service.start(["public_wallet"])
+            time.sleep(0.05)
+            self.assertEqual(acknowledged, [])
+        finally:
+            service.stop()
+            worker = service._thread
+            if worker is not None:
+                worker.join(timeout=3)
+
 if __name__ == "__main__":
     unittest.main()

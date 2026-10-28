@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 class MonitorService:
     """Manage opt-in, read-only monitoring for saved wallet addresses."""
 
-    def __init__(self, scan_function, interval=30):
+    def __init__(self, scan_function, interval=30, on_result=None):
         if not callable(scan_function):
             raise ValueError("scan_function must be callable.")
 
@@ -20,6 +20,9 @@ class MonitorService:
             raise ValueError("Monitoring interval must be at least 30 seconds.")
 
         self._scan_function = scan_function
+        if on_result is not None and not callable(on_result):
+            raise ValueError("on_result must be callable when provided.")
+        self._on_result = on_result
         self._interval = interval
         self._lock = threading.RLock()
         self._lifecycle_lock = threading.Lock()
@@ -67,6 +70,9 @@ class MonitorService:
 
             if address not in cleaned:
                 cleaned.append(address)
+
+        if not cleaned:
+            raise ValueError("At least one valid public wallet address is required.")
 
         # Serialize start/stop operations so two callers cannot create
         # overlapping monitor threads.
@@ -148,6 +154,39 @@ class MonitorService:
 
                         if not isinstance(results, list):
                             results = []
+
+                        # Handle each newly observed transaction immediately
+                        # after scanning. Unavailable records remain pending
+                        # for retry; successful callback completion acknowledges
+                        # the signature so restarts do not duplicate paper trades.
+                        for result in results:
+                            if self._stop_event.is_set():
+                                break
+                            if not isinstance(result, dict):
+                                continue
+                            if result.get("available") is not True:
+                                continue
+                            try:
+                                # Never acknowledge a signature unless a
+                                # handler actually processed the result.
+                                if self._on_result is None:
+                                    continue
+                                self._on_result(address, result)
+                                marker = getattr(
+                                    self._scan_function,
+                                    "mark_processed",
+                                    None,
+                                )
+                                signature = result.get("signature")
+                                if (
+                                    callable(marker)
+                                    and isinstance(signature, str)
+                                    and signature.strip()
+                                ):
+                                    marker(address, signature)
+                            except Exception:
+                                # Leave the signature pending for a later retry.
+                                raise
 
                         with self._lock:
                             if address in self._wallets:

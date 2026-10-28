@@ -291,6 +291,75 @@ class TransactionMonitorTests(unittest.TestCase):
             "BUY_CANDIDATE",
         )
 
+    @patch("engine.transaction_monitor.get_signature_status")
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_recovers_missing_confirmation_from_status_rpc(self, mock_process, mock_status):
+        wallet = "11111111111111111111111111111111"
+        signature = "1" * 64
+        mock_process.return_value = {
+            "signature": signature,
+            "available": True,
+            "metadata_complete": True,
+            "status": "success",
+            "signers": [wallet],
+            "token_balance_changes": [
+                {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "500"},
+                {
+                    "owner": wallet,
+                    "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    "delta_amount": "-1000000",
+                },
+            ],
+        }
+        mock_status.return_value = {
+            "confirmationStatus": "finalized", "slot": 123, "err": None,
+        }
+
+        result = process_new_signatures(
+            signatures=[{"signature": signature}],
+            wallet_address=wallet,
+            rpc_url="https://rpc.example",
+            timeout=7,
+        )[0]
+
+        self.assertEqual(result["signature_observation"]["confirmation_status"], "finalized")
+        self.assertEqual(result["trade_signal"]["classification"], "BUY_CANDIDATE")
+        mock_status.assert_called_once_with(
+            signature, rpc_url="https://rpc.example", timeout=7,
+        )
+
+    @patch("engine.transaction_monitor.get_signature_status")
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_missing_confirmation_and_missing_status_stays_unknown(
+        self, mock_process, mock_status,
+    ):
+        wallet = "11111111111111111111111111111111"
+        signature = "1" * 64
+        mock_process.return_value = {
+            "signature": signature,
+            "available": True,
+            "metadata_complete": True,
+            "status": "success",
+            "signers": [wallet],
+            "token_balance_changes": [
+                {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "500"},
+                {
+                    "owner": wallet,
+                    "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    "delta_amount": "-1000000",
+                },
+            ],
+        }
+        mock_status.return_value = None
+
+        result = process_new_signatures(
+            signatures=[{"signature": signature}], wallet_address=wallet,
+        )[0]
+
+        self.assertEqual(result["trade_signal"]["classification"], "UNKNOWN")
+        self.assertFalse(result["confirmation_sufficient"])
+        self.assertTrue(result["retryable"])
+
     @patch("engine.transaction_monitor.process_transaction_signature")
     def test_unknown_when_monitored_wallet_is_not_a_signer(
         self,

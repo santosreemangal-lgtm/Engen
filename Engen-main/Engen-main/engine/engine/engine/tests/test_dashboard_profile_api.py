@@ -114,6 +114,63 @@ class DashboardProfileApiTests(unittest.TestCase):
                 http.server_close()
                 thread.join(timeout=3)
 
+    def test_api_can_adjust_virtual_usd_balance_with_audit_history(self):
+        data_dir = Path(self.temp.name) / "profile-data"
+        with patch.object(dashboard_server, "DASHBOARD_AUTH_TOKEN", ""), \
+             patch.object(paper_copy_runner, "PROFILE_DATA_DIR", data_dir):
+            http = ThreadingHTTPServer(("127.0.0.1", 0), dashboard_server.DashboardHandler)
+            thread = threading.Thread(target=http.serve_forever, daemon=True)
+            thread.start()
+            base = "http://127.0.0.1:%s" % http.server_port
+
+            def request_json(path, payload=None):
+                data = None if payload is None else json.dumps(payload).encode("utf-8")
+                headers = {} if payload is None else {"Content-Type": "application/json"}
+                request = Request(
+                    base + path, data=data, headers=headers,
+                    method="GET" if payload is None else "POST",
+                )
+                try:
+                    with urlopen(request, timeout=3) as response:
+                        return response.status, json.loads(response.read().decode("utf-8"))
+                except HTTPError as error:
+                    return error.code, json.loads(error.read().decode("utf-8"))
+
+            try:
+                status, body = request_json("/api/paper-simulation", {
+                    "action": "set-initial-balance", "profile_id": self.profile_id,
+                    "mint": "USD", "amount": "1000",
+                })
+                self.assertEqual(status, 200)
+                self.assertEqual(body["result"]["balance"], "1000")
+                self.assertFalse(body["result"]["real_trading"])
+                self.assertFalse(body["result"]["transaction_broadcast"])
+
+                status, body = request_json("/api/paper-simulation", {
+                    "action": "set-balance", "profile_id": self.profile_id,
+                    "mint": "USD", "amount": "625.50",
+                })
+                self.assertEqual(status, 200)
+                self.assertEqual(body["result"]["adjustment"], "-374.50")
+                self.assertEqual(body["result"]["balance"], "625.50")
+                self.assertEqual(body["report"]["initial_balance"], "1000")
+                self.assertEqual(body["report"]["balances"]["USD"], "625.50")
+                self.assertEqual(body["report"]["transactions"][-1]["kind"], "BALANCE_ADJUSTMENT")
+                self.assertEqual(body["report"]["transactions"][-1]["amount"], "-374.50")
+                self.assertFalse(body["report"]["real_trading"])
+                self.assertFalse(body["report"]["transaction_broadcast"])
+
+                status, body = request_json("/api/paper-simulation", {
+                    "action": "set-balance", "profile_id": self.profile_id,
+                    "mint": "USD", "amount": "-1",
+                })
+                self.assertEqual(status, 400)
+                self.assertIn("non-negative", body["error"])
+            finally:
+                http.shutdown()
+                http.server_close()
+                thread.join(timeout=3)
+
     def test_profile_report_includes_provenance_and_marks_observed_not_simulated(self):
         self.store.save_balance_snapshot(
             self.profile_id, PUBLIC_WALLET, TOKEN_MINT, "1250000", 6,

@@ -327,7 +327,7 @@ def set_profile_virtual_balance(profile_id, amount):
             "balance_updated": True, "real_trading": False, "transaction_broadcast": False}
 
 def load_profile_paper_simulation_report(profile_id):
-    """Return the selected profile's isolated paper simulator, balances and history."""
+    """Read one profile's isolated paper simulator and preserve legacy paper history."""
     profile_id = canonical_profile_id(profile_id)
     base = {
         "mode": "PAPER_SIMULATION", "simulated": True,
@@ -337,11 +337,9 @@ def load_profile_paper_simulation_report(profile_id):
         "available_balance": None, "available_balance_usd": None,
         "initial_balance": None, "portfolio_value_usd": None,
         "realized_pnl_usd": None, "unrealized_pnl_usd": None,
-        "pnl": {
-            "cost_basis_method": "average_cost", "currency": "USD",
-            "realized_by_mint": {},
-            "unrealized_status": "unavailable_no_verified_fresh_market_price",
-        },
+        "pnl": {"cost_basis_method": "average_cost", "currency": "USD",
+                "realized_by_mint": {},
+                "unrealized_status": "unavailable_no_verified_fresh_market_price"},
     }
     if not PROFILE_STORE_DB.is_file():
         base["error"] = "Profile database is unavailable."
@@ -359,17 +357,57 @@ def load_profile_paper_simulation_report(profile_id):
         if not path.is_file():
             return base
         with paper_simulator_lock:
-            report = get_profile_paper_simulator(profile_id).report()
-        base["balances"] = report.get("balances", {})
-        base["available_balance"] = base["balances"].get("USD")
+            simulator_report = get_profile_paper_simulator(profile_id).report()
+            sim_balances = dict(simulator_report.get("balances", {}))
+            sim_orders = list(simulator_report.get("orders", []))
+            sim_fills = list(simulator_report.get("fills", []))
+        # Keep the older PaperTrader ledger visible while the dashboard and
+        # monitor use PaperSimulator. Do not fabricate missing quote amounts.
+        legacy_balances = {}
+        legacy_orders = []
+        with sqlite3.connect("file:" + str(path.resolve()) + "?mode=ro", uri=True) as db:
+            tables = {row[0] for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            if "paper_balances" in tables:
+                legacy_balances = {
+                    mint: amount for mint, amount in db.execute(
+                        "SELECT mint,amount FROM paper_balances ORDER BY mint")
+                }
+            if "paper_trades" in tables:
+                columns = {row[1] for row in db.execute("PRAGMA table_info(paper_trades)")}
+                quote_amount_sql = "quote_amount" if "quote_amount" in columns else "NULL AS quote_amount"
+                query = (
+                    "SELECT id,signature,side,asset_mint,asset_amount,quote_mint,"
+                    + quote_amount_sql + ",status,created_at FROM paper_trades "
+                    "ORDER BY id DESC LIMIT 100"
+                )
+                for row in db.execute(query):
+                    legacy_orders.append({
+                        "order_id": "legacy-paper-" + str(row[0]),
+                        "signal_id": row[1], "side": row[2],
+                        "asset_mint": row[3], "quantity": row[4],
+                        "quote_mint": row[5], "quote_amount": row[6],
+                        "status": row[7], "reason": None, "created_at": row[8],
+                        "details": {"origin": "LEGACY_PAPER_TRADER",
+                                    "real_trading": False, "transaction_broadcast": False},
+                        "history_source": "LEGACY_PAPER_TRADER", "simulated": True,
+                        "real_trading": False, "transaction_broadcast": False,
+                    })
+        # The simulator cash balance wins; legacy token balances/history survive.
+        base["balances"] = {**legacy_balances, **sim_balances}
+        base["available_balance"] = sim_balances.get("USD", legacy_balances.get("USD"))
         base["available_balance_usd"] = base["available_balance"]
-        base["initial_balance"] = report.get("initial_balance")
-        base["orders"] = [
+        base["initial_balance"] = simulator_report.get("initial_balance")
+        simulator_orders = [
             {**order, "simulated": True, "real_trading": False, "transaction_broadcast": False}
-            for order in report.get("orders", [])
+            for order in sim_orders
         ]
-        base["fills"] = report.get("fills", [])
-        base["pnl"] = report.get("pnl", base["pnl"])
+        base["orders"] = sorted(
+            simulator_orders + legacy_orders,
+            key=lambda item: str(item.get("created_at") or ""), reverse=True
+        )[:100]
+        base["fills"] = sim_fills
+        base["pnl"] = simulator_report.get("pnl", base["pnl"])
         realized = base["pnl"].get("realized_by_mint", {})
         if not realized:
             base["realized_pnl_usd"] = "0"
@@ -383,9 +421,9 @@ def load_profile_paper_simulation_report(profile_id):
             mint != "USD" and Decimal(str(amount)) != 0
             for mint, amount in base["balances"].items()
         )
-        # With no unpriced token holdings, cash is the known portfolio value.
-        # Once tokens are held, a verified fresh price is required to value them.
-        base["portfolio_value_usd"] = None if has_unpriced_holdings else base["available_balance"]
+        base["portfolio_value_usd"] = (
+            None if has_unpriced_holdings else base["available_balance"]
+        )
         base["unrealized_pnl_usd"] = None if has_unpriced_holdings else "0"
         base["database_available"] = True
         base["real_trading"] = False

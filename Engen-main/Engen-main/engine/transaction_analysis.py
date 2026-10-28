@@ -5,6 +5,7 @@ import re
 
 
 WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112"
+PUMP_FUN_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 NATIVE_SOL_SOURCE = "native_sol"
 
 # Recognized SPL quote-token mints.
@@ -535,6 +536,124 @@ def classify_token_balance_changes(token_balance_changes, wallet_address):
     )
 
 
+
+def _pumpfun_instruction_action(transaction):
+    """Return BUY, SELL, or AMBIGUOUS only for Pump.fun instruction logs.
+
+    The action log must belong to a transaction instruction invoking the
+    known Pump.fun program. Balance deltas are checked separately before a
+    trade candidate is emitted.
+    """
+    if not isinstance(transaction, Mapping):
+        return None
+
+    transaction_data = transaction.get("transaction")
+    message = (
+        transaction_data.get("message")
+        if isinstance(transaction_data, Mapping) else None
+    )
+    meta = transaction.get("meta")
+    if not isinstance(message, Mapping) or not isinstance(meta, Mapping):
+        return None
+
+    logs = meta.get("logMessages")
+    if not isinstance(logs, list):
+        return None
+
+    account_keys = message.get("accountKeys", [])
+    if not isinstance(account_keys, list):
+        account_keys = []
+
+    def normalize_pubkey(item):
+        if isinstance(item, str) and item:
+            return item
+        if isinstance(item, Mapping):
+            pubkey = item.get("pubkey")
+            if isinstance(pubkey, str) and pubkey:
+                return pubkey
+        return None
+
+    program_ids = set()
+
+    def include_program_id(instruction):
+        if not isinstance(instruction, Mapping):
+            return
+        program_id = instruction.get("programId")
+        program_id_index = instruction.get("programIdIndex")
+        if (
+            not isinstance(program_id, str)
+            and isinstance(program_id_index, int)
+            and not isinstance(program_id_index, bool)
+            and 0 <= program_id_index < len(account_keys)
+        ):
+            program_id = normalize_pubkey(account_keys[program_id_index])
+        if isinstance(program_id, str):
+            program_ids.add(program_id)
+
+    outer_instructions = message.get("instructions", [])
+    if isinstance(outer_instructions, list):
+        for instruction in outer_instructions:
+            include_program_id(instruction)
+
+    inner_groups = meta.get("innerInstructions", [])
+    if isinstance(inner_groups, list):
+        for group in inner_groups:
+            if not isinstance(group, Mapping):
+                continue
+            inner_instructions = group.get("instructions", [])
+            if isinstance(inner_instructions, list):
+                for instruction in inner_instructions:
+                    include_program_id(instruction)
+
+    if PUMP_FUN_PROGRAM_ID not in program_ids:
+        return None
+
+    invocation_stack = []
+    actions = set()
+    for line in logs:
+        if not isinstance(line, str):
+            continue
+
+        invocation = re.fullmatch(r"Program (\\S+) invoke \\[(\\d+)\\]", line)
+        if invocation:
+            depth = int(invocation.group(2))
+            if depth < 1:
+                continue
+            invocation_stack = invocation_stack[:depth - 1]
+            invocation_stack.append(invocation.group(1))
+            continue
+
+        completed = re.fullmatch(
+            r"Program (\\S+) (?:success|failed(?::.*)?)",
+            line,
+        )
+        if completed:
+            completed_program = completed.group(1)
+            for index in range(len(invocation_stack) - 1, -1, -1):
+                if invocation_stack[index] == completed_program:
+                    invocation_stack = invocation_stack[:index]
+                    break
+            continue
+
+        prefix = "Program log: Instruction: "
+        if not invocation_stack or invocation_stack[-1] != PUMP_FUN_PROGRAM_ID:
+            continue
+        if not line.startswith(prefix):
+            continue
+
+        instruction_name = line[len(prefix):].strip()
+        if instruction_name in ("Buy", "BuyV2"):
+            actions.add("BUY")
+        elif instruction_name in ("Sell", "SellV2"):
+            actions.add("SELL")
+
+    if len(actions) == 1:
+        return next(iter(actions))
+    if len(actions) > 1:
+        return "AMBIGUOUS"
+    return None
+
+
 def classify_transaction(transaction, wallet_address, balance_changes=None):
     """Classify conservatively and return auditable evidence and confidence.
 
@@ -621,7 +740,125 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
         for item in (base_changes if isinstance(base_changes, list) else [])
         if isinstance(item, Mapping) and item.get("owner") == wallet_address
     ]
+    pumpfun_action = _pumpfun_instruction_action(transaction)
     candidate = signal.get("classification") in ("BUY_CANDIDATE", "SELL_CANDIDATE")
+
+    # Pump.fun can use a quote mint outside the static USDC/USDT/WSOL list.
+    # Its successful instruction log supplies direction, but wallet-owned
+    # balance deltas must independently agree before emitting a candidate.
+    if pumpfun_action in ("BUY", "SELL"):
+        pumpfun_token_deltas = {}
+        pumpfun_native_sol_delta = 0
+        for item in (base_changes if isinstance(base_changes, list) else []):
+            if not isinstance(item, Mapping) or item.get("owner") != wallet_address:
+                continue
+            mint = item.get("mint")
+            raw_delta = item.get("delta_amount")
+            if (
+                not isinstance(mint, str)
+                or not isinstance(raw_delta, str)
+                or re.fullmatch(r"-?\\d+", raw_delta) is None
+            ):
+                continue
+            delta = int(raw_delta)
+            if delta == 0:
+                continue
+            if item.get("source") == NATIVE_SOL_SOURCE:
+                if mint == WRAPPED_SOL_MINT and item.get("decimals") == 9:
+                    pumpfun_native_sol_delta += delta
+                continue
+            pumpfun_token_deltas[mint] = pumpfun_token_deltas.get(mint, 0) + delta
+
+        pumpfun_token_deltas = {
+            mint: delta
+            for mint, delta in pumpfun_token_deltas.items()
+            if delta != 0
+        }
+        received_mints = sorted(
+            mint for mint, delta in pumpfun_token_deltas.items() if delta > 0
+        )
+        spent_mints = sorted(
+            mint for mint, delta in pumpfun_token_deltas.items() if delta < 0
+        )
+
+        if pumpfun_action == "BUY":
+            asset_mints = [
+                mint for mint in received_mints
+                if mint not in QUOTE_TOKEN_MINTS
+            ]
+            payment_present = bool(spent_mints) or pumpfun_native_sol_delta < 0
+            if (
+                len(received_mints) == 1
+                and len(asset_mints) == 1
+                and payment_present
+            ):
+                quote_mints = spent_mints[:]
+                if not quote_mints and pumpfun_native_sol_delta < 0:
+                    quote_mints = [WRAPPED_SOL_MINT]
+                signal = {
+                    "classification": "BUY_CANDIDATE",
+                    "reason": (
+                        "A successful Pump.fun buy instruction was observed "
+                        "and wallet-owned token balance changes agree with a buy."
+                    ),
+                    "asset_mints": asset_mints,
+                    "quote_mints": quote_mints,
+                }
+                candidate = True
+            else:
+                signal = {
+                    "classification": "UNKNOWN",
+                    "reason": (
+                        "Pump.fun buy was observed, but wallet-owned balance "
+                        "changes do not unambiguously confirm the buy direction."
+                    ),
+                    "asset_mints": [],
+                    "quote_mints": [],
+                }
+                candidate = False
+        else:
+            asset_mints = [
+                mint for mint in spent_mints
+                if mint not in QUOTE_TOKEN_MINTS
+            ]
+            payment_present = bool(received_mints) or pumpfun_native_sol_delta > 0
+            if (
+                len(spent_mints) == 1
+                and len(asset_mints) == 1
+                and payment_present
+            ):
+                quote_mints = received_mints[:]
+                if not quote_mints and pumpfun_native_sol_delta > 0:
+                    quote_mints = [WRAPPED_SOL_MINT]
+                signal = {
+                    "classification": "SELL_CANDIDATE",
+                    "reason": (
+                        "A successful Pump.fun sell instruction was observed "
+                        "and wallet-owned token balance changes agree with a sell."
+                    ),
+                    "asset_mints": asset_mints,
+                    "quote_mints": quote_mints,
+                }
+                candidate = True
+            else:
+                signal = {
+                    "classification": "UNKNOWN",
+                    "reason": (
+                        "Pump.fun sell was observed, but wallet-owned balance "
+                        "changes do not unambiguously confirm the sell direction."
+                    ),
+                    "asset_mints": [],
+                    "quote_mints": [],
+                }
+                candidate = False
+    elif pumpfun_action == "AMBIGUOUS":
+        signal = {
+            "classification": "UNKNOWN",
+            "reason": "Conflicting Pump.fun buy/sell instructions were observed.",
+            "asset_mints": [],
+            "quote_mints": [],
+        }
+        candidate = False
     # If raw transaction context is available, a transfer/account-lifecycle
     # pattern plus balance deltas is not enough to prove a swap. Prefer UNKNOWN
     # unless a recognizable swap instruction/program is also present.
@@ -636,7 +873,7 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
             )
             if value is not None
         )
-        explicit_swap_context = any(
+        explicit_swap_context = pumpfun_action in ("BUY", "SELL") or any(
             marker in instruction_text
             for marker in (
                 "swap", "jupiter", "raydium", "orca", "lifinity",
@@ -677,6 +914,7 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
             "instruction_context": instructions,
             "fee_lamports": fee,
             "classification_basis": "wallet-owned raw balance deltas plus available instruction context",
+            "pumpfun_instruction_action": pumpfun_action,
             "limitations": [
                 "Balance deltas do not prove an economic swap.",
                 "Native SOL deltas can include transfers, rent, account creation, and other SOL uses.",

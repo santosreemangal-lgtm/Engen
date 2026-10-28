@@ -33,6 +33,18 @@ class ProfileStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get_profile(a)["source_wallets"], [PUBLIC_ADDRESS])
         self.assertEqual(self.store.get_profile(b)["source_wallets"], [PUBLIC_ADDRESS])
 
+    def test_source_wallet_can_be_removed_from_one_profile_only(self):
+        first = self.store.create_profile("First")
+        second = self.store.create_profile("Second")
+        self.store.associate_source_wallet(first, PUBLIC_ADDRESS)
+        self.store.associate_source_wallet(second, PUBLIC_ADDRESS)
+
+        self.assertTrue(self.store.disassociate_source_wallet(first, PUBLIC_ADDRESS))
+        self.assertEqual(self.store.get_profile(first)["source_wallets"], [])
+        self.assertEqual(self.store.get_profile(second)["source_wallets"], [PUBLIC_ADDRESS])
+        with self.assertRaisesRegex(ValueError, "not associated"):
+            self.store.disassociate_source_wallet(first, PUBLIC_ADDRESS)
+
     def test_secret_setting_fields_are_rejected(self):
         with self.assertRaises(ValueError):
             self.store.create_profile("Unsafe", settings={"private_key": "x"})

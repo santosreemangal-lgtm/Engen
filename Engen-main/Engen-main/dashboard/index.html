@@ -126,16 +126,54 @@ function money(value){const n=Number(value);return Number.isFinite(n)?"$"+n.toLo
 function say(id,text){$(id).textContent=text;}
 function post(path,payload){return api(path,{method:"POST",body:JSON.stringify(payload)});}
 function renderWallets(){
- const list=$("wallet-list");list.replaceChildren();const q=$("wallet-search").value.trim().toLowerCase();const visible=wallets.filter(a=>a.toLowerCase().includes(q));
- if(!visible.length){const p=document.createElement("p");p.className="empty";p.textContent=wallets.length?"No saved source address matches that search.":"No saved source wallets yet. Add a public address above.";list.append(p);}
+ const list=$("wallet-list");
+ list.replaceChildren();
+ const q=$("wallet-search").value.trim().toLowerCase();
+ const visible=wallets.filter(address=>address.toLowerCase().includes(q));
+ const profile=selected();
+ const assigned=Array.isArray(profile?.source_wallets)?profile.source_wallets:[];
+ $("wallet-count").textContent=wallets.length+" saved · "+assigned.length+" selected";
+ if(!visible.length){
+  const p=document.createElement("p");p.className="empty";
+  p.textContent=wallets.length?"No saved source address matches that search.":"No saved source wallets yet. Add a public address above.";
+  list.append(p);
+ }
  visible.forEach(address=>{
   const row=document.createElement("div");row.className="wallet";
   const code=document.createElement("div");code.className="address";code.textContent=address;
   const actions=document.createElement("div");actions.className="wallet-actions";
-  const assigned=selected()?.source_wallets||[];const isAssigned=assigned.includes(address);
-  const assign=document.createElement("button");assign.className="secondary";assign.textContent=isAssigned?"Assigned to profile":"Add to profile";assign.disabled=!selectedProfile||isAssigned;
-  assign.addEventListener("click",async()=>{try{await post("/api/profiles",{action:"associate-source-wallet",profile_id:selectedProfile,wallet_address:address});say("wallet-message","Source wallet associated with selected profile only.");await loadProfiles();renderWallets();}catch(e){say("wallet-message",e.message);}});
-  const remove=document.createElement("button");remove.className="danger";remove.textContent="Remove saved";remove.addEventListener("click",async()=>{try{await post("/api/wallets",{action:"remove",address});say("wallet-message","Saved source wallet removed.");await loadWallets();}catch(e){say("wallet-message",e.message);}});
+  const isAssigned=assigned.includes(address);
+  const usedByProfiles=profiles.filter(item=>(item.source_wallets||[]).includes(address));
+  const assign=document.createElement("button");assign.className="secondary";
+  assign.textContent=currentMonitor?"Stop monitoring to edit":(isAssigned?"Remove from profile":"Add to profile");
+  assign.disabled=!selectedProfile||currentMonitor;
+  assign.addEventListener("click",async()=>{
+   if(!selectedProfile){say("wallet-message","Create or select a profile first.");return;}
+   if(currentMonitor){say("wallet-message","Stop monitoring before changing source-wallet selection.");return;}
+   assign.disabled=true;
+   const action=isAssigned?"disassociate-source-wallet":"associate-source-wallet";
+   try{
+    await post("/api/profiles",{action,profile_id:selectedProfile,wallet_address:address});
+    say("wallet-message",isAssigned
+     ?"Source wallet removed from the selected profile. It remains in your saved list."
+     :"Source wallet associated with the selected profile.");
+    await loadProfiles();
+   }catch(e){say("wallet-message",e.message);}
+   finally{if(assign.isConnected)assign.disabled=!selectedProfile||currentMonitor;}
+  });
+  const remove=document.createElement("button");remove.className="danger";
+  remove.textContent=usedByProfiles.length?"In use by profile":"Remove saved";
+  remove.disabled=usedByProfiles.length>0;
+  remove.title=usedByProfiles.length
+   ?"Remove this source wallet from each profile before deleting it from the saved list."
+   :"Remove this unused source wallet from the saved list.";
+  remove.addEventListener("click",async()=>{
+   try{
+    await post("/api/wallets",{action:"remove",address});
+    say("wallet-message","Saved source wallet removed.");
+    await loadWallets();
+   }catch(e){say("wallet-message",e.message);}
+  });
   actions.append(assign,remove);row.append(code,actions);list.append(row);
  });
 }
@@ -151,7 +189,8 @@ async function loadWallets(){
 async function loadMonitor(){
  if(!selectedProfile){
   currentMonitor=false;say("monitor-state","Select a profile");
-  $("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;return;
+  $("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;
+  renderWallets();return;
  }
  try{
   const d=await api("/api/profile-monitor?profile_id="+encodeURIComponent(selectedProfile));
@@ -162,10 +201,12 @@ async function loadMonitor(){
   $("start-monitoring").disabled=currentMonitor||profileStatus!=="active";
   $("stop-monitoring").disabled=!currentMonitor;
   if(currentMonitor)say("monitor-message","Read-only monitoring is running for this profile's selected source wallets.");
+  renderWallets();
  }catch(e){
   currentMonitor=false;say("monitor-state","Status unavailable");
   $("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;
   say("monitor-message",e.message);
+  renderWallets();
  }
 }
 async function loadProfiles(){
@@ -175,6 +216,9 @@ async function loadProfiles(){
   profiles.forEach(p=>{const o=document.createElement("option");o.value=p.profile_id;o.textContent=p.name+(p.destination_public_address?" · "+p.destination_public_address.slice(0,6)+"…":"");sel.append(o);});
   if(selectedProfile&&profiles.some(p=>p.profile_id===selectedProfile))sel.value=selectedProfile;else{selectedProfile=profiles[0]?.profile_id||"";sel.value=selectedProfile;}
   $("profile-address-edit").value=selected()?.destination_public_address||"";
+  $("profile-address-edit").disabled=!selectedProfile;
+  $("save-destination").disabled=!selectedProfile;
+  $("activate-profile").disabled=!selectedProfile||selected()?.status==="active";
   renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();await loadHistory();await loadTradeHistory();await loadBalanceHistory();renderWallets();
  }catch(e){say("wallet-message","Profiles unavailable: "+e.message);}
 }
@@ -232,7 +276,7 @@ function updateAmountLabel(){
 }
 document.querySelectorAll('input[name="sizing"]').forEach(x=>x.addEventListener("change",updateAmountLabel));
 $("amount-value").addEventListener("input",updateAmountLabel);
-$("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const address=$("wallet-address").value.trim();try{await post("/api/wallets",{action:"add",address});$("wallet-address").value="";say("wallet-message","Wallet saved.");await loadWallets();}catch(err){say("wallet-message",err.message);}});
+$("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const address=$("wallet-address").value.trim();$("add-wallet").disabled=true;try{await post("/api/wallets",{action:"add",address});$("wallet-address").value="";say("wallet-message","Source wallet saved. Use Add to profile to select it for the chosen profile.");await loadWallets();}catch(err){say("wallet-message",err.message);}finally{$("add-wallet").disabled=false;}});
 $("create-profile").addEventListener("click",()=>$("profile-form").classList.toggle("hidden"));
 $("profile-form").addEventListener("submit",async e=>{e.preventDefault();try{const d=await post("/api/profiles",{action:"create",name:$("profile-name").value.trim(),destination_public_address:$("profile-address").value.trim()||null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"SOURCE_PERCENT",sizing_value:"100"}}});selectedProfile=d.profile.profile_id;$("profile-name").value="";$("profile-address").value="";$("profile-form").classList.add("hidden");say("wallet-message","Profile created. It remains inactive until monitoring is explicitly started.");await loadProfiles();$("profile-select").value=selectedProfile;}catch(err){say("wallet-message",err.message);}});
 $("profile-select").addEventListener("change",async()=>{selectedProfile=$("profile-select").value;renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();await loadHistory();await loadTradeHistory();await loadBalanceHistory();renderWallets();});
@@ -268,7 +312,16 @@ $("stop-monitoring").addEventListener("click",async()=>{
 });
 $("wallet-search").addEventListener("input",()=>renderWallets());
 $("save-destination").addEventListener("click",async()=>{if(!selectedProfile){say("wallet-message","Create or select a profile first.");return;}try{await post("/api/profiles",{action:"update",profile_id:selectedProfile,destination_public_address:$("profile-address-edit").value.trim()});say("wallet-message","Destination public address saved for this profile.");await loadProfiles();}catch(e){say("wallet-message",e.message);}});
-$("activate-profile").addEventListener("click",async()=>{if(!selectedProfile){say("wallet-message","Create or select a profile first.");return;}try{await post("/api/profiles",{action:"update",profile_id:selectedProfile,status:"active"});say("wallet-message","Selected profile activated. Monitoring remains stopped until you start it.");await loadProfiles();await loadMonitor();}catch(e){say("wallet-message",e.message);}});
+$("activate-profile").addEventListener("click",async()=>{
+ const p=selected();
+ if(!p){say("wallet-message","Create or select a profile first.");return;}
+ if(!p.destination_public_address){say("wallet-message","Save a valid destination public address before activating this profile.");return;}
+ if(!Array.isArray(p.source_wallets)||!p.source_wallets.length){say("wallet-message","Add at least one source wallet to this profile before activating it.");return;}
+ $("activate-profile").disabled=true;
+ try{await post("/api/profiles",{action:"update",profile_id:selectedProfile,status:"active"});say("wallet-message","Selected profile activated. Monitoring remains stopped until you start it.");await loadProfiles();await loadMonitor();}
+ catch(e){say("wallet-message",e.message);}
+ finally{$("activate-profile").disabled=!selectedProfile||selected()?.status==="active";}
+});
 async function loadHistory(){
  const list=$("history-list");list.replaceChildren();
  if(!selectedProfile){const p=document.createElement("p");p.className="empty";p.textContent="Select a profile to view observed on-chain transactions.";list.append(p);say("history-message","");return;}

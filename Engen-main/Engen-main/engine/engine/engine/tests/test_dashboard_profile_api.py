@@ -1,5 +1,10 @@
+import json
 import tempfile
+import threading
 import unittest
+from http.server import ThreadingHTTPServer
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from unittest.mock import patch
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -30,6 +35,84 @@ class DashboardProfileApiTests(unittest.TestCase):
         dashboard_server.PROFILE_DATA_DIR = self.original_profile_data_dir
         dashboard_server.profile_monitor_services.pop(self.profile_id, None)
         self.temp.cleanup()
+
+    def test_wallet_selection_can_be_removed_without_orphaning_saved_wallets(self):
+        wallets_path = Path(self.temp.name) / "wallets.json"
+        wallets_path.write_text(json.dumps([PUBLIC_WALLET]), encoding="utf-8")
+
+        with patch.object(dashboard_server, "WALLETS_FILE", wallets_path), \
+             patch.object(dashboard_server, "DASHBOARD_AUTH_TOKEN", ""), \
+             patch.object(dashboard_server.monitor_service, "status", return_value={"enabled": False}):
+            http = ThreadingHTTPServer(("127.0.0.1", 0), dashboard_server.DashboardHandler)
+            thread = threading.Thread(target=http.serve_forever, daemon=True)
+            thread.start()
+            base = "http://127.0.0.1:%s" % http.server_port
+
+            def post_json(path, payload):
+                request = Request(
+                    base + path,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                try:
+                    with urlopen(request, timeout=3) as response:
+                        return response.status, json.loads(response.read().decode("utf-8"))
+                except HTTPError as error:
+                    return error.code, json.loads(error.read().decode("utf-8"))
+
+            try:
+                status, body = post_json(
+                    "/api/wallets", {"action": "remove", "address": PUBLIC_WALLET}
+                )
+                self.assertEqual(status, 409)
+                self.assertIn("assigned", body["error"])
+                self.assertEqual(json.loads(wallets_path.read_text(encoding="utf-8")), [PUBLIC_WALLET])
+
+                status, body = post_json(
+                    "/api/profiles",
+                    {
+                        "action": "disassociate-source-wallet",
+                        "profile_id": self.profile_id,
+                        "wallet_address": PUBLIC_WALLET,
+                    },
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(body["profile"]["source_wallets"], [])
+
+                status, body = post_json(
+                    "/api/profiles",
+                    {"action": "update", "profile_id": self.profile_id, "status": "active"},
+                )
+                self.assertEqual(status, 400)
+                self.assertIn("destination public address", body["error"])
+
+                status, body = post_json(
+                    "/api/profiles",
+                    {
+                        "action": "update",
+                        "profile_id": self.profile_id,
+                        "destination_public_address": TOKEN_MINT,
+                    },
+                )
+                self.assertEqual(status, 200)
+
+                status, body = post_json(
+                    "/api/profiles",
+                    {"action": "update", "profile_id": self.profile_id, "status": "active"},
+                )
+                self.assertEqual(status, 400)
+                self.assertIn("source public wallet", body["error"])
+
+                status, body = post_json(
+                    "/api/wallets", {"action": "remove", "address": PUBLIC_WALLET}
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(body["wallets"], [])
+            finally:
+                http.shutdown()
+                http.server_close()
+                thread.join(timeout=3)
 
     def test_profile_report_includes_provenance_and_marks_observed_not_simulated(self):
         self.store.save_balance_snapshot(

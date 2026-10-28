@@ -993,6 +993,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     # secret-like fields cannot leave a partially applied update.
                     if "settings" in payload:
                         settings_json(payload["settings"])
+                    if payload.get("status") == "active":
+                        current = store.get_profile(profile_id)
+                        if current is None:
+                            raise ValueError("Profile not found.")
+                        destination = payload.get("destination_public_address")
+                        if destination is None:
+                            destination = current.get("destination_public_address")
+                        if not isinstance(destination, str) or not destination.strip():
+                            raise ValueError(
+                                "Save a valid destination public address before activating this profile."
+                            )
+                        if not current.get("source_wallets"):
+                            raise ValueError(
+                                "Associate at least one source public wallet before activating this profile."
+                            )
                     profile = store.update_profile(
                         profile_id,
                         name=payload.get("name"),
@@ -1008,8 +1023,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     store.set_settings(profile_id, payload.get("settings"))
                     self.send_json(200, {"profile": store.get_profile(profile_id), "simulated": False})
                     return
-                if action == "associate-source-wallet":
-                    store.associate_source_wallet(profile_id, payload.get("wallet_address"))
+                if action in {"associate-source-wallet", "disassociate-source-wallet"}:
+                    service = profile_monitor_services.get(profile_id)
+                    monitor_status = service.status() if service is not None else {}
+                    if bool(monitor_status.get("enabled", monitor_status.get("running", False))):
+                        self.send_json(409, {
+                            "error": "Stop monitoring for this profile before changing its source-wallet selection."
+                        })
+                        return
+                    wallet_address = payload.get("wallet_address")
+                    if action == "associate-source-wallet":
+                        store.associate_source_wallet(profile_id, wallet_address)
+                    else:
+                        store.disassociate_source_wallet(profile_id, wallet_address)
                     self.send_json(200, {"profile": store.get_profile(profile_id), "simulated": False})
                     return
                 if action == "delete":
@@ -1021,7 +1047,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     store.delete_profile(profile_id)
                     self.send_json(200, {"deleted": True, "profile_id": profile_id, "history_preserved": True})
                     return
-                raise ValueError("Action must be create, update, settings, associate-source-wallet, or delete.")
+                raise ValueError(
+                    "Action must be create, update, settings, associate-source-wallet, "
+                    "disassociate-source-wallet, or delete."
+                )
             except ValueError as exc:
                 self.send_json(400, {"error": str(exc)})
             except (OSError, RuntimeError) as exc:
@@ -1084,6 +1113,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         wallets = load_wallets()
 
         if action == "add":
+            monitor_status = monitor_service.status()
+            if bool(monitor_status.get("enabled", monitor_status.get("running", False))):
+                self.send_json(409, {
+                    "error": "Stop global monitoring before changing the saved source-wallet list."
+                })
+                return
             if address not in wallets:
                 if len(wallets) >= MAX_SAVED_WALLETS:
                     self.send_json(
@@ -1095,6 +1130,29 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 save_wallets(wallets)
 
         elif action == "remove":
+            monitor_status = monitor_service.status()
+            if bool(monitor_status.get("enabled", monitor_status.get("running", False))):
+                self.send_json(409, {
+                    "error": "Stop global monitoring before changing the saved source-wallet list."
+                })
+                return
+            try:
+                saved_profiles = ProfileStore(PROFILE_STORE_DB).list_profiles(include_archived=True)
+            except (OSError, RuntimeError):
+                self.send_json(503, {"error": "Profile storage is unavailable."})
+                return
+            assigned = any(
+                address in (profile.get("source_wallets") or [])
+                for profile in saved_profiles
+            )
+            if assigned:
+                self.send_json(409, {
+                    "error": (
+                        "This source wallet is assigned to one or more profiles. "
+                        "Remove it from each profile before deleting it from the saved list."
+                    )
+                })
+                return
             wallets = [item for item in wallets if item != address]
             save_wallets(wallets)
 

@@ -30,6 +30,7 @@ from dashboard.monitor_service import MonitorService
 from engine.logger import redact
 from engine.pnl import MarketPrice, realized_pnl_from_fills
 from engine.paper_copy_runner import get_paper_simulator, PAPER_SIMULATOR_LOCK as paper_simulator_lock
+from engine.paper_simulator import PaperSimulator
 from engine.solana_public import get_public_health, SolanaRPCError
 
 WALLETS_FILE = Path(os.environ.get("WALLETS_FILE", str(ROOT / "wallets.json")))
@@ -93,6 +94,7 @@ monitor_service = MonitorService(create_scan_function(), interval=30)
 # Each saved profile gets its own in-memory monitor lifecycle. The saved source
 # wallet list remains profile-scoped in ProfileStore.
 profile_monitor_services = {}
+profile_paper_simulators = {}
 
 
 def load_monitor_state():
@@ -222,6 +224,42 @@ def canonical_profile_id(profile_id):
 def profile_paper_db_path(profile_id):
     """Return the isolated paper-ledger path for one canonical profile UUID."""
     return PROFILE_DATA_DIR / canonical_profile_id(profile_id) / "paper_trading.db"
+
+
+def get_profile_paper_simulator(profile_id):
+    """Return one persistent simulator per profile; never share account balances."""
+    canonical = canonical_profile_id(profile_id)
+    with paper_simulator_lock:
+        simulator = profile_paper_simulators.get(canonical)
+        if simulator is not None:
+            return simulator
+        path = profile_paper_db_path(canonical)
+        simulator = PaperSimulator(db_path=path)
+        # Migrate balances saved by the earlier profile-ledger implementation.
+        # The copy engine's quote ledger uses USD (paper currency), not a real token.
+        if "USD" not in simulator.balances:
+            try:
+                with sqlite3.connect(str(path), timeout=10) as db:
+                    tables = {row[0] for row in db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )}
+                    if "paper_balances" in tables:
+                        old = dict(db.execute("SELECT mint,amount FROM paper_balances"))
+                        legacy_amount = old.get("USD") or old.get("USDT")
+                        if legacy_amount is not None:
+                            simulator.set_virtual_balance(legacy_amount, "USD")
+                            db.execute(
+                                "INSERT INTO paper_balances(mint,amount) VALUES('USD',?) "
+                                "ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount",
+                                (str(legacy_amount),),
+                            )
+                            db.commit()
+            except (OSError, sqlite3.Error, ValueError):
+                # Keep the simulator readable; the balance UI will show blank
+                # rather than claim the legacy amount migrated successfully.
+                pass
+        profile_paper_simulators[canonical] = simulator
+        return simulator
 
 
 def initialize_profile_paper_ledger(profile_id):

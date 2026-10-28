@@ -175,8 +175,12 @@ def analyze_transaction(transaction):
 
 
 def analyze_token_balance_changes(meta):
-    """Extract exact SPL-token balance changes from transaction metadata."""
+    """Extract SPL-token deltas while tolerating one-sided missing owner metadata.
 
+    Token account identity is its transaction account index plus mint. Owner
+    metadata is reconciled across pre/post rows; if both sides explicitly
+    disagree, the change is discarded rather than attributed to either wallet.
+    """
     if not isinstance(meta, Mapping):
         return []
 
@@ -191,6 +195,7 @@ def analyze_token_balance_changes(meta):
 
     def normalize_balances(balances):
         normalized = {}
+        owner_conflicts = set()
 
         for item in balances:
             if not isinstance(item, Mapping):
@@ -205,6 +210,7 @@ def analyze_token_balance_changes(meta):
                 or not mint
                 or not isinstance(account_index, int)
                 or isinstance(account_index, bool)
+                or account_index < 0
                 or not isinstance(amount_data, Mapping)
             ):
                 continue
@@ -222,7 +228,16 @@ def analyze_token_balance_changes(meta):
                 continue
 
             owner = item.get("owner")
-            key = (account_index, mint, owner)
+            if not isinstance(owner, str) or not owner:
+                owner = None
+
+            key = (account_index, mint)
+            existing = normalized.get(key)
+            if existing is not None:
+                # Duplicate rows for the same account/mint are ambiguous.
+                if existing["owner"] and owner and existing["owner"] != owner:
+                    owner_conflicts.add(key)
+                continue
 
             normalized[key] = {
                 "account_index": account_index,
@@ -231,6 +246,9 @@ def analyze_token_balance_changes(meta):
                 "amount": int(raw_amount),
                 "decimals": decimals,
             }
+
+        for key in owner_conflicts:
+            normalized.pop(key, None)
 
         return normalized
 
@@ -246,11 +264,18 @@ def analyze_token_balance_changes(meta):
         old_amount = old["amount"] if old else 0
         new_amount = new["amount"] if new else 0
 
-        decimals = new["decimals"] if new else old["decimals"]
-
         if old and new and old["decimals"] != new["decimals"]:
             continue
 
+        old_owner = old.get("owner") if old else None
+        new_owner = new.get("owner") if new else None
+        if old_owner and new_owner and old_owner != new_owner:
+            # Account ownership changed during the transaction; do not assign
+            # the entire delta to either owner.
+            continue
+
+        owner = new_owner or old_owner
+        decimals = new["decimals"] if new else old["decimals"]
         delta = new_amount - old_amount
 
         if delta == 0:
@@ -259,7 +284,7 @@ def analyze_token_balance_changes(meta):
         changes.append({
             "account_index": key[0],
             "mint": key[1],
-            "owner": key[2],
+            "owner": owner,
             "decimals": decimals,
             "pre_amount": str(old_amount),
             "post_amount": str(new_amount),
@@ -270,7 +295,6 @@ def analyze_token_balance_changes(meta):
         changes,
         key=lambda item: (item["account_index"], item["mint"]),
     )
-
 
 def analyze_native_sol_balance_changes(transaction):
     """Extract native SOL balance changes, expressed in lamports.

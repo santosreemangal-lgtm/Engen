@@ -105,18 +105,20 @@ const headers = {"Content-Type":"application/json"};
 async function api(path, options={}) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 12000);
-  let response;
   try {
-    response = await fetch(path,{...options,signal:options.signal||controller.signal,headers:{...headers,...(options.headers||{})}});
+    const response = await fetch(path,{...options,signal:controller.signal,headers:{...headers,...(options.headers||{})}});
+    let data;
+    try { data=await response.json(); } catch { throw new Error("Backend returned an invalid response."); }
+    if(!response.ok) throw new Error(data.error || "Request failed ("+response.status+").");
+    return data;
   } catch (error) {
     if (error && error.name === "AbortError") throw new Error("Request timed out after 12 seconds. Check that the dashboard backend is running.");
+    if (error instanceof Error && /^(Backend returned an invalid response\.|Request failed \(\d+\)\.)$/.test(error.message)) throw error;
+    if (error instanceof Error && error.message.startsWith("Request failed (")) throw error;
     throw new Error("Could not reach the dashboard backend. Check that it is running.");
   } finally {
     clearTimeout(timeoutId);
   }
-  let data; try { data=await response.json(); } catch { throw new Error("Backend returned an invalid response."); }
-  if(!response.ok) throw new Error(data.error || "Request failed ("+response.status+").");
-  return data;
 }
 function money(value){const n=Number(value);return Number.isFinite(n)?"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"$—";}
 function say(id,text){$(id).textContent=text;}

@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -19,8 +20,12 @@ if str(PROJECT_ROOT) not in sys.path:
 from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
 from engine.paper_trading import PaperTrader, PaperTradingError
+from engine.paper_trader import PaperTrader as CopyPaperTrader
 
 WALLETS_FILE = ROOT / "wallets.json"
+COPY_SETTINGS_FILE = ROOT / "copy_settings.json"
+PAPER_DB_FILE = ROOT / "paper_copy_trading.db"
+USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 # Bind to localhost by default because this dashboard has no authentication.
 # Set DASHBOARD_HOST=0.0.0.0 only when using a trusted, access-controlled
 # environment such as a private development container.
@@ -29,10 +34,135 @@ PORT = 8000
 
 ADDRESS_PATTERN = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
-# Creating the service does not start monitoring or make RPC requests.
-monitor_service = MonitorService(create_scan_function(), interval=30)
-# Deliberately in-memory and virtual-only; restart resets this demo ledger.
+# The manual dashboard ledger remains separate for compatibility.
 paper_trader = PaperTrader()
+# Monitored-wallet copies use a persistent virtual-only ledger.
+copy_paper_trader = CopyPaperTrader(
+    {USDT_MINT: Decimal("10000")},
+    db_path=PAPER_DB_FILE,
+)
+
+
+def load_copy_settings():
+    defaults = {"mode": "percentage", "value": "100"}
+    try:
+        settings = json.loads(COPY_SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return defaults
+    if not isinstance(settings, dict):
+        return defaults
+    mode, value = settings.get("mode"), settings.get("value")
+    if mode not in ("percentage", "fixed") or not isinstance(value, (str, int, float)):
+        return defaults
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return defaults
+    if not amount.is_finite() or amount <= 0:
+        return defaults
+    if mode == "percentage" and amount > 100:
+        return defaults
+    if mode == "fixed" and amount > Decimal("10000"):
+        return defaults
+    return {"mode": mode, "value": str(amount)}
+
+
+def save_copy_settings(settings):
+    temporary = COPY_SETTINGS_FILE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    temporary.replace(COPY_SETTINGS_FILE)
+
+
+def handle_monitored_result(wallet_address, result):
+    """Convert a supported public-wallet signal into a virtual paper trade."""
+    signal = result.get("trade_signal")
+    if not isinstance(signal, dict):
+        return {"status": "SKIPPED", "reason": "No classified trade signal."}
+    if signal.get("classification") not in ("BUY_CANDIDATE", "SELL_CANDIDATE"):
+        return {"status": "SKIPPED", "reason": "Signal is not a buy/sell candidate."}
+
+    assets, quotes = signal.get("asset_mints"), signal.get("quote_mints")
+    changes = result.get("token_balance_changes")
+    if (
+        not isinstance(assets, list) or len(assets) != 1
+        or not isinstance(quotes, list) or len(quotes) != 1
+        or not isinstance(changes, list)
+    ):
+        return {"status": "SKIPPED", "reason": "Only one asset and one quote token are supported."}
+
+    asset_mint, quote_mint = assets[0], quotes[0]
+    if (
+        not isinstance(asset_mint, str) or not isinstance(quote_mint, str)
+        or asset_mint == quote_mint
+    ):
+        return {"status": "SKIPPED", "reason": "Invalid token pair."}
+    if quote_mint != USDT_MINT:
+        return {"status": "SKIPPED", "reason": "Only USDT-quoted swaps are supported by the current virtual balance."}
+
+    asset_delta = CopyPaperTrader._delta_for_mint(changes, asset_mint)
+    quote_delta = CopyPaperTrader._delta_for_mint(changes, quote_mint)
+    quote_places = next(
+        (
+            item.get("decimals") for item in changes
+            if isinstance(item, dict) and item.get("mint") == quote_mint
+        ),
+        None,
+    )
+    if (
+        asset_delta is None or quote_delta is None or quote_delta == 0
+        or not isinstance(quote_places, int) or isinstance(quote_places, bool)
+        or quote_places < 0
+    ):
+        return {"status": "SKIPPED", "reason": "Token amounts or decimals are unavailable."}
+
+    settings = load_copy_settings()
+    setting_value = Decimal(settings["value"])
+    if settings["mode"] == "percentage":
+        scale = setting_value / Decimal("100")
+    else:
+        target_raw = setting_value * (Decimal("10") ** quote_places)
+        scale = target_raw / abs(quote_delta * (Decimal("10") ** quote_places))
+        # _delta_for_mint returns human units; convert back to raw-unit scale.
+        scale = setting_value / abs(quote_delta)
+
+    if not scale.is_finite() or scale <= 0:
+        return {"status": "SKIPPED", "reason": "Copy size is invalid."}
+
+    scaled_changes = []
+    for change in changes:
+        if not isinstance(change, dict):
+            continue
+        copied = dict(change)
+        if copied.get("mint") in (asset_mint, quote_mint):
+            try:
+                raw = Decimal(str(copied.get("delta_amount")))
+                if not raw.is_finite() or raw != raw.to_integral_value():
+                    return {"status": "SKIPPED", "reason": "Token raw amount is invalid."}
+                scaled_raw = (raw * scale).to_integral_value(rounding=ROUND_DOWN)
+                if scaled_raw == 0:
+                    return {"status": "SKIPPED", "reason": "Copy size is below token precision."}
+                copied["delta_amount"] = str(int(scaled_raw))
+            except (InvalidOperation, ValueError, TypeError):
+                return {"status": "SKIPPED", "reason": "Could not scale token amounts safely."}
+        scaled_changes.append(copied)
+
+    copied_result = dict(result)
+    copied_result["token_balance_changes"] = scaled_changes
+    outcome = copy_paper_trader.process(copied_result)
+    return {
+        "wallet": wallet_address,
+        "signature": result.get("signature"),
+        "paper_result": outcome,
+        "real_trading": False,
+    }
+
+
+# Monitoring is opt-in; constructing the service does not scan or trade.
+monitor_service = MonitorService(
+    create_scan_function(),
+    interval=30,
+    on_result=handle_monitored_result,
+)
 
 
 def load_wallets():

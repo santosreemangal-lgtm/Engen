@@ -113,8 +113,7 @@ async function api(path, options={}) {
     return data;
   } catch (error) {
     if (error && error.name === "AbortError") throw new Error("Request timed out after 12 seconds. Check that the dashboard backend is running.");
-    if (error instanceof Error && /^(Backend returned an invalid response\.|Request failed \(\d+\)\.)$/.test(error.message)) throw error;
-    if (error instanceof Error && error.message.startsWith("Request failed (")) throw error;
+    if (error instanceof Error && (error.message === "Backend returned an invalid response." || error.message.startsWith("Request failed ("))) throw error;
     throw new Error("Could not reach the dashboard backend. Check that it is running.");
   } finally {
     clearTimeout(timeoutId);

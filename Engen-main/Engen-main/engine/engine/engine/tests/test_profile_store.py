@@ -33,6 +33,22 @@ class ProfileStoreTests(unittest.TestCase):
         self.assertEqual(self.store.get_profile(a)["source_wallets"], [PUBLIC_ADDRESS])
         self.assertEqual(self.store.get_profile(b)["source_wallets"], [PUBLIC_ADDRESS])
 
+    def test_destination_profile_limit_is_enforced(self):
+        self.store.create_profile("One")
+        self.store.create_profile("Two")
+        self.store.create_profile("Three")
+        with self.assertRaisesRegex(ValueError, "maximum of 3 destination wallet profiles"):
+            self.store.create_profile("Four")
+
+    def test_unassigning_wallet_only_removes_selected_profile_association(self):
+        first = self.store.create_profile("First")
+        second = self.store.create_profile("Second")
+        self.store.associate_source_wallet(first, PUBLIC_ADDRESS)
+        self.store.associate_source_wallet(second, PUBLIC_ADDRESS)
+        self.store.disassociate_source_wallet(first, PUBLIC_ADDRESS)
+        self.assertEqual(self.store.get_profile(first)["source_wallets"], [])
+        self.assertEqual(self.store.get_profile(second)["source_wallets"], [PUBLIC_ADDRESS])
+
     def test_secret_setting_fields_are_rejected(self):
         with self.assertRaises(ValueError):
             self.store.create_profile("Unsafe", settings={"private_key": "x"})

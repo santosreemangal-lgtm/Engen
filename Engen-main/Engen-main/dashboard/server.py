@@ -284,8 +284,13 @@ def initialize_profile_paper_ledger(profile_id):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             signature TEXT NOT NULL UNIQUE, side TEXT NOT NULL,
             asset_mint TEXT NOT NULL, asset_amount TEXT NOT NULL,
-            quote_mint TEXT NOT NULL, status TEXT NOT NULL,
-            created_at TEXT NOT NULL)""")
+            quote_mint TEXT NOT NULL, quote_amount TEXT NOT NULL,
+            status TEXT NOT NULL, created_at TEXT NOT NULL)""")
+        # Older profile ledgers omitted quote_amount; migrate without inventing
+        # values for history rows that predate this column.
+        trade_columns = {row[1] for row in db.execute("PRAGMA table_info(paper_trades)")}
+        if "quote_amount" not in trade_columns:
+            db.execute("ALTER TABLE paper_trades ADD COLUMN quote_amount TEXT")
         db.execute("CREATE INDEX IF NOT EXISTS idx_paper_trades_created ON paper_trades(created_at)")
         db.commit()
     return {"profile_id": profile_id, "database_available": True, "initialized": True,

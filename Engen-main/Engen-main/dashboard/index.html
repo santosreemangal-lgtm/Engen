@@ -52,6 +52,12 @@ footer.hint{padding:10px 4px;line-height:1.7}
 @media(max-width:760px){main{margin-top:30px}.panel{padding:19px}.metric{padding:15px;min-height:102px}}
 @media(max-width:520px){main{width:calc(100% - 22px);margin-top:22px}.panel{padding:16px;border-radius:16px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.metric{padding:13px}.value{font-size:21px}.row{gap:8px}.choice-row{grid-template-columns:1fr}.choice-row.two{grid-template-columns:1fr}.panel-head{gap:10px}}
 
+.profile-controls{display:grid;grid-template-columns:minmax(200px,1fr) auto auto;gap:10px;align-items:center;position:relative;z-index:2}
+.profile-controls select#profile-select{display:block;width:100%;min-width:0;position:relative;z-index:3;pointer-events:auto;cursor:pointer;appearance:auto}
+.profile-options{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;position:relative;z-index:2}
+.profile-option{background:#26344d;color:var(--text);border:1px solid #3a4c68;box-shadow:none}
+.profile-option[aria-pressed="true"]{background:linear-gradient(120deg,#3a4d73,#263b54);border-color:#9aafff;box-shadow:inset 0 0 0 1px #829cff55}
+@media(max-width:760px){.profile-controls{grid-template-columns:1fr}}
 </style>
 </head>
 <body><main>
@@ -73,7 +79,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </section>
 
 <section class="panel"><div class="panel-head"><h2>Wallets &amp; Source Selection</h2><span id="wallet-count" class="status">0 saved</span></div>
-<div class="field"><label for="profile-select">Select your wallet profile</label><div class="row"><select id="profile-select" aria-label="Select your wallet profile"><option value="">No profile selected</option></select><button id="create-profile" type="button" class="secondary">Add Wallet Profile</button><button id="delete-profile" type="button" class="danger" disabled>Delete Saved Profile</button></div><p class="hint">Each profile has its own destination address and source-wallet list. Monitoring never starts automatically. Deleting a profile removes it from this list; its existing history is preserved.</p></div>
+<div class="field"><label for="profile-select">Select your wallet profile</label><div class="profile-controls"><select id="profile-select" aria-label="Select your wallet profile"><option value="">No profile selected</option></select><button id="create-profile" type="button" class="secondary">Add Wallet Profile</button><button id="delete-profile" type="button" class="danger" disabled title="Select a saved profile before deleting it.">Delete Saved Profile</button></div><div id="profile-options" class="profile-options" aria-label="Saved profiles"></div><p id="profile-load-status" class="hint" role="status">Loading saved profiles…</p><p class="hint">Each profile has its own destination address and source-wallet list. Monitoring never starts automatically. Deleting a profile removes it from this list; its existing history is preserved.</p></div>
 <form id="profile-form" class="hidden field"><label for="profile-name">Wallet/profile name</label><div class="row"><input id="profile-name" maxlength="80" placeholder="e.g. Main wallet" required><input id="profile-address" placeholder="Your destination public address" autocomplete="off" spellcheck="false"><button type="submit">Create</button></div><p class="hint">Public address only. Never enter a seed phrase or private key.</p></form>
 <div class="field"><label for="profile-address-edit">My Wallet · Destination public address</label><div class="row"><input id="profile-address-edit" placeholder="Your own Solana public address" autocomplete="off" spellcheck="false"><button id="save-destination" type="button">Save Address</button></div><p class="hint">This is your destination address, not a source trader to copy.</p></div>
 <div class="field"><label for="wallet-search">Search your saved source wallets</label><input id="wallet-search" placeholder="Filter saved public addresses…" autocomplete="off" spellcheck="false"><p class="hint">This searches addresses you have saved here; it does not discover or copy every public wallet on Solana.</p></div>
@@ -209,6 +215,33 @@ async function loadMonitor(){
   renderWallets();
  }
 }
+function renderProfileOptions(){
+ const box=$("profile-options");
+ box.replaceChildren();
+ if(!profiles.length){
+  const empty=document.createElement("span");empty.className="empty";empty.textContent="No saved profiles are available from the backend.";box.append(empty);
+  return;
+ }
+ profiles.forEach(p=>{
+  const button=document.createElement("button");button.type="button";button.className="profile-option";
+  button.textContent=p.name+(p.destination_public_address?" · "+p.destination_public_address.slice(0,6)+"…":"");
+  button.setAttribute("aria-pressed",String(p.profile_id===selectedProfile));
+  button.addEventListener("click",()=>{setSelectedProfile(p.profile_id).catch(e=>say("wallet-message","Profile selection failed: "+e.message));});
+  box.append(button);
+ });
+}
+async function setSelectedProfile(profileId){
+ selectedProfile=profiles.some(p=>p.profile_id===profileId)?profileId:"";
+ $("profile-select").value=selectedProfile;
+ $("profile-address-edit").value=selected()?.destination_public_address||"";
+ $("profile-address-edit").disabled=!selectedProfile;
+ $("save-destination").disabled=!selectedProfile;
+ $("activate-profile").disabled=!selectedProfile||selected()?.status==="active";
+ $("delete-profile").disabled=!selectedProfile;
+ renderProfileOptions();
+ renderDirectionFromProfile();
+ await loadPortfolioForProfile();await loadMonitor();await loadHistory();await loadTradeHistory();await loadBalanceHistory();renderWallets();
+}
 async function loadProfiles(){
  try{
   const d=await api("/api/profiles");profiles=Array.isArray(d.profiles)?d.profiles:[];
@@ -216,13 +249,15 @@ async function loadProfiles(){
   profiles.forEach(p=>{const o=document.createElement("option");o.value=p.profile_id;o.textContent=p.name+(p.destination_public_address?" · "+p.destination_public_address.slice(0,6)+"…":"");sel.append(o);});
   if(selectedProfile&&profiles.some(p=>p.profile_id===selectedProfile)){sel.value=selectedProfile;}
   else{selectedProfile="";sel.value="";}
+  say("profile-load-status",profiles.length?"Loaded "+profiles.length+" saved profile(s). Choose one using the dropdown or a button below.":"The backend returned no saved profiles. Create a profile first.");
   $("profile-address-edit").value=selected()?.destination_public_address||"";
   $("profile-address-edit").disabled=!selectedProfile;
   $("save-destination").disabled=!selectedProfile;
   $("activate-profile").disabled=!selectedProfile||selected()?.status==="active";
   $("delete-profile").disabled=!selectedProfile;
+  renderProfileOptions();
   renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();await loadHistory();await loadTradeHistory();await loadBalanceHistory();renderWallets();
- }catch(e){say("wallet-message","Profiles unavailable: "+e.message);}
+ }catch(e){say("profile-load-status","Could not load saved profiles: "+e.message);say("wallet-message","Profiles unavailable: "+e.message);}
 }
 function selected(){return profiles.find(p=>p.profile_id===selectedProfile);}
 function settingsOf(p){return p?.settings?.paper_trading||p?.settings?.settings?.paper_trading||{};}
@@ -282,7 +317,7 @@ $("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const ad
 $("create-profile").addEventListener("click",()=>$("profile-form").classList.toggle("hidden"));
 $("delete-profile").addEventListener("click",async()=>{const p=selected();if(!p||!selectedProfile)return;if(!confirm("Delete the saved profile \""+p.name+"\"? It will disappear from this list. Existing history will be preserved."))return;const id=selectedProfile;$("delete-profile").disabled=true;try{await post("/api/profiles",{action:"delete",profile_id:id});selectedProfile="";say("wallet-message","Profile deleted. Existing history is preserved.");await loadProfiles();}catch(e){say("wallet-message","Profile was not deleted: "+e.message);$("delete-profile").disabled=!selectedProfile;} });
 $("profile-form").addEventListener("submit",async e=>{e.preventDefault();try{const d=await post("/api/profiles",{action:"create",name:$("profile-name").value.trim(),destination_public_address:$("profile-address").value.trim()||null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"SOURCE_PERCENT",sizing_value:"100"}}});selectedProfile=d.profile.profile_id;$("profile-name").value="";$("profile-address").value="";$("profile-form").classList.add("hidden");say("wallet-message","Profile created. It remains inactive until monitoring is explicitly started.");await loadProfiles();$("profile-select").value=selectedProfile;}catch(err){say("wallet-message",err.message);}});
-$("profile-select").addEventListener("change",async()=>{selectedProfile=$("profile-select").value;renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();await loadHistory();await loadTradeHistory();await loadBalanceHistory();renderWallets();});
+$("profile-select").addEventListener("change",()=>{setSelectedProfile($("profile-select").value).catch(e=>say("wallet-message","Profile selection failed: "+e.message));});
 $("confirm-settings").addEventListener("click",async()=>{
  if(!selectedProfile){say("settings-message","Create or select a profile before confirming settings.");return;}
  const direction=document.querySelector('input[name="direction"]:checked').value,mode=document.querySelector('input[name="sizing"]:checked').value,amount=Number($("amount-value").value);

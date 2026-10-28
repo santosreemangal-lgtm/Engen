@@ -265,6 +265,20 @@ class ProfileStore:
             db.execute("INSERT OR IGNORE INTO profile_source_wallets VALUES(?,?,?)",
                        (profile_id,wallet_address,now))
 
+    def disassociate_source_wallet(self, profile_id, wallet_address):
+        """Remove a source-wallet association from one profile without deleting it elsewhere."""
+        validate_public_address(wallet_address)
+        with self.session() as db:
+            if not db.execute(
+                "SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
+                (profile_id,),
+            ).fetchone():
+                raise ValueError("Profile not found.")
+            db.execute(
+                "DELETE FROM profile_source_wallets WHERE profile_id=? AND wallet_address=?",
+                (profile_id, wallet_address),
+            )
+
     def save_transaction(self, signature, source_wallet_address, *, classification="UNKNOWN",
                          status="unknown", evidence=None, slot=None, block_time=None,
                          raw_amount=None, token_mint=None, token_decimals=None,

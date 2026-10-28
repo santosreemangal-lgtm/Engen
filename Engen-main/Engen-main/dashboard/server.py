@@ -4,7 +4,12 @@
 import json
 import os
 import re
+import hmac
+import sqlite3
+import uuid
 import sys
+import time
+import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -29,6 +34,7 @@ from engine.solana_public import get_public_health, SolanaRPCError
 WALLETS_FILE = ROOT / "wallets.json"
 PAPER_SIMULATOR_DB = Path(os.environ.get("PAPER_SIMULATOR_DB", str(PROJECT_ROOT / "data" / "paper_simulator.db")))
 PROFILE_STORE_DB = Path(os.environ.get("PROFILE_STORE_DB", str(PROJECT_ROOT / "data" / "profiles.db")))
+PROFILE_DATA_DIR = Path(os.environ.get("PROFILE_DATA_DIR", str(PROFILE_STORE_DB.parent / "profiles")))
 MAX_HISTORY_PAGE_SIZE = 100
 HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT = 8000
@@ -36,6 +42,19 @@ PORT = 8000
 ADDRESS_PATTERN = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 MAX_SAVED_WALLETS = 100
 MAX_REQUEST_BODY_BYTES = 10000
+API_RATE_LIMIT = 120
+API_RATE_WINDOW_SECONDS = 60
+_API_RATE_LOCK = threading.Lock()
+_API_REQUEST_TIMES = {}
+DASHBOARD_AUTH_TOKEN = os.environ.get("DASHBOARD_AUTH_TOKEN", "")
+
+
+def validate_server_config(host, auth_token):
+    """Reject unsafe bind addresses and weak configured API tokens."""
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        raise ValueError("Dashboard backend must bind to localhost.")
+    if auth_token and len(auth_token) < 32:
+        raise ValueError("DASHBOARD_AUTH_TOKEN must contain at least 32 characters.")
 
 
 def is_valid_solana_address(value):
@@ -61,6 +80,9 @@ def is_valid_solana_address(value):
 
 # Creating the service does not start monitoring or make RPC requests.
 monitor_service = MonitorService(create_scan_function(), interval=30)
+# Each saved profile gets its own in-memory monitor lifecycle. The saved source
+# wallet list remains profile-scoped in ProfileStore.
+profile_monitor_services = {}
 
 
 def load_wallets():
@@ -92,8 +114,81 @@ def save_wallets(wallets):
 
 
 
-def load_paper_simulation_report():
-    """Read the paper-simulator database only; never create or mutate it."""
+def canonical_profile_id(profile_id):
+    """Return a canonical UUID so profile IDs cannot be used as filesystem paths."""
+    if not isinstance(profile_id, str) or not profile_id.strip():
+        raise ValueError("A valid profile_id is required.")
+    try:
+        return str(uuid.UUID(profile_id.strip()))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError("A valid profile_id is required.") from exc
+
+
+def profile_paper_db_path(profile_id):
+    """Return the isolated paper-ledger path for one canonical profile UUID."""
+    return PROFILE_DATA_DIR / canonical_profile_id(profile_id) / "paper_trading.db"
+
+
+def load_profile_paper_simulation_report(profile_id):
+    """Read one profile's PaperTrader ledger without creating or mutating it."""
+    profile_id = canonical_profile_id(profile_id)
+    base = {
+        "mode": "PAPER_SIMULATION", "simulated": True,
+        "real_wallet_balances_included": False, "real_trading": False,
+        "transaction_broadcast": False, "profile_id": profile_id,
+        "database_available": False, "balances": {}, "orders": [], "fills": [],
+        "pnl": {
+            "cost_basis_method": "unavailable_without_verified_fill_prices",
+            "currency": "USD", "realized_by_mint": {},
+            "unrealized_status": "unavailable_profile_paper_ledger_has_no_verified_prices",
+        },
+    }
+    if not PROFILE_STORE_DB.is_file():
+        base["error"] = "Profile database is unavailable."
+        return base
+    try:
+        with sqlite3.connect("file:" + str(PROFILE_STORE_DB.resolve()) + "?mode=ro", uri=True) as db:
+            profile = db.execute(
+                "SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
+                (profile_id,),
+            ).fetchone()
+        if profile is None:
+            base["error"] = "Profile not found."
+            return base
+        path = profile_paper_db_path(profile_id)
+        if not path.is_file():
+            return base
+        with sqlite3.connect("file:" + str(path.resolve()) + "?mode=ro", uri=True) as db:
+            tables = {row[0] for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )}
+            if not {"paper_balances", "paper_trades"}.issubset(tables):
+                base["error"] = "Profile paper ledger schema is not initialized."
+                return base
+            base["balances"] = {
+                mint: amount for mint, amount in db.execute(
+                    "SELECT mint,amount FROM paper_balances ORDER BY mint"
+                )
+            }
+            base["orders"] = [
+                {"order_id": row[0], "signal_id": row[1], "side": row[2],
+                 "asset_mint": row[3], "quantity": row[4], "quote_mint": row[5],
+                 "status": row[6], "reason": None, "created_at": row[7]}
+                for row in db.execute("""SELECT id,signature,side,asset_mint,asset_amount,
+                    quote_mint,status,created_at FROM paper_trades
+                    ORDER BY id DESC LIMIT 100""")
+            ]
+            base["database_available"] = True
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        base["error"] = "Profile paper report unavailable (" + type(exc).__name__ + ")."
+    return base
+
+
+def load_paper_simulation_report(profile_id=None):
+    """Read paper simulation data only; profile IDs never fall back to global data."""
+    if profile_id is not None:
+        return load_profile_paper_simulation_report(profile_id)
+    """Read the legacy paper-simulator database only; never create or mutate it."""
     base = {
         "mode": "PAPER_SIMULATION",
         "simulated": True,
@@ -236,6 +331,37 @@ def load_profiles_report():
     return base
 
 
+def get_profile_record(profile_id):
+    """Read one non-deleted profile using the dashboard's read-only profile report."""
+    canonical = canonical_profile_id(profile_id)
+    report = load_profiles_report()
+    if not report.get("database_available"):
+        return None
+    return next((item for item in report.get("profiles", [])
+                 if item.get("profile_id") == canonical), None)
+
+
+def get_profile_monitor_service(profile_id):
+    """Return a dedicated monitor service for a validated profile UUID."""
+    canonical = canonical_profile_id(profile_id)
+    if canonical not in profile_monitor_services:
+        profile_monitor_services[canonical] = MonitorService(create_scan_function(), interval=30)
+    return profile_monitor_services[canonical]
+
+
+def profile_monitor_report(profile_id):
+    """Return monitoring status for one profile only."""
+    canonical = canonical_profile_id(profile_id)
+    profile = get_profile_record(canonical)
+    if profile is None:
+        raise ValueError("Profile not found.")
+    service = profile_monitor_services.get(canonical)
+    status = service.status() if service is not None else {
+        "enabled": False, "interval_seconds": 30, "wallets": [],
+    }
+    return {"profile_id": canonical, "profile_status": profile["status"], "monitor": status}
+
+
 def load_profile_transactions(query):
     """Return bounded, profile-scoped transaction history with allowlisted filters."""
     if not PROFILE_STORE_DB.is_file():
@@ -327,6 +453,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
+    def end_headers(self):
+        # Apply baseline browser protections to API responses and static assets.
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "connect-src 'self'; object-src 'none'; base-uri 'self'; "
+            "frame-ancestors 'none'; form-action 'self'"
+        )
+        super().end_headers()
+
     def send_json(self, status, data):
         body = json.dumps(data).encode("utf-8")
         self.send_response(status)
@@ -337,6 +478,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def read_json(self):
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            self.send_json(415, {"error": "Content-Type must be application/json"})
+            return None
+
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if not 1 <= length <= MAX_REQUEST_BODY_BYTES:
@@ -352,8 +498,42 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         return payload
 
+    def _api_rate_limited(self):
+        now = time.monotonic()
+        client = self.client_address[0]
+        with _API_RATE_LOCK:
+            recent = [stamp for stamp in _API_REQUEST_TIMES.get(client, []) if now - stamp < API_RATE_WINDOW_SECONDS]
+            if len(recent) >= API_RATE_LIMIT:
+                _API_REQUEST_TIMES[client] = recent
+                return True
+            recent.append(now)
+            _API_REQUEST_TIMES[client] = recent
+            if len(_API_REQUEST_TIMES) > 1000:
+                stale_clients = [
+                    address for address, stamps in _API_REQUEST_TIMES.items()
+                    if not stamps or now - stamps[-1] >= API_RATE_WINDOW_SECONDS
+                ]
+                for address in stale_clients:
+                    _API_REQUEST_TIMES.pop(address, None)
+        return False
+
+    def _api_authorized(self):
+        if not DASHBOARD_AUTH_TOKEN:
+            return True
+        supplied = self.headers.get("Authorization", "")
+        prefix = "Bearer "
+        if not supplied.startswith(prefix):
+            return False
+        return hmac.compare_digest(supplied[len(prefix):], DASHBOARD_AUTH_TOKEN)
+
     def do_GET(self):
         path = urlparse(self.path).path
+        if path.startswith("/api/") and self._api_rate_limited():
+            self.send_json(429, {"error": "API request limit reached. Wait before retrying."})
+            return
+        if path.startswith("/api/") and not self._api_authorized():
+            self.send_json(401, {"error": "Dashboard API authentication required."})
+            return
 
         if path == "/api/wallets":
             self.send_json(200, {"wallets": load_wallets()})
@@ -369,7 +549,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return
 
         if path == "/api/paper-simulation":
-            self.send_json(200, load_paper_simulation_report())
+            profile_id = (parse_qs(urlparse(self.path).query).get("profile_id") or [None])[0]
+            try:
+                report = load_paper_simulation_report(profile_id)
+                if profile_id is not None and report.get("error") == "Profile not found.":
+                    self.send_json(404, {"error": "Profile not found."})
+                else:
+                    self.send_json(200, report)
+            except ValueError as exc:
+                self.send_json(400, {"error": str(exc)})
+            return
+
+        if path == "/api/profile-monitor":
+            query = parse_qs(urlparse(self.path).query)
+            profile_id = (query.get("profile_id") or [""])[0]
+            try:
+                self.send_json(200, profile_monitor_report(profile_id))
+            except ValueError as exc:
+                status = 404 if str(exc) == "Profile not found." else 400
+                self.send_json(status, {"error": str(exc)})
             return
 
         if path == "/api/profiles":
@@ -391,9 +589,56 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path.startswith("/api/") and self._api_rate_limited():
+            self.send_json(429, {"error": "API request limit reached. Wait before retrying."})
+            return
+        if path.startswith("/api/") and not self._api_authorized():
+            self.send_json(401, {"error": "Dashboard API authentication required."})
+            return
+        origin = self.headers.get("Origin")
+        if path.startswith("/api/") and origin:
+            parsed_origin = urlparse(origin)
+            if parsed_origin.scheme not in ("http", "https") or parsed_origin.netloc.lower() != self.headers.get("Host", "").lower():
+                self.send_json(403, {"error": "Cross-origin state changes are not allowed."})
+                return
         payload = self.read_json()
 
         if payload is None:
+            return
+
+        if path == "/api/profile-monitor":
+            action = payload.get("action")
+            try:
+                profile_id = canonical_profile_id(payload.get("profile_id"))
+                profile = get_profile_record(profile_id)
+                if profile is None:
+                    self.send_json(404, {"error": "Profile not found."})
+                    return
+                if action == "start":
+                    if profile.get("status") != "active":
+                        self.send_json(409, {"error": "Activate this profile before starting monitoring."})
+                        return
+                    addresses = profile.get("source_wallets", [])
+                    if not addresses:
+                        self.send_json(400, {"error": "Associate at least one source public wallet with this profile first."})
+                        return
+                    service = get_profile_monitor_service(profile_id)
+                    self.send_json(200, {
+                        "profile_id": profile_id,
+                        "monitor": service.start(addresses),
+                    })
+                    return
+                if action == "stop":
+                    service = profile_monitor_services.get(profile_id)
+                    status = service.stop() if service is not None else {
+                        "enabled": False, "interval_seconds": 30, "wallets": [],
+                    }
+                    self.send_json(200, {"profile_id": profile_id, "monitor": status})
+                    return
+                self.send_json(400, {"error": "Action must be start or stop."})
+            except ValueError as exc:
+                status = 404 if str(exc) == "Profile not found." else 400
+                self.send_json(status, {"error": str(exc)})
             return
 
         if path == "/api/profiles":
@@ -436,6 +681,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     self.send_json(200, {"profile": store.get_profile(profile_id), "simulated": False})
                     return
                 if action == "delete":
+                    service = profile_monitor_services.get(profile_id)
+                    if service is not None:
+                        service.stop_and_wait(timeout=15)
+                        profile_monitor_services.pop(profile_id, None)
                     store.delete_profile(profile_id)
                     self.send_json(200, {"deleted": True, "profile_id": profile_id, "history_preserved": True})
                     return
@@ -525,12 +774,13 @@ if __name__ == "__main__":
     print("Wallet storage: %s" % WALLETS_FILE)
     print("Monitoring is opt-in; no scan starts automatically.")
     print("Read-only mode: no trades, signing, or private keys.")
-    if HOST not in ("127.0.0.1", "localhost", "::1"):
-        print(
-            "WARNING: dashboard has no authentication. Exposing it beyond "
-            "localhost may let other users change saved wallets and control "
-            "read-only monitoring. Use only behind a trusted authenticated proxy."
-        )
+    try:
+        validate_server_config(HOST, DASHBOARD_AUTH_TOKEN)
+    except ValueError as exc:
+        raise SystemExit(
+            "%s For remote access, use a trusted HTTPS reverse proxy with "
+            "authentication and keep this backend bound to localhost." % exc
+        ) from exc
 
     server = ThreadingHTTPServer((HOST, PORT), DashboardHandler)
 

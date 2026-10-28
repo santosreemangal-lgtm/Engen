@@ -31,6 +31,58 @@ class RPCPolicyTests(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
 
+    def test_rpc_url_requires_https_for_remote_hosts(self):
+        from engine.rpc_policy import validate_rpc_url
+        self.assertEqual(
+            validate_rpc_url("https://rpc.example/path"),
+            "https://rpc.example/path",
+        )
+        self.assertEqual(
+            validate_rpc_url("http://127.0.0.1:8899"),
+            "http://127.0.0.1:8899",
+        )
+        for value in (
+            "http://rpc.example",
+            "file:///etc/passwd",
+            "https://user:password@rpc.example",
+            "https://rpc.example/#fragment",
+            "",
+        ):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    validate_rpc_url(value)
+
+    def test_rpc_timeout_must_be_finite_and_bounded(self):
+        from engine.rpc_policy import validate_rpc_timeout
+        self.assertEqual(validate_rpc_timeout(10), 10.0)
+        for value in (0, -1, 61, float("inf"), float("nan"), True, "bad"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    validate_rpc_timeout(value)
+
+    @patch("engine.rpc_policy._pace_requests")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
+    def test_rejects_insecure_remote_url_before_network_request(self, mock_urlopen, _pace):
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            post_json_rpc({"method": "getHealth"}, "http://rpc.example", 2)
+        mock_urlopen.assert_not_called()
+
+    def test_invalid_rpc_retry_configuration_fails_clearly(self):
+        for name, value in (
+            ("ENGEN_RPC_RETRIES", "many"),
+            ("ENGEN_RPC_RETRIES", "-1"),
+            ("ENGEN_RPC_BACKOFF_SECONDS", "NaN"),
+            ("ENGEN_RPC_MIN_INTERVAL_SECONDS", "61"),
+        ):
+            with self.subTest(name=name, value=value):
+                with patch.dict(os.environ, {name: value}):
+                    with self.assertRaises(ValueError):
+                        post_json_rpc(
+                            {"method": "getHealth"},
+                            "https://rpc.example",
+                            2,
+                        )
+
     @patch("engine.rpc_policy._pace_requests")
     @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_returns_json_rpc_response(self, mock_urlopen, _pace):

@@ -1,3 +1,5 @@
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -103,6 +105,88 @@ class PaperTraderTests(unittest.TestCase):
             duplicate = restarted.process(transaction)
             self.assertEqual(duplicate["status"], "DUPLICATE")
             self.assertEqual(len(restarted.trades), 1)
+
+    def test_paper_ledger_survives_full_python_process_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "paper_process_restart.db"
+            db_literal = repr(str(db_path))
+
+            first_process = (
+                "from engine.paper_trader import PaperTrader; "
+                "t=PaperTrader({'USDC': '10'}, db_path=" + repr(str(db_path)) + "); "
+                "r=t.process({"
+                "'signature':'process-restart-signature',"
+                "'available':True,'status':'success',"
+                "'trade_signal':{'classification':'BUY_CANDIDATE',"
+                "'asset_mints':['TOKEN_A'],'quote_mints':['USDC']},"
+                "'token_balance_changes':["
+                "{'mint':'TOKEN_A','delta_amount':'500','decimals':2},"
+                "{'mint':'USDC','delta_amount':'-1000000','decimals':6}]"
+                "}); "
+                "assert r['status']=='PAPER_FILLED', r"
+            )
+            subprocess.run(
+                [sys.executable, "-c", first_process],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            second_process = (
+                "from engine.paper_trader import PaperTrader; "
+                "t=PaperTrader({'USDC':'999'}, db_path=" + repr(str(db_path)) + "); "
+                "assert t.get_balances()=={'USDC':'9','TOKEN_A':'5'}, t.get_balances(); "
+                "assert len(t.trades)==1, t.trades; "
+                "r=t.process({"
+                "'signature':'process-restart-signature',"
+                "'available':True,'status':'success',"
+                "'trade_signal':{'classification':'BUY_CANDIDATE',"
+                "'asset_mints':['TOKEN_A'],'quote_mints':['USDC']},"
+                "'token_balance_changes':["
+                "{'mint':'TOKEN_A','delta_amount':'500','decimals':2},"
+                "{'mint':'USDC','delta_amount':'-1000000','decimals':6}]"
+                "}); "
+                "assert r['status']=='DUPLICATE', r; "
+                "assert len(t.trades)==1, t.trades; "
+                "print('paper-ledger-process-restart: PASS')"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", second_process],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertIn("paper-ledger-process-restart: PASS", result.stdout)
+
+    def test_profile_max_position_percentage_rejects_oversized_buy(self):
+        trader = PaperTrader({"USDC": 10}, max_position_pct=5)
+        result = trader.process(self.make_result())
+
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertIn("maximum position percentage", result["reason"])
+        self.assertEqual(trader.get_balances(), {"USDC": "10"})
+        self.assertEqual(trader.trades, [])
+
+    def test_profile_max_open_positions_rejects_new_asset(self):
+        trader = PaperTrader(
+            {"USDC": 10, "TOKEN_B": 1},
+            max_open_positions=1,
+        )
+        result = trader.process(self.make_result())
+
+        self.assertEqual(result["status"], "REJECTED")
+        self.assertIn("maximum open paper positions", result["reason"])
+        self.assertEqual(trader.get_balances(), {"USDC": "10", "TOKEN_B": "1"})
+
+    def test_profile_risk_limits_are_validated(self):
+        for value in (0, -1, 100.1, "nan", "invalid"):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    PaperTrader({"USDC": 10}, max_position_pct=value)
+        for value in (0, -1, 101, True, 1.5):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    PaperTrader({"USDC": 10}, max_open_positions=value)
 
     def test_usdt_persistence_survives_restart(self):
         with tempfile.TemporaryDirectory() as directory:

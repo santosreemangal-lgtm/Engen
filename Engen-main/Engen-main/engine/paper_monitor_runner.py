@@ -8,12 +8,16 @@ import argparse
 import json
 import logging
 import math
+import os
 import time
+import uuid
+from pathlib import Path
 from contextlib import nullcontext
 from urllib.parse import urlsplit
 from decimal import Decimal, InvalidOperation
 
 from engine.config import ConfigError, load_config
+from engine.profile_store import ProfileStore
 from engine.latency import LatencyRecorder
 from engine.paper_trader import PaperTrader
 from engine.signature_store import SignatureStore
@@ -128,12 +132,88 @@ def build_parser():
     )
 
     parser.add_argument(
+        "--profile-id",
+        help=(
+            "Run against an active saved profile. The monitored wallet must be "
+            "associated with that profile; profile-specific databases and paper risk settings are used."
+        ),
+    )
+
+    parser.add_argument(
         "--once",
         action="store_true",
         help="Perform one scan and exit.",
     )
 
     return parser
+
+
+def configure_profile_args(args, parser):
+    """Resolve an existing active profile into isolated paper-only storage and risk limits."""
+    args.profile_risk_limits = {}
+    if not args.profile_id:
+        return
+
+    try:
+        profile_id = str(uuid.UUID(args.profile_id.strip()))
+    except (AttributeError, ValueError, TypeError):
+        parser.error("--profile-id must be a valid profile UUID.")
+    args.profile_id = profile_id
+
+    if args.paper_db != "data/paper_trading.db" or args.signature_db != "data/signatures.db":
+        parser.error("Do not combine --profile-id with custom --paper-db or --signature-db paths.")
+
+    profile_store_path = Path(os.environ.get("PROFILE_STORE_DB", "data/profiles.db"))
+    if not profile_store_path.is_file():
+        parser.error("The profile database does not exist; create a profile in the dashboard first.")
+
+    try:
+        profile = ProfileStore(profile_store_path).get_profile(profile_id)
+    except (OSError, RuntimeError, ValueError):
+        parser.error("The requested profile could not be loaded safely.")
+    if profile is None:
+        parser.error("The requested profile does not exist.")
+    if profile.get("status") != "active":
+        parser.error("Activate the profile in the dashboard before starting its monitor.")
+    if args.wallet not in profile.get("source_wallets", []):
+        parser.error("The monitored public wallet must be associated with this profile first.")
+
+    settings = profile.get("settings", {})
+    paper_settings = settings.get("paper_trading", {}) if isinstance(settings, dict) else {}
+    if not isinstance(paper_settings, dict):
+        parser.error("Profile paper_trading settings must be a JSON object.")
+    allowed = {"initial_quote_balance", "max_position_pct", "max_open_positions"}
+    unknown = set(paper_settings) - allowed
+    if unknown:
+        parser.error("Unsupported paper_trading setting(s): " + ", ".join(sorted(unknown)))
+
+    if "initial_quote_balance" in paper_settings:
+        try:
+            args.paper_balance = positive_decimal(str(paper_settings["initial_quote_balance"]))
+        except argparse.ArgumentTypeError as exc:
+            parser.error("Invalid profile initial_quote_balance: " + str(exc))
+
+    if "max_position_pct" in paper_settings:
+        try:
+            percentage = Decimal(str(paper_settings["max_position_pct"]))
+        except Exception:
+            parser.error("Profile max_position_pct must be a number greater than 0 and at most 100.")
+        if not percentage.is_finite() or percentage <= 0 or percentage > 100:
+            parser.error("Profile max_position_pct must be a number greater than 0 and at most 100.")
+        args.profile_risk_limits["max_position_pct"] = str(percentage)
+
+    if "max_open_positions" in paper_settings:
+        count = paper_settings["max_open_positions"]
+        if not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= 100:
+            parser.error("Profile max_open_positions must be an integer from 1 to 100.")
+        args.profile_risk_limits["max_open_positions"] = count
+
+    configured_root = os.environ.get("PROFILE_DATA_DIR")
+    default_root = profile_store_path.parent / "profiles"
+    profile_root = Path(configured_root) if configured_root else default_root
+    profile_dir = profile_root / profile_id
+    args.paper_db = str(profile_dir / "paper_trading.db")
+    args.signature_db = str(profile_dir / "signatures.db")
 
 
 def validate_args(args, parser):
@@ -156,6 +236,8 @@ def validate_args(args, parser):
 
     if not 1 <= args.limit <= 1000:
         parser.error("--limit must be between 1 and 1000.")
+
+    configure_profile_args(args, parser)
 
     if not args.paper_db.strip():
         parser.error("--paper-db cannot be empty.")
@@ -303,6 +385,7 @@ def main(argv=None):
         trader = PaperTrader(
             {args.quote_mint: args.paper_balance},
             db_path=args.paper_db,
+            **args.profile_risk_limits,
         )
     except KeyboardInterrupt:
         logger.info("Startup interrupted; monitoring was not started.")

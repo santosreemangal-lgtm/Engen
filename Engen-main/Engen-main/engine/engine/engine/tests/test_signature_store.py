@@ -1,5 +1,7 @@
 
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,6 +24,38 @@ class SignatureStoreTests(unittest.TestCase):
 
         self.assertTrue(saved)
         self.assertTrue(self.store.has_seen("wallet_A", "sig_123"))
+
+    def test_state_survives_a_full_python_process_restart(self):
+        db_path = Path(self.temp_dir.name) / "process_restart.db"
+        first_process = (
+            "from engine.signature_store import SignatureStore; "
+            "s=SignatureStore(db_path=r'" + str(db_path) + "'); "
+            "s.save('wallet_restart', 'sig_persisted'); "
+            "s.mark_processed('wallet_restart', 'sig_persisted')"
+        )
+        subprocess.run(
+            [sys.executable, "-c", first_process],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        # A separate interpreter simulates the application process restarting.
+        second_process = (
+            "from engine.signature_store import SignatureStore; "
+            "s=SignatureStore(db_path=r'" + str(db_path) + "'); "
+            "assert s.has_seen('wallet_restart', 'sig_persisted'); "
+            "assert s.get_status('wallet_restart', 'sig_persisted') == 'processed'; "
+            "assert s.save('wallet_restart', 'sig_persisted') is False; "
+            "print('restart-persistence-and-deduplication: PASS')"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", second_process],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("restart-persistence-and-deduplication: PASS", result.stdout)
 
     def test_duplicate_signature_is_not_saved_twice(self):
         first_save = self.store.save("wallet_A", "sig_123")

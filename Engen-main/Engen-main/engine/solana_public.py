@@ -145,6 +145,50 @@ def get_latest_blockhash(rpc_url=DEFAULT_RPC_URL, timeout=10):
     return blockhash
 
 
+
+def get_signature_status(signature, rpc_url=DEFAULT_RPC_URL, timeout=10):
+    """Fetch a transaction's confirmation status, including older history."""
+    if not is_valid_transaction_signature(signature):
+        raise ValueError("A valid 64-byte base58 transaction signature is required.")
+
+    result = _rpc_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "getSignatureStatuses",
+            "params": [
+                [signature],
+                {"searchTransactionHistory": True},
+            ],
+        },
+        rpc_url=rpc_url,
+        timeout=timeout,
+    )
+
+    if not isinstance(result, dict):
+        raise SolanaRPCError("Solana RPC returned invalid signature-status data.")
+    values = result.get("value")
+    if not isinstance(values, list) or len(values) != 1:
+        raise SolanaRPCError("Solana RPC returned invalid signature-status data.")
+
+    status = values[0]
+    if status is None:
+        return None
+    if not isinstance(status, dict):
+        raise SolanaRPCError("Solana RPC returned invalid signature-status data.")
+
+    confirmation = status.get("confirmationStatus")
+    if confirmation not in ("processed", "confirmed", "finalized"):
+        return None
+    slot = status.get("slot")
+    if not isinstance(slot, int) or isinstance(slot, bool) or slot < 0:
+        slot = None
+    return {
+        "confirmationStatus": confirmation,
+        "slot": slot,
+        "err": status.get("err"),
+    }
+
 def get_transaction(signature, rpc_url=DEFAULT_RPC_URL, timeout=10):
     """Fetch one transaction after validating its base58 signature."""
     if not is_valid_transaction_signature(signature):

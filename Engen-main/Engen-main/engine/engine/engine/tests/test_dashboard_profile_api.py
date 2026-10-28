@@ -116,6 +116,31 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertEqual(report["error"], "SolanaRPCError")
         self.assertFalse(report["transaction_broadcast"])
 
+    def test_virtual_usd_balance_can_be_changed_and_survives_reload(self):
+        first = dashboard_server.set_profile_virtual_balance(self.profile_id, "1250.50")
+        self.assertEqual(first["mint"], "USD")
+        self.assertEqual(first["amount"], "1250.50")
+        self.assertTrue(first["balance_updated"])
+        self.assertFalse(first["real_trading"])
+        self.assertFalse(first["transaction_broadcast"])
+
+        # A new simulator object models a dashboard/server refresh.
+        dashboard_server.profile_paper_simulators.pop(self.profile_id, None)
+        first_report = dashboard_server.load_profile_paper_simulation_report(self.profile_id)
+        self.assertEqual(first_report["available_balance_usd"], "1250.50")
+        self.assertEqual(first_report["portfolio_value_usd"], "1250.50")
+        self.assertEqual(first_report["realized_pnl_usd"], "0")
+        self.assertEqual(first_report["unrealized_pnl_usd"], "0")
+
+        second = dashboard_server.set_profile_virtual_balance(self.profile_id, "2500.75")
+        self.assertEqual(second["amount"], "2500.75")
+        dashboard_server.profile_paper_simulators.pop(self.profile_id, None)
+        second_report = dashboard_server.load_profile_paper_simulation_report(self.profile_id)
+        self.assertEqual(second_report["balances"]["USD"], "2500.75")
+        self.assertEqual(second_report["available_balance"], "2500.75")
+        self.assertEqual(second_report["portfolio_value_usd"], "2500.75")
+        self.assertFalse(second_report["real_trading"])
+        self.assertFalse(second_report["transaction_broadcast"])
     def test_profile_paper_reports_keep_balances_and_history_separate(self):
         second_profile = self.store.create_profile("Second API profile")
         first_db = dashboard_server.profile_paper_db_path(self.profile_id)

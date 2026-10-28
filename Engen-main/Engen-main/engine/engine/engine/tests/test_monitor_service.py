@@ -263,5 +263,32 @@ class MonitorServiceTests(unittest.TestCase):
             service.start([])
         self.assertFalse(service.status()["enabled"])
 
+
+    def test_does_not_acknowledge_without_result_handler(self):
+        acknowledged = []
+        scan_count = 0
+
+        def fake_scan(address):
+            nonlocal scan_count
+            scan_count += 1
+            if scan_count == 1:
+                return [{"signature": "pending-signature", "available": True}]
+            return []
+
+        fake_scan.mark_processed = lambda address, signature: acknowledged.append(
+            (address, signature)
+        )
+        service = MonitorService(fake_scan, interval=30)
+        service._interval = 0
+        try:
+            service.start(["public_wallet"])
+            time.sleep(0.05)
+            self.assertEqual(acknowledged, [])
+        finally:
+            service.stop()
+            worker = service._thread
+            if worker is not None:
+                worker.join(timeout=3)
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,10 @@
+import json
 import tempfile
+import threading
 import unittest
+from http.server import ThreadingHTTPServer
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from unittest.mock import patch
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -30,6 +35,78 @@ class DashboardProfileApiTests(unittest.TestCase):
         dashboard_server.profile_monitor_services.pop(self.profile_id, None)
         self.temp.cleanup()
 
+    def _post_dashboard_api(self, path, payload):
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), dashboard_server.DashboardHandler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        request = Request(
+            "http://127.0.0.1:%s%s" % (httpd.server_port, path),
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            try:
+                with urlopen(request, timeout=3) as response:
+                    return response.status, json.loads(response.read().decode("utf-8"))
+            except HTTPError as error:
+                return error.code, json.loads(error.read().decode("utf-8"))
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
+    def test_start_monitoring_requires_active_profile_and_source_wallets(self):
+        status, body = self._post_dashboard_api(
+            "/api/profile-monitor", {"action": "start", "profile_id": self.profile_id}
+        )
+        self.assertEqual(status, 409)
+        self.assertIn("Activate this profile", body["error"])
+
+        no_sources = self.store.create_profile("No source wallet")
+        self.store.update_profile(no_sources, status="active")
+        status, body = self._post_dashboard_api(
+            "/api/profile-monitor", {"action": "start", "profile_id": no_sources}
+        )
+        self.assertEqual(status, 400)
+        self.assertIn("at least one source", body["error"])
+
+    def test_start_and_stop_monitoring_api_uses_selected_public_wallets(self):
+        self.store.update_profile(self.profile_id, status="active")
+        state_path = Path(self.temp.name) / "monitoring_state.json"
+
+        class FakeMonitorService:
+            def __init__(self):
+                self.started_addresses = None
+                self.stopped = False
+
+            def start(self, addresses):
+                self.started_addresses = list(addresses)
+                return {"enabled": True, "interval_seconds": 30,
+                        "wallets": [{"address": address, "state": "waiting"} for address in addresses]}
+
+            def stop(self):
+                self.stopped = True
+                return {"enabled": False, "interval_seconds": 30, "wallets": []}
+
+        fake = FakeMonitorService()
+        with patch.object(dashboard_server, "get_profile_monitor_service", return_value=fake), \\
+             patch.object(dashboard_server, "MONITOR_STATE_FILE", state_path):
+            status, body = self._post_dashboard_api(
+                "/api/profile-monitor", {"action": "start", "profile_id": self.profile_id}
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(fake.started_addresses, [PUBLIC_WALLET])
+            self.assertTrue(body["monitor"]["enabled"])
+            self.assertEqual(json.loads(state_path.read_text(encoding="utf-8"))["profile_ids"], [self.profile_id])
+
+            status, body = self._post_dashboard_api(
+                "/api/profile-monitor", {"action": "stop", "profile_id": self.profile_id}
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(fake.stopped)
+            self.assertFalse(body["monitor"]["enabled"])
+            self.assertEqual(json.loads(state_path.read_text(encoding="utf-8"))["profile_ids"], [])
     def test_profile_report_includes_provenance_and_marks_observed_not_simulated(self):
         self.store.save_balance_snapshot(
             self.profile_id, PUBLIC_WALLET, TOKEN_MINT, "1250000", 6,

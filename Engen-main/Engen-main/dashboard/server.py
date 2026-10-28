@@ -254,7 +254,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 "mode": "paper",
                 "real_trading": False,
                 "balances": copy_paper_trader.get_balances(),
-                "trade_count": len(copy_paper_trader.get_trades(1000000)),
+                "trade_count": copy_paper_trader.get_trade_count(),
                 "history": copy_paper_trader.get_trades(100),
                 "settings": load_copy_settings(),
             })

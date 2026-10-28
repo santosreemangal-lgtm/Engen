@@ -420,7 +420,7 @@ async function loadProfiles(){
   $("save-profile-name").disabled=true;
   $("activate-profile").disabled=true;
   $("portfolio-profile-status").textContent="Unable to verify the selected profile.";
-  say("portfolio-message","Profile data could not be loaded. Check the Dashboard backend, then use Refresh Profiles.");
+  say("portfolio-message","Profile data could not be loaded. Check the Dashboard backend, then reload the page.");
  }finally{
  }
 }
@@ -480,7 +480,6 @@ async function loadPortfolioForProfile(){
   $("starting-balance-summary").textContent=hasInitial?"Starting balance: "+money(r.initial_balance):"";
   const cash=(r.balances&&r.balances.USD!==undefined)?String(r.balances.USD):(r.available_balance_usd!==null&&r.available_balance_usd!==undefined?String(r.available_balance_usd):(hasInitial?String(r.initial_balance):""));
   const hasCash=hasInitial&&cash!=="";$("add-balance").disabled=!hasCash;$("add-virtual-balance").disabled=!hasCash;$("reduce-virtual-balance").disabled=!hasCash;
-  if(document.activeElement!==$("add-balance"))$("add-balance").value="";
   renderPortfolioChart(r.transactions||[],cash);$("portfolio-profile-status").textContent="Profile: "+(selected()?.name||"selected profile");
   if(r.error)say("portfolio-message",r.error);else if(!hasInitial)say("portfolio-message","Set a starting balance once. After that, use Add USD or Reduce USD whenever you need.");else if(r.portfolio_value_usd===null||r.portfolio_value_usd===undefined)say("portfolio-message","Virtual cash is shown above. Total portfolio value needs verified USD prices for any token holdings.");else say("portfolio-message","Paper portfolio only. No real-wallet funds or live trades are included.");
  }catch(e){
@@ -685,7 +684,7 @@ $("set-initial-balance").addEventListener("click",async()=>{
   if(profileId!==selectedProfile)return;say("balance-message","Starting virtual balance confirmed: "+money(response.result.balance)+".");
   await loadPortfolioForProfile();await loadBalanceHistory();await loadTradeHistory();
  }catch(e){if(profileId===selectedProfile)say("balance-message","Starting balance was not saved: "+e.message);}
- finally{if(profileId===selectedProfile)button.disabled=!$("starting-balance-field").classList.contains("hidden");}
+ finally{if(profileId===selectedProfile)button.disabled=$("starting-balance-field").classList.contains("hidden");}
 });
 $("add-virtual-balance").addEventListener("click",async()=>{
  if(!selectedProfile){say("balance-message","Select a profile first.");return;}

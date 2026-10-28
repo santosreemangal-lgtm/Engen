@@ -614,7 +614,7 @@ def _pumpfun_instruction_action(transaction):
         if not isinstance(line, str):
             continue
 
-        invocation = re.fullmatch(r"Program (\\S+) invoke \\[(\\d+)\\]", line)
+        invocation = re.fullmatch(r"Program (\S+) invoke \[(\d+)\]", line)
         if invocation:
             depth = int(invocation.group(2))
             if depth < 1:
@@ -624,7 +624,7 @@ def _pumpfun_instruction_action(transaction):
             continue
 
         completed = re.fullmatch(
-            r"Program (\\S+) (?:success|failed(?::.*)?)",
+            r"Program (\S+) (?:success|failed(?::.*)?)",
             line,
         )
         if completed:
@@ -757,7 +757,7 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
             if (
                 not isinstance(mint, str)
                 or not isinstance(raw_delta, str)
-                or re.fullmatch(r"-?\\d+", raw_delta) is None
+                or re.fullmatch(r"-?\d+", raw_delta) is None
             ):
                 continue
             delta = int(raw_delta)

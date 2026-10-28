@@ -21,8 +21,7 @@ main{width:min(1050px,calc(100% - 32px));margin:40px auto 64px}.brand{font-size:
 <div class="metric"><div class="label">Realized P&amp;L</div><p id="realized" class="value">$—</p></div>
 <div class="metric"><div class="label">Unrealized P&amp;L</div><p id="unrealized" class="value">$—</p></div>
 </div>
-<form id="fund-form" class="row field"><input id="starting-balance" type="number" min="0.01" step="any" placeholder="Starting virtual balance (USD)" aria-label="Starting virtual balance in USD" required><button id="fund-button" type="submit">Set Balance</button></form>
-<p id="portfolio-message" class="message" role="status"></p>
+<p id="portfolio-message" class="message" role="status">USD values appear only when supported by the saved paper ledger and verified price data.</p>
 </section>
 
 <section class="panel"><div class="panel-head"><h2>Wallets</h2><span id="wallet-count" class="status">0 tracked</span></div>
@@ -75,9 +74,7 @@ async function loadPortfolio(){
   $("available").textContent=money(r.available_balance_usd ?? r.available_balance);
   $("realized").textContent=money(r.realized_pnl_usd ?? r.realized_pnl);
   $("unrealized").textContent=money(r.unrealized_pnl_usd ?? r.unrealized_pnl);
-  $("fund-button").disabled=initial!==null && initial!==undefined;
-  $("starting-balance").disabled=initial!==null && initial!==undefined;
-  say("portfolio-message",initial!==null&&initial!==undefined?"Starting virtual balance is set.":(r.database_available===false?"No paper ledger yet. Set a starting virtual balance.":"Portfolio loaded; unavailable values require verified price data."));
+  say("portfolio-message",r.database_available===false?"Paper ledger is not initialized yet.":"Values not provided by the ledger or verified price data remain unavailable.");
  }catch(e){say("portfolio-message",e.message);}
 }
 async function loadWallets(){
@@ -130,9 +127,7 @@ async function loadPortfolioForProfile(){
    $("available").textContent=money(r.available_balance_usd??r.available_balance);
    $("realized").textContent=money(r.realized_pnl_usd??r.realized_pnl);
    $("unrealized").textContent=money(r.unrealized_pnl_usd??r.unrealized_pnl);
-   $("fund-button").disabled=(r.initial_balance!==null&&r.initial_balance!==undefined);
-   $("starting-balance").disabled=$("fund-button").disabled;
-   say("portfolio-message",r.database_available===false?"No paper ledger yet. Set the starting virtual balance.":"Portfolio loaded. Unavailable price-based values remain marked —.");
+   say("portfolio-message",r.database_available===false?"This profile has no paper ledger yet.":"Values not provided by the ledger or verified price data remain unavailable.");
   }
  }catch(e){say("portfolio-message",e.message);}
 }
@@ -147,7 +142,6 @@ $("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const ad
 $("create-profile").addEventListener("click",()=>$("profile-form").classList.toggle("hidden"));
 $("profile-form").addEventListener("submit",async e=>{e.preventDefault();try{const d=await post("/api/profiles",{action:"create",name:$("profile-name").value.trim(),destination_public_address:$("profile-address").value.trim()||null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"SOURCE_PERCENT",sizing_value:"100"}}});selectedProfile=d.profile.profile_id;$("profile-name").value="";$("profile-address").value="";$("profile-form").classList.add("hidden");say("wallet-message","Profile created. It remains inactive until monitoring is explicitly started.");await loadProfiles();$("profile-select").value=selectedProfile;}catch(err){say("wallet-message",err.message);}});
 $("profile-select").addEventListener("change",async()=>{selectedProfile=$("profile-select").value;renderDirectionFromProfile();await loadPortfolioForProfile();if($("history-details").open)loadHistory();await loadWallets();});
-$("fund-form").addEventListener("submit",async e=>{e.preventDefault();const amount=Number($("starting-balance").value);if(!Number.isFinite(amount)||amount<=0){say("portfolio-message","Enter a starting balance greater than zero.");return;}try{await post("/api/paper-simulation",{action:"set-initial-balance",amount:String(amount)});$("starting-balance").value="";say("portfolio-message","Starting virtual balance saved.");await loadPortfolio();}catch(err){say("portfolio-message",err.message);}});
 $("confirm-settings").addEventListener("click",async()=>{
  if(!selectedProfile){say("settings-message","Create or select a profile before confirming settings.");return;}
  const direction=document.querySelector('input[name="direction"]:checked').value,mode=document.querySelector('input[name="sizing"]:checked').value,amount=Number($("amount-value").value);

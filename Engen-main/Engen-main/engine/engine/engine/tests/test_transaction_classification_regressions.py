@@ -60,6 +60,67 @@ class TransactionClassificationRegressionTests(unittest.TestCase):
         self.assertEqual(result["classification"], "BUY_CANDIDATE")
         self.assertEqual(result["quote_mints"], [WRAPPED_SOL_MINT])
 
+    def test_parsed_swap_instruction_preserves_buy_candidate(self):
+        from engine.transaction_analysis import classify_transaction
+
+        transaction = {
+            "transaction": {
+                "message": {
+                    "accountKeys": [{"pubkey": WALLET, "signer": True}],
+                    "instructions": [{
+                        "program": "jupiter",
+                        "programId": "JUPITER_PROGRAM",
+                        "parsed": {"type": "swap"},
+                    }],
+                }
+            },
+            "meta": {"err": None, "fee": 5000, "innerInstructions": []},
+        }
+        changes = [
+            {"owner": WALLET, "mint": ASSET, "delta_amount": "100", "decimals": 2},
+            {"owner": WALLET, "mint": WRAPPED_SOL_MINT, "delta_amount": "-200000000",
+             "decimals": 9, "source": "native_sol", "fee_adjusted": True},
+        ]
+        result = classify_transaction(transaction, WALLET, changes)
+        self.assertEqual(result["classification"], "BUY_CANDIDATE")
+
+    def test_transfer_instruction_with_sol_delta_remains_unknown(self):
+        from engine.transaction_analysis import classify_transaction
+
+        transaction = {
+            "transaction": {
+                "message": {
+                    "accountKeys": [{"pubkey": WALLET, "signer": True}],
+                    "instructions": [{
+                        "program": "system",
+                        "programId": "11111111111111111111111111111111",
+                        "parsed": {"type": "transfer"},
+                    }],
+                }
+            },
+            "meta": {"err": None, "fee": 5000, "innerInstructions": []},
+        }
+        changes = [
+            {"owner": WALLET, "mint": ASSET, "delta_amount": "100", "decimals": 2},
+            {"owner": WALLET, "mint": WRAPPED_SOL_MINT, "delta_amount": "-200000000",
+             "decimals": 9, "source": "native_sol", "fee_adjusted": True},
+        ]
+        result = classify_transaction(transaction, WALLET, changes)
+        self.assertEqual(result["classification"], "UNKNOWN")
+
+    def test_failed_transaction_never_becomes_buy_or_sell(self):
+        from engine.transaction_analysis import classify_transaction
+
+        result = classify_transaction(
+            {"meta": {"err": {"InstructionError": [0, "Custom"]}, "fee": 5000}},
+            WALLET,
+            [
+                {"owner": WALLET, "mint": ASSET, "delta_amount": "100", "decimals": 2},
+                {"owner": WALLET, "mint": USDC_MINT, "delta_amount": "-2500000", "decimals": 6},
+            ],
+        )
+        self.assertEqual(result["classification"], "FAILED_TRANSACTION")
+
     def test_failed_or_transfer_only_activity_must_not_be_promoted(self):
         # A plain SOL debit without a received asset is not a sell signal.
         result = classify_token_balance_changes([

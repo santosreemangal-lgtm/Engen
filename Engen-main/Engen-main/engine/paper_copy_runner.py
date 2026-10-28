@@ -6,6 +6,7 @@ and liquidity provider is connected.
 """
 import os
 import threading
+import uuid
 from pathlib import Path
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -22,17 +23,39 @@ PAPER_SIMULATOR_DB = Path(
         str(PROJECT_ROOT / "data" / "paper_simulator.db"),
     )
 )
+PROFILE_DATA_DIR = Path(
+    os.environ.get("PROFILE_DATA_DIR", str(PAPER_SIMULATOR_DB.parent / "profiles"))
+)
 _SIMULATOR = None
+_PROFILE_SIMULATORS = {}
 PAPER_SIMULATOR_LOCK = threading.RLock()
 
 
-def get_paper_simulator():
-    """Return the one persistent simulator shared by dashboard and monitor."""
+def profile_paper_simulator_db_path(profile_id):
+    """Resolve a validated profile UUID to its isolated paper simulator database."""
+    if not isinstance(profile_id, str) or not profile_id.strip():
+        raise ValueError("A valid profile_id is required.")
+    try:
+        canonical = str(uuid.UUID(profile_id.strip()))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError("A valid profile_id is required.") from exc
+    return PROFILE_DATA_DIR / canonical / "paper_simulator.db"
+
+
+def get_paper_simulator(profile_id=None):
+    """Return a persistent paper simulator, isolated by profile when requested."""
     global _SIMULATOR
     with PAPER_SIMULATOR_LOCK:
-        if _SIMULATOR is None:
-            _SIMULATOR = PaperSimulator(db_path=PAPER_SIMULATOR_DB)
-        return _SIMULATOR
+        if profile_id is None:
+            if _SIMULATOR is None:
+                _SIMULATOR = PaperSimulator(db_path=PAPER_SIMULATOR_DB)
+            return _SIMULATOR
+
+        database = profile_paper_simulator_db_path(profile_id)
+        canonical = database.parent.name
+        if canonical not in _PROFILE_SIMULATORS:
+            _PROFILE_SIMULATORS[canonical] = PaperSimulator(db_path=database)
+        return _PROFILE_SIMULATORS[canonical]
 
 
 def _human_amount(change):

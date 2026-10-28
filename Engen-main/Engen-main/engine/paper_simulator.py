@@ -101,7 +101,7 @@ class PaperSimulator:
                         "execution_price","gross_quote","fee","network_cost","net_quote","currency",
                         "price_source","price_timestamp","price_age_seconds","slippage_bps","created_at")))
 
-    def create_order(self, signal_id, side, asset_mint, quantity, quote_mint, *, created_at):
+    def create_order(self, signal_id, side, asset_mint, quantity, quote_mint, *, created_at, details=None):
         if not isinstance(signal_id, str) or not signal_id.strip():
             raise ValueError("Signal ID is required for deduplication.")
         if signal_id in self.processed_signals:
@@ -115,11 +115,32 @@ class PaperSimulator:
         order = {"order_id": str(uuid.uuid4()), "signal_id": signal_id, "side": side,
                  "asset_mint": asset_mint, "quantity": str(qty), "quote_mint": quote_mint,
                  "status": "CREATED", "reason": None, "created_at": created_at, "details": {
-                     "mode": "PAPER_SIMULATION", "real_trading": False, "transaction_broadcast": False}}
+                     "mode": "PAPER_SIMULATION", "real_trading": False, "transaction_broadcast": False,
+                     **(details if isinstance(details, dict) else {})}}
         self._persist(order)
         self.orders[order["order_id"]] = order
         self.processed_signals.add(signal_id)
         return dict(order)
+
+    def add_virtual_balance(self, mint, amount):
+        """Add explicitly virtual funds to one paper token balance; never touches a real wallet."""
+        if not isinstance(mint, str) or not mint.strip() or len(mint.strip()) > 128:
+            raise ValueError("A token mint or paper asset symbol (max 128 characters) is required.")
+        mint = mint.strip()
+        value = decimal_value(amount, "Virtual funding amount")
+        updated = self.balances.get(mint, Decimal("0")) + value
+        if self.db_path is not None:
+            with closing(self._connect()) as db:
+                with db:
+                    db.execute(
+                        """INSERT INTO simulator_balances(mint, amount) VALUES(?, ?)
+                        ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount""",
+                        (mint, str(updated)),
+                    )
+        self.balances[mint] = updated
+        return {"mint": mint, "added": str(value), "balance": str(updated),
+                "simulated": True, "real_trading": False,
+                "transaction_broadcast": False}
 
     def cancel_order(self, order_id):
         order = self.orders.get(order_id)
@@ -198,6 +219,7 @@ class PaperSimulator:
                 "price_age_seconds":market_price.age_seconds(now),"slippage_bps":slippage_bps,
                 "created_at":now}
         updated = dict(order, status="FILLED", reason=None, details={**order["details"],
+                       "execution_state":"FILLED",
                        "reference_price":str(reference),"execution_price":str(execution),
                        "fee":str(fee),"network_cost":str(network),"fill_id":fill["fill_id"]})
         self._persist(updated, balances=balances, fill=fill)
@@ -211,7 +233,8 @@ class PaperSimulator:
                 "transaction_broadcast":False,"order":dict(updated),"fill":dict(fill)}
 
     def _reject(self, order, reason):
-        updated = dict(order, status="REJECTED", reason=reason)
+        updated = dict(order, status="REJECTED", reason=reason,
+                       details={**order["details"], "execution_state":"REJECTED"})
         self._persist(updated)
         self.orders[order["order_id"]] = updated
         return {"status":"REJECTED","reason":reason,"real_trading":False,"transaction_broadcast":False}

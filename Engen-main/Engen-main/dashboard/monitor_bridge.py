@@ -53,8 +53,8 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             block_time = observation.get("block_time", item.get("block_time"))
             if not isinstance(block_time, int) or isinstance(block_time, bool) or block_time < 0:
                 block_time = None
-            # Preserve token amount only when RPC metadata supplies a mint, decimals,
-            # and an exact decimal change that converts cleanly to raw integer units.
+            # The engine represents delta_amount in raw base units (integers).
+            # Store that exact amount; the history API converts it using decimals.
             token_mint = None
             token_decimals = None
             raw_amount = None
@@ -69,17 +69,14 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 for change in ordered_changes:
                     mint = change.get("mint")
                     decimals = change.get("decimals")
+                    raw_change = change.get("delta_amount")
                     if not isinstance(mint, str) or not isinstance(decimals, int) or isinstance(decimals, bool) or not 0 <= decimals <= 30:
                         continue
-                    try:
-                        scaled = abs(Decimal(str(change.get("delta_amount"))) * (Decimal(10) ** decimals))
-                    except (InvalidOperation, TypeError, ValueError):
-                        continue
-                    if not scaled.is_finite() or scaled != scaled.to_integral_value():
+                    if not isinstance(raw_change, str) or not (raw_change[1:].isdigit() if raw_change.startswith("-") else raw_change.isdigit()):
                         continue
                     token_mint = mint
                     token_decimals = decimals
-                    raw_amount = str(int(scaled))
+                    raw_amount = str(abs(int(raw_change)))
                     break
             evidence = {
                 "metadata_status": str(item.get("metadata_status", "available"))[:80],

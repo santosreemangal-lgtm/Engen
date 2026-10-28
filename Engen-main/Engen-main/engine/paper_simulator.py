@@ -164,6 +164,42 @@ class PaperSimulator:
         return {"mint": mint, "initial_balance": str(value), "balance": str(value),
                 "simulated": True, "real_trading": False, "transaction_broadcast": False}
 
+    def set_virtual_balance(self, amount, mint="USD"):
+        """Replace the current virtual cash balance; never touches real funds."""
+        if not isinstance(mint, str) or not mint.strip() or len(mint.strip()) > 128:
+            raise ValueError("A virtual balance currency is required.")
+        mint = mint.strip()
+        value = decimal_value(amount, "Virtual balance")
+        if value <= 0:
+            raise ValueError("Virtual balance must be greater than zero.")
+        if self.db_path is not None:
+            with closing(self._connect()) as db:
+                with db:
+                    db.execute(
+                        """INSERT INTO simulator_balances(mint, amount) VALUES(?, ?)
+                        ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount""",
+                        (mint, str(value)),
+                    )
+                    # Treat a user-confirmed balance update as the new virtual
+                    # starting balance for display; historical paper orders/fills
+                    # remain available in their own history.
+                    db.execute(
+                        """INSERT INTO simulator_meta(key, value) VALUES('initial_balance', ?)
+                        ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                        (str(value),),
+                    )
+        self.balances[mint] = value
+        self._initial_balance_value = str(value)
+        self._initial_balance_mint = mint
+        self._rebuild_pnl_ledger()
+        return {
+            "mint": mint,
+            "balance": str(value),
+            "simulated": True,
+            "real_trading": False,
+            "transaction_broadcast": False,
+        }
+
     def add_virtual_balance(self, mint, amount):
         """Add explicitly virtual funds to one paper token balance; never touches a real wallet."""
         if not isinstance(mint, str) or not mint.strip() or len(mint.strip()) > 128:

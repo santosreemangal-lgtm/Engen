@@ -213,6 +213,32 @@ class PaperSimulator:
                 "simulated": True, "real_trading": False,
                 "transaction_broadcast": False}
 
+    def set_virtual_balance(self, amount, mint="USD"):
+        """Set the current virtual USD cash balance and audit the signed adjustment."""
+        if not isinstance(mint, str) or mint.strip().upper() != "USD":
+            raise ValueError("Only the virtual USD cash balance can be adjusted here.")
+        if self._initial_balance_value is None:
+            raise ValueError("Set the starting virtual USD balance before adjusting it.")
+        target = decimal_value(amount, "Target virtual USD balance", allow_zero=True)
+        if target > Decimal("1000000000"):
+            raise ValueError("Virtual USD balance cannot exceed 1,000,000,000.")
+        current = self.balances.get("USD", Decimal("0"))
+        adjustment = target - current
+        if adjustment == 0:
+            return {
+                "mint": "USD", "previous_balance": str(current),
+                "adjustment": "0", "balance": str(current),
+                "simulated": True, "real_trading": False,
+                "transaction_broadcast": False,
+            }
+        self._save_balance_change("BALANCE_ADJUSTMENT", "USD", adjustment, target)
+        return {
+            "mint": "USD", "previous_balance": str(current),
+            "adjustment": str(adjustment), "balance": str(target),
+            "simulated": True, "real_trading": False,
+            "transaction_broadcast": False,
+        }
+
     def cancel_order(self, order_id):
         order = self.orders.get(order_id)
         if order is None:

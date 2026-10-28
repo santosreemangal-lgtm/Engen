@@ -185,7 +185,11 @@ function renderDirectionFromProfile(){
 async function loadPortfolioForProfile(){
  try{
   const path="/api/paper-simulation"+(selectedProfile?"?profile_id="+encodeURIComponent(selectedProfile):"");
-  const d=await api(path),r=d.report||d;
+  let d=await api(path),r=d.report||d;
+  if(selectedProfile && r.database_available===false && !r.error){
+   await post("/api/paper-simulation",{action:"initialize-profile-ledger",profile_id:selectedProfile});
+   d=await api(path);r=d.report||d;
+  }
   if(selectedProfile){
    $("total-value").textContent=money(r.portfolio_value_usd??r.portfolio_value);
    $("available").textContent=money(r.available_balance_usd??r.available_balance);

@@ -80,7 +80,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 
 <section class="panel"><div class="panel-head"><h2>Wallets &amp; Source Selection</h2><span id="wallet-count" class="status">0 saved</span></div>
 <div class="field"><label for="profile-select">Select your wallet profile</label><div class="profile-controls"><select id="profile-select" aria-label="Select your wallet profile"><option value="">No profile selected</option></select><button id="create-profile" type="button" class="secondary">Add Wallet Profile</button><button id="delete-profile" type="button" class="danger" disabled title="Select a saved profile before deleting it.">Delete Saved Profile</button></div><div id="profile-options" class="profile-options" aria-label="Saved profiles"></div><p id="profile-load-status" class="hint" role="status">Loading saved profiles…</p><p class="hint">Each profile has its own destination address and source-wallet list. Monitoring never starts automatically. Deleting a profile removes it from this list; its existing history is preserved.</p></div>
-<form id="profile-form" class="hidden field"><label for="profile-name">Wallet/profile name</label><div class="row"><input id="profile-name" maxlength="80" placeholder="e.g. Main wallet" required><input id="profile-address" placeholder="Your destination public address" autocomplete="off" spellcheck="false"><button type="submit">Create</button></div><p class="hint">Public address only. Never enter a seed phrase or private key.</p></form>
+<form id="profile-form" class="hidden field"><label for="profile-name">Wallet/profile name</label><div class="row"><input id="profile-name" maxlength="80" placeholder="e.g. Main wallet" required><input id="profile-address" placeholder="Your destination public address (optional)" autocomplete="off" spellcheck="false"><button id="create-profile-submit" type="submit">Create</button></div><p class="hint">Public address only. Never enter a seed phrase or private key.</p><p id="profile-form-message" class="message" role="status" aria-live="polite"></p></form>
 <div class="field"><label for="profile-address-edit">My Wallet · Destination public address</label><div class="row"><input id="profile-address-edit" placeholder="Your own Solana public address" autocomplete="off" spellcheck="false"><button id="save-destination" type="button">Save Address</button></div><p class="hint">This is your destination address, not a source trader to copy.</p></div>
 <div class="field"><label for="wallet-search">Search your saved source wallets</label><input id="wallet-search" placeholder="Filter saved public addresses…" autocomplete="off" spellcheck="false"><p class="hint">This searches addresses you have saved here; it does not discover or copy every public wallet on Solana.</p></div>
 <form id="wallet-form" class="row"><input id="wallet-address" autocomplete="off" spellcheck="false" placeholder="Add source trader public address" aria-label="Source trader public address" required><button id="add-wallet" type="submit">Add Source Wallet</button></form>
@@ -314,9 +314,33 @@ function updateAmountLabel(){
 document.querySelectorAll('input[name="sizing"]').forEach(x=>x.addEventListener("change",updateAmountLabel));
 $("amount-value").addEventListener("input",updateAmountLabel);
 $("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const address=$("wallet-address").value.trim();$("add-wallet").disabled=true;try{await post("/api/wallets",{action:"add",address});$("wallet-address").value="";say("wallet-message","Source wallet saved. Use Add to profile to select it for the chosen profile.");await loadWallets();}catch(err){say("wallet-message",err.message);}finally{$("add-wallet").disabled=false;}});
-$("create-profile").addEventListener("click",()=>$("profile-form").classList.toggle("hidden"));
+$("create-profile").addEventListener("click",()=>{$("profile-form").classList.toggle("hidden");say("profile-form-message","");if(!$("profile-form").classList.contains("hidden"))$("profile-name").focus();});
 $("delete-profile").addEventListener("click",async()=>{const p=selected();if(!p||!selectedProfile)return;if(!confirm("Delete the saved profile \""+p.name+"\"? It will disappear from this list. Existing history will be preserved."))return;const id=selectedProfile;$("delete-profile").disabled=true;try{await post("/api/profiles",{action:"delete",profile_id:id});selectedProfile="";say("wallet-message","Profile deleted. Existing history is preserved.");await loadProfiles();}catch(e){say("wallet-message","Profile was not deleted: "+e.message);$("delete-profile").disabled=!selectedProfile;} });
-$("profile-form").addEventListener("submit",async e=>{e.preventDefault();try{const d=await post("/api/profiles",{action:"create",name:$("profile-name").value.trim(),destination_public_address:$("profile-address").value.trim()||null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"SOURCE_PERCENT",sizing_value:"100"}}});selectedProfile=d.profile.profile_id;$("profile-name").value="";$("profile-address").value="";$("profile-form").classList.add("hidden");say("wallet-message","Profile created. It remains inactive until monitoring is explicitly started.");await loadProfiles();$("profile-select").value=selectedProfile;}catch(err){say("wallet-message",err.message);}});
+$("profile-form").addEventListener("submit",async e=>{
+ e.preventDefault();
+ const name=$("profile-name").value.trim();
+ const address=$("profile-address").value.trim();
+ const submit=$("create-profile-submit");
+ if(!name){say("profile-form-message","Enter a profile name first.");$("profile-name").focus();return;}
+ submit.disabled=true;say("profile-form-message","Creating profile…");
+ try{
+  const d=await post("/api/profiles",{action:"create",name,destination_public_address:address||null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"SOURCE_PERCENT",sizing_value:"100"}}});
+  const newId=d?.profile?.profile_id;
+  if(!newId)throw new Error("The server response did not include a profile ID.");
+  selectedProfile=newId;
+  await loadProfiles();
+  if(!profiles.some(p=>p.profile_id===newId)){
+   throw new Error("The server accepted the request, but the refreshed profile list did not contain the new profile. Check whether the dashboard server is using the expected profile database.");
+  }
+  $("profile-name").value="";$("profile-address").value="";
+  $("profile-form").classList.add("hidden");
+  say("profile-form-message","Profile created successfully.");
+  say("wallet-message","Profile created. It remains inactive until monitoring is explicitly started.");
+ }catch(err){
+  say("profile-form-message","Profile was not confirmed as created: "+err.message);
+  say("wallet-message","Profile creation failed: "+err.message);
+ }finally{submit.disabled=false;}
+});
 $("profile-select").addEventListener("change",()=>{setSelectedProfile($("profile-select").value).catch(e=>say("wallet-message","Profile selection failed: "+e.message));});
 $("confirm-settings").addEventListener("click",async()=>{
  if(!selectedProfile){say("settings-message","Create or select a profile before confirming settings.");return;}

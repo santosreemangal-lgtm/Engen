@@ -356,6 +356,11 @@ async function loadTransactionHistory(){
   (d.transactions||[]).forEach(tx=>{
    const item=document.createElement("article");item.className="history-item";
    const title=document.createElement("strong");title.textContent=(tx.classification||"UNKNOWN").replaceAll("_"," ")+" · "+(tx.status||"unknown");item.append(title);
+   const evidence=tx.evidence&&typeof tx.evidence==="object"?tx.evidence:{};
+   appendHistoryField(item,"Classification reason",evidence.classification_reason||evidence.classification_note);
+   appendHistoryField(item,"Monitored wallet signer",evidence.monitored_wallet_is_signer===true?"Confirmed":evidence.monitored_wallet_is_signer===false?"Not confirmed":"Not recorded");
+   appendHistoryField(item,"Classification confidence",evidence.confidence);
+   appendHistoryField(item,"Confirmation status",evidence.confirmation_status);
    appendHistoryField(item,"Source wallet",tx.source_wallet_address);appendHistoryField(item,"Token mint",tx.token_mint);appendHistoryField(item,"Amount",tx.amount);appendHistoryField(item,"Observed at",tx.observed_at);appendHistoryField(item,"Slot",tx.slot);
    if(tx.signature){const line=document.createElement("p");line.className="hint";line.textContent="Signature: "+tx.signature;item.append(line);const link=document.createElement("a");link.href="https://solscan.io/tx/"+encodeURIComponent(tx.signature);link.target="_blank";link.rel="noopener noreferrer";link.textContent="Open transaction explorer";item.append(link);}
    list.append(item);

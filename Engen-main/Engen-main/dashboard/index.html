@@ -530,7 +530,7 @@ async function loadBalanceHistory(){
   if(!transactions.length){const p=document.createElement("p");p.className="empty";p.textContent="No virtual balance changes recorded yet.";list.append(p);}
   transactions.slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||""))).forEach(tx=>{
    const item=document.createElement("article");item.className="history-item";
-   const title=document.createElement("strong");title.textContent=(tx.kind==="INITIAL_BALANCE"?"Starting balance":tx.kind==="DEPOSIT"?"Virtual funds added":(tx.kind||"Balance change"));item.append(title);
+   const title=document.createElement("strong");title.textContent=(tx.kind==="INITIAL_BALANCE"?"Starting balance":tx.kind==="DEPOSIT"?"Virtual funds added":tx.kind==="BALANCE_ADJUSTMENT"?"Virtual USD balance adjusted":(tx.kind||"Balance change"));item.append(title);
    for(const [label,val] of [["Amount",money(tx.amount)],["Balance after",money(tx.balance_after)],["Date",tx.created_at],["Asset",tx.mint]]){
     const p=document.createElement("p");p.className="hint";p.textContent=label+": "+(val??"unavailable");item.append(p);
    }
@@ -544,7 +544,7 @@ $("trade-history-details").addEventListener("toggle",()=>{if($("trade-history-de
 $("set-initial-balance").addEventListener("click",async()=>{
  if(!selectedProfile){say("balance-message","Select a profile first.");return;}
  const amount=$("initial-balance").value.trim();
- if(!Number.isFinite(Number(amount))||Number(amount)<=0){say("balance-message","Enter a starting USD amount greater than zero.");return;}
+ if(!Number.isFinite(Number(amount))||Number(amount)<=0||Number(amount)>1000000000){say("balance-message","Enter a starting USD amount greater than zero and no more than $1,000,000,000.");return;}
  $("set-initial-balance").disabled=true;
  try{
   await post("/api/paper-simulation",{action:"set-initial-balance",profile_id:selectedProfile,mint:"USD",amount});
@@ -553,18 +553,48 @@ $("set-initial-balance").addEventListener("click",async()=>{
  }catch(e){say("balance-message","Balance was not saved: "+e.message);await loadPortfolioForProfile();}
  finally{if(!$("initial-balance").disabled)$("set-initial-balance").disabled=false;}
 });
+$("set-virtual-balance").addEventListener("click",async()=>{
+ if(!selectedProfile){say("balance-message","Select a profile first.");return;}
+ const profileId=selectedProfile;
+ const amount=$("target-balance").value.trim();
+ const numericAmount=Number(amount);
+ if(amount===""||!Number.isFinite(numericAmount)||numericAmount<0||numericAmount>1000000000){
+  say("balance-message","Enter a target USD balance from $0.00 to $1,000,000,000.");return;
+ }
+ const button=$("set-virtual-balance");
+ button.disabled=true;say("balance-message","Updating virtual USD balance…");
+ try{
+  const response=await post("/api/paper-simulation",{action:"set-balance",profile_id:profileId,mint:"USD",amount});
+  const result=response.result;
+  if(!result||result.transaction_broadcast!==false||result.real_trading!==false){
+   throw new Error("The server did not confirm a paper-only balance adjustment.");
+  }
+  if(profileId===selectedProfile){
+   say("balance-message",Number(result.adjustment)===0
+    ?"The virtual USD balance is unchanged."
+    :"Virtual USD balance updated. Adjustment: "+money(result.adjustment)+"; current cash balance: "+money(result.balance)+". This change was recorded in history.");
+   await loadPortfolioForProfile();await loadBalanceHistory();
+  }
+ }catch(e){
+  if(profileId===selectedProfile)say("balance-message","Virtual USD balance was not updated: "+e.message);
+  if(profileId===selectedProfile)await loadPortfolioForProfile();
+ }finally{button.disabled=!selectedProfile||$("target-balance").disabled;}
+});
 $("add-virtual-balance").addEventListener("click",async()=>{
  if(!selectedProfile){say("balance-message","Select a profile first.");return;}
+ const profileId=selectedProfile;
  const amount=$("add-balance").value.trim();
- if(!Number.isFinite(Number(amount))||Number(amount)<=0){say("balance-message","Enter an amount greater than zero.");return;}
- $("add-virtual-balance").disabled=true;
+ if(!Number.isFinite(Number(amount))||Number(amount)<=0||Number(amount)>1000000000){say("balance-message","Enter an amount greater than zero and no more than $1,000,000,000.");return;}
+ const button=$("add-virtual-balance");
+ button.disabled=true;
  try{
-  await post("/api/paper-simulation",{action:"add-balance",profile_id:selectedProfile,mint:"USD",amount});
+  await post("/api/paper-simulation",{action:"add-balance",profile_id:profileId,mint:"USD",amount});
+  if(profileId!==selectedProfile)return;
   $("add-balance").value="";
   say("balance-message","Virtual USD funds added and recorded in balance activity.");
   await loadPortfolioForProfile();await loadBalanceHistory();
- }catch(e){say("balance-message","Virtual funds were not added: "+e.message);}
- finally{$("add-virtual-balance").disabled=false;}
+ }catch(e){if(profileId===selectedProfile)say("balance-message","Virtual funds were not added: "+e.message);}
+ finally{button.disabled=!selectedProfile||$("add-balance").disabled;}
 });
 loadWallets();
 setInterval(()=>{if(backendReady){loadMonitor();loadPortfolioForProfile();loadTradeHistory();loadBalanceHistory();if($("history-details").open)loadHistory();}},15000);

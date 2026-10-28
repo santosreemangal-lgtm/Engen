@@ -7,6 +7,7 @@ from urllib.parse import parse_qs
 from dashboard import server as dashboard_server
 from engine.profile_store import ProfileStore
 from engine.paper_trader import PaperTrader
+from engine import paper_copy_runner
 
 PUBLIC_WALLET = "11111111111111111111111111111111"
 TOKEN_MINT = "So11111111111111111111111111111111111111112"
@@ -145,6 +146,41 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertEqual(len(first_report["orders"]), 1)
         self.assertEqual(second_report["balances"], {"USDC": "20"})
         self.assertEqual(second_report["orders"], [])
+        self.assertFalse(first_report["real_trading"])
+        self.assertFalse(first_report["transaction_broadcast"])
+
+    def test_profile_paper_simulator_reports_balance_activity_without_cross_profile_leakage(self):
+        second_profile = self.store.create_profile("Second paper simulator profile")
+        first_data_dir = dashboard_server.PROFILE_DATA_DIR
+
+        with patch.object(paper_copy_runner, "PROFILE_DATA_DIR", first_data_dir):
+            with patch.dict(paper_copy_runner._PROFILE_SIMULATORS, {}, clear=True):
+                first = paper_copy_runner.get_paper_simulator(self.profile_id)
+                second = paper_copy_runner.get_paper_simulator(second_profile)
+
+                first.set_initial_virtual_balance("1000")
+                first.add_virtual_balance("USD", "250")
+                second.set_initial_virtual_balance("40")
+
+                first_report = dashboard_server.load_paper_simulation_report(self.profile_id)
+                second_report = dashboard_server.load_paper_simulation_report(second_profile)
+
+        self.assertEqual(first_report["initial_balance"], "1000")
+        self.assertEqual(first_report["balances"]["USD"], "1250")
+        self.assertEqual(first_report["available_balance_usd"], "1250")
+        self.assertEqual(first_report["portfolio_value_usd"], "1250")
+        self.assertEqual(first_report["realized_pnl_usd"], "0")
+        self.assertEqual(first_report["realized_pnl_percent"], "0.00")
+        self.assertEqual(
+            [event["kind"] for event in first_report["transactions"]],
+            ["DEPOSIT", "INITIAL_BALANCE"],
+        )
+        self.assertEqual(second_report["initial_balance"], "40")
+        self.assertEqual(second_report["balances"]["USD"], "40")
+        self.assertEqual(
+            [event["kind"] for event in second_report["transactions"]],
+            ["INITIAL_BALANCE"],
+        )
         self.assertFalse(first_report["real_trading"])
         self.assertFalse(first_report["transaction_broadcast"])
 

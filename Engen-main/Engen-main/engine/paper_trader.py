@@ -1,6 +1,7 @@
 """Paper trading with optional SQLite persistence. Never submits real trades."""
 
 import sqlite3
+import threading
 from collections.abc import Mapping
 from contextlib import closing
 from decimal import Decimal
@@ -30,6 +31,7 @@ class PaperTrader:
 
         self.processed_signatures = set()
         self.trades = []
+        self._lock = threading.RLock()
         self.db_path = Path(db_path) if db_path is not None else None
 
         if self.db_path is not None:
@@ -185,7 +187,13 @@ class PaperTrader:
         return Decimal(raw_total) / (Decimal(10) ** decimals)
 
     def process(self, result):
+        """Serialize paper processing against balance edits and other signals."""
+        with self._lock:
+            return self._process_unlocked(result)
+
+    def _process_unlocked(self, result):
         """Process one successful candidate without submitting a real trade."""
+
         if not isinstance(result, Mapping):
             return {"status": "SKIPPED", "reason": "Invalid transaction result."}
 
@@ -297,7 +305,13 @@ class PaperTrader:
         return trade
 
     def set_balance(self, mint, amount, action="set"):
+        """Serialize virtual balance edits against paper trade processing."""
+        with self._lock:
+            return self._set_balance_unlocked(mint, amount, action)
+
+    def _set_balance_unlocked(self, mint, amount, action="set"):
         """Set or add a virtual token balance and persist it without real transfers."""
+
         if not isinstance(mint, str) or not mint.strip():
             raise ValueError("A token mint is required.")
         try:
@@ -331,7 +345,15 @@ class PaperTrader:
 
     def get_balances(self):
         """Return a safe copy of virtual balances as strings."""
-        return {mint: str(amount) for mint, amount in self.balances.items()}
+        with self._lock:
+            return {mint: str(amount) for mint, amount in self.balances.items()}
+
+    def get_trades(self, limit=100):
+        """Return a safe, newest-first snapshot of recent virtual trades."""
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+            raise ValueError("Trade history limit must be a positive integer.")
+        with self._lock:
+            return [dict(trade) for trade in reversed(self.trades[-limit:])]
 
 
 if __name__ == "__main__":

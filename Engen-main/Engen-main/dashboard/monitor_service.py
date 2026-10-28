@@ -167,8 +167,11 @@ class MonitorService:
                             if result.get("available") is not True:
                                 continue
                             try:
-                                if self._on_result is not None:
-                                    self._on_result(address, result)
+                                # Never acknowledge a signature unless a
+                                # handler actually processed the result.
+                                if self._on_result is None:
+                                    continue
+                                self._on_result(address, result)
                                 marker = getattr(
                                     self._scan_function,
                                     "mark_processed",

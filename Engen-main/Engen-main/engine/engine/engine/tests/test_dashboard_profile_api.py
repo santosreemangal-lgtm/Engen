@@ -114,6 +114,37 @@ class DashboardProfileApiTests(unittest.TestCase):
                 http.server_close()
                 thread.join(timeout=3)
 
+    def test_profile_name_can_be_updated_through_profile_api(self):
+        with patch.object(dashboard_server, "DASHBOARD_AUTH_TOKEN", ""):
+            http = ThreadingHTTPServer(("127.0.0.1", 0), dashboard_server.DashboardHandler)
+            thread = threading.Thread(target=http.serve_forever, daemon=True)
+            thread.start()
+            base = "http://127.0.0.1:%s" % http.server_port
+            request = Request(
+                base + "/api/profiles",
+                data=json.dumps({
+                    "action": "update",
+                    "profile_id": self.profile_id,
+                    "name": "Renamed paper profile",
+                }).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urlopen(request, timeout=3) as response:
+                    status = response.status
+                    body = json.loads(response.read().decode("utf-8"))
+                self.assertEqual(status, 200)
+                self.assertEqual(body["profile"]["name"], "Renamed paper profile")
+                self.assertEqual(
+                    self.store.get_profile(self.profile_id)["name"],
+                    "Renamed paper profile",
+                )
+            finally:
+                http.shutdown()
+                http.server_close()
+                thread.join(timeout=3)
+
     def test_api_can_adjust_virtual_usd_balance_with_audit_history(self):
         data_dir = Path(self.temp.name) / "profile-data"
         with patch.object(dashboard_server, "DASHBOARD_AUTH_TOKEN", ""), \

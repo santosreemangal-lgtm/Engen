@@ -224,6 +224,37 @@ def profile_paper_db_path(profile_id):
     return PROFILE_DATA_DIR / canonical_profile_id(profile_id) / "paper_trading.db"
 
 
+def initialize_profile_paper_ledger(profile_id):
+    """Create an empty, isolated virtual ledger for an existing profile; never seed funds."""
+    profile_id = canonical_profile_id(profile_id)
+    if not PROFILE_STORE_DB.is_file():
+        raise ValueError("Profile database is unavailable.")
+    with sqlite3.connect("file:" + str(PROFILE_STORE_DB.resolve()) + "?mode=ro", uri=True) as db:
+        profile = db.execute(
+            "SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
+            (profile_id,),
+        ).fetchone()
+    if profile is None:
+        raise ValueError("Profile not found.")
+    path = profile_paper_db_path(profile_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(str(path), timeout=10) as db:
+        db.execute("PRAGMA busy_timeout=10000")
+        db.execute("""CREATE TABLE IF NOT EXISTS paper_balances(
+            mint TEXT PRIMARY KEY, amount TEXT NOT NULL)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS paper_trades(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            signature TEXT NOT NULL UNIQUE, side TEXT NOT NULL,
+            asset_mint TEXT NOT NULL, asset_amount TEXT NOT NULL,
+            quote_mint TEXT NOT NULL, status TEXT NOT NULL,
+            created_at TEXT NOT NULL)""")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_paper_trades_created ON paper_trades(created_at)")
+        db.commit()
+    return {"profile_id": profile_id, "database_available": True, "initialized": True,
+            "balances": {}, "orders": [], "fills": [],
+            "real_trading": False, "transaction_broadcast": False}
+
+
 def load_profile_paper_simulation_report(profile_id):
     """Read one profile's PaperTrader ledger without creating or mutating it."""
     profile_id = canonical_profile_id(profile_id)
@@ -740,6 +771,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/paper-simulation":
             action = payload.get("action")
+            if action == "initialize-profile-ledger":
+                try:
+                    result = initialize_profile_paper_ledger(payload.get("profile_id"))
+                    self.send_json(200, result)
+                except ValueError as exc:
+                    status = 404 if str(exc) == "Profile not found." else 400
+                    self.send_json(status, {"error": str(exc)})
+                except (OSError, sqlite3.Error) as exc:
+                    self.send_json(503, {"error": "Profile paper ledger storage unavailable (" + type(exc).__name__ + ")."})
+                return
             try:
                 with paper_simulator_lock:
                     simulator = get_paper_simulator()

@@ -236,7 +236,7 @@ class DashboardProfileApiTests(unittest.TestCase):
             },
             "token_balance_changes": [
                 {"owner": PUBLIC_WALLET, "mint": TOKEN_MINT,
-                 "decimals": 6, "delta_amount": "1.25"},
+                 "decimals": 6, "delta_amount": "1250000"},
             ],
         }
 

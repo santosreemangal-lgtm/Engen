@@ -9,6 +9,7 @@ from engine.solana_public import (
     SolanaRPCHTTPError,
     SolanaRPCProviderError,
     get_transaction,
+    get_signature_status,
 )
 
 
@@ -127,6 +128,43 @@ class TransactionRPCTests(unittest.TestCase):
         self.assertIsNone(context.exception.__cause__)
         self.assertTrue(context.exception.__suppress_context__)
         self.assertNotIn("super-secret", str(context.exception))
+
+
+    @patch("engine.solana_public._rpc_request")
+    def test_signature_status_uses_historical_status_lookup(self, rpc_request):
+        rpc_request.return_value = {
+            "context": {"slot": 456},
+            "value": [{
+                "slot": 123,
+                "confirmationStatus": "finalized",
+                "err": None,
+            }],
+        }
+
+        signature = "1" * 64
+        result = get_signature_status(signature)
+
+        self.assertEqual(result, {
+            "confirmationStatus": "finalized",
+            "slot": 123,
+            "err": None,
+        })
+        payload = rpc_request.call_args.args[0]
+        self.assertEqual(payload["method"], "getSignatureStatuses")
+        self.assertEqual(payload["params"][0], [signature])
+        self.assertTrue(payload["params"][1]["searchTransactionHistory"])
+
+    @patch("engine.solana_public._rpc_request")
+    def test_signature_status_returns_none_when_provider_has_no_status(self, rpc_request):
+        rpc_request.return_value = {"context": {"slot": 456}, "value": [None]}
+
+        self.assertIsNone(get_signature_status("1" * 64))
+
+    def test_signature_status_rejects_invalid_signature_without_rpc(self):
+        with patch("engine.solana_public._rpc_request") as rpc_request:
+            with self.assertRaises(ValueError):
+                get_signature_status("not-a-valid-signature")
+            rpc_request.assert_not_called()
 
 
 if __name__ == "__main__":

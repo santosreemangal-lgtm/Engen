@@ -256,7 +256,7 @@ def initialize_profile_paper_ledger(profile_id):
 
 
 def set_profile_virtual_balance(profile_id, amount):
-    """Set a profile's initial virtual USDC balance once."""
+    """Set a profile's initial virtual USDT balance once."""
     from decimal import Decimal, InvalidOperation
     profile_id = canonical_profile_id(profile_id)
     try:
@@ -264,14 +264,14 @@ def set_profile_virtual_balance(profile_id, amount):
     except (InvalidOperation, TypeError, ValueError) as exc:
         raise ValueError("Enter a valid virtual balance amount.") from exc
     if not value.is_finite() or value <= 0 or value > Decimal("1000000000"):
-        raise ValueError("Virtual balance must be greater than zero and at most 1,000,000,000 USDC.")
+        raise ValueError("Virtual balance must be greater than zero and at most 1,000,000,000 USDT.")
     initialize_profile_paper_ledger(profile_id)
     path = profile_paper_db_path(profile_id)
     with sqlite3.connect(str(path), timeout=10) as db:
         db.execute("PRAGMA busy_timeout=10000")
-        db.execute("INSERT INTO paper_balances(mint,amount) VALUES('USDC',?) ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount", (format(value, 'f'),))
+        db.execute("INSERT INTO paper_balances(mint,amount) VALUES('USDT',?) ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount", (format(value, 'f'),))
         db.commit()
-    return {"profile_id": profile_id, "mint": "USDC", "amount": format(value, 'f'), "initial_balance_set": True, "real_trading": False, "transaction_broadcast": False}
+    return {"profile_id": profile_id, "mint": "USDT", "amount": format(value, 'f'), "initial_balance_set": True, "real_trading": False, "transaction_broadcast": False}
 
 
 def load_profile_paper_simulation_report(profile_id):
@@ -315,7 +315,7 @@ def load_profile_paper_simulation_report(profile_id):
                     "SELECT mint,amount FROM paper_balances ORDER BY mint"
                 )
             }
-            base["available_balance"] = base["balances"].get("USDC")
+            base["available_balance"] = base["balances"].get("USDT")
             base["available_balance_usd"] = base["available_balance"]
             base["initial_balance"] = base["available_balance"]
             base["orders"] = [

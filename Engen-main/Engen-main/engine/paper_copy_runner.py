@@ -23,8 +23,11 @@ PAPER_SIMULATOR_DB = Path(
         str(PROJECT_ROOT / "data" / "paper_simulator.db"),
     )
 )
+PROFILE_STORE_DB = Path(
+    os.environ.get("PROFILE_STORE_DB", str(PROJECT_ROOT / "data" / "profiles.db"))
+)
 PROFILE_DATA_DIR = Path(
-    os.environ.get("PROFILE_DATA_DIR", str(PAPER_SIMULATOR_DB.parent / "profiles"))
+    os.environ.get("PROFILE_DATA_DIR", str(PROFILE_STORE_DB.parent / "profiles"))
 )
 _SIMULATOR = None
 _PROFILE_SIMULATORS = {}

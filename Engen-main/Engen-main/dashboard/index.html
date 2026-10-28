@@ -23,6 +23,13 @@ h1{font-size:clamp(34px,5.5vw,50px);line-height:1.08;letter-spacing:-1.7px;margi
 h2{font-size:18px;letter-spacing:-.25px;display:flex;align-items:center;gap:10px}
 h2:before{content:"";display:inline-block;width:4px;height:19px;border-radius:8px;background:linear-gradient(#9aafff,#62d9c3)}
 .grid{gap:13px}
+.portfolio-grid{grid-template-columns:repeat(auto-fit,minmax(155px,1fr))}
+.portfolio-balance-note{padding:11px 13px;border:1px solid #2b3b55;border-radius:12px;background:#0b1423;color:var(--muted);font-size:12px;line-height:1.65}
+.portfolio-balance-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.portfolio-balance-grid .field{min-width:0;padding:15px;border:1px solid #2b3b55;border-radius:14px;background:rgba(11,20,35,.62);margin:12px 0}
+.portfolio-balance-grid .row{align-items:stretch}
+.portfolio-balance-grid input{min-width:0}
+.portfolio-balance-grid .hint{font-size:12px;line-height:1.6}
 .metric{min-height:112px;padding:18px;border-radius:16px;background:linear-gradient(150deg,#1c2a43,#121b2d);border:1px solid #2c3b55;transition:transform .18s,border-color .18s}
 .metric:hover{transform:translateY(-2px);border-color:#51658a}
 .metric:nth-child(1){border-top:2px solid #8da7ff}.metric:nth-child(2){border-top:2px solid #55d8b0}.metric:nth-child(3){border-top:2px solid #b8a0ff}.metric:nth-child(4){border-top:2px solid #f2c078}
@@ -88,17 +95,21 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <header><div class="brand">Paper trading · Read-only monitoring</div><h1>Solana Copy Engine</h1><p class="subtitle">A simple dashboard for tracked wallets and paper-copy settings.</p></header>
 
 <section class="panel"><div class="panel-head"><h2>Portfolio</h2><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span></div>
-<div class="grid">
+<div class="grid portfolio-grid">
 <div class="metric"><div class="label">Total Value</div><p id="total-value" class="value">$—</p></div>
-<div class="metric"><div class="label">Available Balance</div><p id="available" class="value">$—</p></div>
+<div class="metric"><div class="label">Available USD</div><p id="available" class="value">$—</p></div>
 <div class="metric"><div class="label">Realized P&amp;L</div><p id="realized" class="value">$—</p></div>
 <div class="metric"><div class="label">Unrealized P&amp;L</div><p id="unrealized" class="value">$—</p></div>
 <div class="metric"><div class="label">Realized Return</div><p id="realized-percent" class="value">—%</p></div>
 </div>
 <p id="portfolio-message" class="message" role="status">USD values appear only when supported by the saved paper ledger and verified price data.</p>
 <h3>Virtual USD Balance</h3>
-<div class="field"><label for="initial-balance">Starting virtual balance (USD)</label><div class="row"><input id="initial-balance" type="number" min="0.01" max="1000000000" step="0.01" value="1000" inputmode="decimal"><button id="set-initial-balance" type="button">Set Starting Balance</button></div><p id="initial-balance-hint" class="hint">Set this profile's starting balance once. You can add more virtual funds later.</p></div>
-<div class="field"><label for="add-balance">Add virtual funds (USD)</label><div class="row"><input id="add-balance" type="number" min="0.01" max="1000000000" step="0.01" placeholder="e.g. 250.00" inputmode="decimal"><button id="add-virtual-balance" type="button" class="secondary">Add Funds</button></div></div>
+<div class="portfolio-balance-grid">
+ <div class="field"><label for="initial-balance">Starting virtual balance (USD)</label><div class="row"><input id="initial-balance" type="number" min="0.01" max="1000000000" step="0.01" value="1000" inputmode="decimal"><button id="set-initial-balance" type="button">Set Starting Balance</button></div><p id="initial-balance-hint" class="hint">Set this profile's starting balance once. It is tracked separately from later adjustments.</p></div>
+ <div class="field"><label for="target-balance">Set current available USD balance</label><div class="row"><input id="target-balance" type="number" min="0" max="1000000000" step="0.01" placeholder="e.g. 750.00" inputmode="decimal" disabled><button id="set-virtual-balance" type="button" class="secondary" disabled>Update Balance</button></div><p class="hint">Enter the target cash balance. The difference is recorded as a virtual balance adjustment; starting balance and paper fills are preserved.</p></div>
+ <div class="field"><label for="add-balance">Add virtual funds (USD)</label><div class="row"><input id="add-balance" type="number" min="0.01" max="1000000000" step="0.01" placeholder="e.g. 250.00" inputmode="decimal"><button id="add-virtual-balance" type="button" class="secondary">Add Funds</button></div><p class="hint">Adds the entered amount to the current virtual USD cash balance.</p></div>
+</div>
+<p class="portfolio-balance-note">Portfolio values are based on the saved paper ledger only. Unpriced token holdings are not assigned a guessed USD value. The Realized Return percentage uses realized P&amp;L divided by the saved starting balance; unrealized P&amp;L stays unavailable unless supported by verified price data.</p>
 <p id="balance-message" class="message" role="status"></p>
 </section>
 
@@ -158,7 +169,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </main>
 <script>
 const $ = id => document.getElementById(id);
-let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false;
+let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, portfolioRequestVersion = 0;
 const headers = {"Content-Type":"application/json"};
 async function api(path, options={}) {
   const response = await fetch(path,{...options,headers:{...headers,...(options.headers||{})}});
@@ -166,7 +177,11 @@ async function api(path, options={}) {
   if(!response.ok) throw new Error(data.error || "Request failed ("+response.status+").");
   return data;
 }
-function money(value){const n=Number(value);return Number.isFinite(n)?"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"$—";}
+function money(value){
+ if(value===null||value===undefined||value==="")return "$—";
+ const n=Number(value);
+ return Number.isFinite(n)?new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:2}).format(n):"$—";
+}
 function say(id,text){$(id).textContent=text;}
 function post(path,payload){return api(path,{method:"POST",body:JSON.stringify(payload)});}
 function renderWallets(){
@@ -307,35 +322,58 @@ function renderDirectionFromProfile(){
  $("amount-value").value=String(amount);updateAmountLabel();
 }
 async function loadPortfolioForProfile(){
- if(!selectedProfile){
+ const requestProfile=selectedProfile;
+ const requestVersion=++portfolioRequestVersion;
+ if(!requestProfile){
   for(const id of ["total-value","available","realized","unrealized"])$(id).textContent="$—";
   $("realized-percent").textContent="—%";
   $("initial-balance").disabled=true;$("set-initial-balance").disabled=true;
   $("add-balance").disabled=true;$("add-virtual-balance").disabled=true;
+  $("target-balance").value="";$("target-balance").disabled=true;$("set-virtual-balance").disabled=true;
   say("portfolio-message","Create or select a profile to view its paper portfolio.");
   return;
  }
  try{
-  const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile)),r=d.report||d;
+  const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(requestProfile)),r=d.report||d;
+  if(requestVersion!==portfolioRequestVersion||requestProfile!==selectedProfile)return;
+  if(r.profile_id&&r.profile_id!==requestProfile)throw new Error("Portfolio response did not match the selected profile.");
   $("total-value").textContent=money(r.portfolio_value_usd);
   $("available").textContent=money(r.available_balance_usd);
   $("realized").textContent=money(r.realized_pnl_usd);
   $("unrealized").textContent=money(r.unrealized_pnl_usd);
-  $("realized-percent").textContent=r.realized_pnl_percent===null||r.realized_pnl_percent===undefined?"—%":Number(r.realized_pnl_percent).toFixed(2)+"%";
+  const returnPercent=r.realized_pnl_percent===null||r.realized_pnl_percent===undefined?"":Number(r.realized_pnl_percent);
+  $("realized-percent").textContent=returnPercent===""||!Number.isFinite(returnPercent)?"—%":returnPercent.toFixed(2)+"%";
   const hasInitial=r.initial_balance!==null&&r.initial_balance!==undefined;
   $("initial-balance").disabled=hasInitial;
   $("set-initial-balance").disabled=hasInitial;
-  $("initial-balance").value=hasInitial?String(r.initial_balance):($("initial-balance").value||"1000");
+  if(document.activeElement!==$("initial-balance"))$("initial-balance").value=hasInitial?String(r.initial_balance):"1000";
   $("initial-balance-hint").textContent=hasInitial
-   ?"Starting balance is locked at "+money(r.initial_balance)+". Add virtual funds below to increase the balance."
-   :"Set this profile's starting USD balance once. It is virtual money only.";
+   ?"Starting balance is "+money(r.initial_balance)+". Change current available USD using the adjustment control; starting balance stays in history."
+   :"Set this profile's starting virtual balance first. It is tracked separately from later adjustments.";
   $("add-balance").disabled=!hasInitial;
   $("add-virtual-balance").disabled=!hasInitial;
-  say("portfolio-message",r.database_available===false
-   ?"This profile has no paper ledger yet. Set its starting virtual USD balance to begin."
-   :"Total Value is shown only when all non-USD holdings can be valued safely. Unrealized P&L stays unavailable without verified fresh prices.");
-  if(r.error)say("portfolio-message",r.error);
- }catch(e){say("portfolio-message",e.message);}
+  $("target-balance").disabled=!hasInitial;
+  $("set-virtual-balance").disabled=!hasInitial;
+  const cash=(r.balances&&r.balances.USD!==undefined)?String(r.balances.USD):(hasInitial?String(r.initial_balance):"");
+  if(document.activeElement!==$("target-balance"))$("target-balance").value=cash;
+  if(r.error){
+   say("portfolio-message",r.error);
+  }else if(!hasInitial){
+   say("portfolio-message","This profile has no starting virtual USD balance yet. Set it below to initialize the paper portfolio.");
+  }else if(r.portfolio_value_usd===null||r.portfolio_value_usd===undefined){
+   say("portfolio-message","Available USD shows the saved virtual cash balance. Total Value and Unrealized P&L remain unavailable because token holdings need verified current USD prices.");
+  }else{
+   say("portfolio-message","Portfolio values come from this profile's saved paper ledger. Realized Return = realized P&L ÷ starting virtual USD balance. No real-wallet funds are included.");
+  }
+ }catch(e){
+  if(requestVersion!==portfolioRequestVersion||requestProfile!==selectedProfile)return;
+  for(const id of ["total-value","available","realized","unrealized"])$(id).textContent="$—";
+  $("realized-percent").textContent="—%";
+  $("initial-balance").disabled=true;$("set-initial-balance").disabled=true;
+  $("add-balance").disabled=true;$("add-virtual-balance").disabled=true;
+  $("target-balance").disabled=true;$("set-virtual-balance").disabled=true;
+  say("portfolio-message","Portfolio could not be loaded: "+e.message);
+ }
 }
 function updateAmountLabel(){
  const mode=document.querySelector('input[name="sizing"]:checked')?.value||"SOURCE_PERCENT";

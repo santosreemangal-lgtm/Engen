@@ -23,6 +23,36 @@ class PaperSimulatorInitialBalanceTests(unittest.TestCase):
             self.assertEqual(reopened.balances["USD"], Decimal("1250.50"))
             self.assertEqual(reopened.report()["initial_balance"], "1250.50")
 
+    def test_balance_activity_history_persists_across_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "paper.db"
+            simulator = PaperSimulator(db_path=database)
+
+            simulator.set_initial_virtual_balance("1000")
+            simulator.add_virtual_balance("USD", "250.25")
+
+            report = simulator.report()
+            self.assertEqual(report["balances"]["USD"], "1250.25")
+            self.assertEqual(
+                [event["kind"] for event in report["transactions"]],
+                ["INITIAL_BALANCE", "DEPOSIT"],
+            )
+            self.assertEqual(
+                [event["amount"] for event in report["transactions"]],
+                ["1000", "250.25"],
+            )
+            self.assertEqual(report["transactions"][-1]["balance_after"], "1250.25")
+            self.assertTrue(all(event["simulated"] for event in report["transactions"]))
+
+            reopened = PaperSimulator(db_path=database)
+            restored = reopened.report()
+            self.assertEqual(restored["balances"]["USD"], "1250.25")
+            self.assertEqual(
+                [event["kind"] for event in restored["transactions"]],
+                ["INITIAL_BALANCE", "DEPOSIT"],
+            )
+            self.assertEqual(restored["transactions"][-1]["balance_after"], "1250.25")
+
     def test_initial_balance_cannot_be_changed_after_initial_setup(self):
         with tempfile.TemporaryDirectory() as directory:
             simulator = PaperSimulator(db_path=Path(directory) / "paper.db")

@@ -269,10 +269,7 @@ def set_profile_virtual_balance(profile_id, amount):
     path = profile_paper_db_path(profile_id)
     with sqlite3.connect(str(path), timeout=10) as db:
         db.execute("PRAGMA busy_timeout=10000")
-        existing = db.execute("SELECT amount FROM paper_balances WHERE mint='USDC'").fetchone()
-        if existing is not None:
-            raise ValueError("Initial virtual balance is already set for this profile.")
-        db.execute("INSERT INTO paper_balances(mint,amount) VALUES('USDC',?)", (format(value, 'f'),))
+        db.execute("INSERT INTO paper_balances(mint,amount) VALUES('USDC',?) ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount", (format(value, 'f'),))
         db.commit()
     return {"profile_id": profile_id, "mint": "USDC", "amount": format(value, 'f'), "initial_balance_set": True, "real_trading": False, "transaction_broadcast": False}
 

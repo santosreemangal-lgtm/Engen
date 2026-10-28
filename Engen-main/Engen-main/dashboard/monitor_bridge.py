@@ -3,9 +3,9 @@
 
 from engine.signature_store import SignatureStore
 from engine.transaction_monitor import monitor_wallet
-from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders
+from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders, PAPER_SIMULATOR_LOCK
 from engine.profile_store import LABELS
-from engine.solana_validation import is_valid_transaction_signature, PAPER_SIMULATOR_LOCK
+from engine.solana_validation import is_valid_transaction_signature
 
 
 def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter=None,

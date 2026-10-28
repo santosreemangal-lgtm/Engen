@@ -255,6 +255,28 @@ def initialize_profile_paper_ledger(profile_id):
             "real_trading": False, "transaction_broadcast": False}
 
 
+def set_profile_virtual_balance(profile_id, amount):
+    """Set a profile's initial virtual USDC balance once."""
+    from decimal import Decimal, InvalidOperation
+    profile_id = canonical_profile_id(profile_id)
+    try:
+        value = Decimal(str(amount))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError("Enter a valid virtual balance amount.") from exc
+    if not value.is_finite() or value <= 0 or value > Decimal("1000000000"):
+        raise ValueError("Virtual balance must be greater than zero and at most 1,000,000,000 USDC.")
+    initialize_profile_paper_ledger(profile_id)
+    path = profile_paper_db_path(profile_id)
+    with sqlite3.connect(str(path), timeout=10) as db:
+        db.execute("PRAGMA busy_timeout=10000")
+        existing = db.execute("SELECT amount FROM paper_balances WHERE mint='USDC'").fetchone()
+        if existing is not None:
+            raise ValueError("Initial virtual balance is already set for this profile.")
+        db.execute("INSERT INTO paper_balances(mint,amount) VALUES('USDC',?)", (format(value, 'f'),))
+        db.commit()
+    return {"profile_id": profile_id, "mint": "USDC", "amount": format(value, 'f'), "initial_balance_set": True, "real_trading": False, "transaction_broadcast": False}
+
+
 def load_profile_paper_simulation_report(profile_id):
     """Read one profile's PaperTrader ledger without creating or mutating it."""
     profile_id = canonical_profile_id(profile_id)
@@ -296,6 +318,9 @@ def load_profile_paper_simulation_report(profile_id):
                     "SELECT mint,amount FROM paper_balances ORDER BY mint"
                 )
             }
+            base["available_balance"] = base["balances"].get("USDC")
+            base["available_balance_usd"] = base["available_balance"]
+            base["initial_balance"] = base["available_balance"]
             base["orders"] = [
                 {"order_id": row[0], "signal_id": row[1], "side": row[2],
                  "asset_mint": row[3], "quantity": row[4], "quote_mint": row[5],
@@ -775,6 +800,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 try:
                     result = initialize_profile_paper_ledger(payload.get("profile_id"))
                     self.send_json(200, result)
+                except ValueError as exc:
+                    status = 404 if str(exc) == "Profile not found." else 400
+                    self.send_json(status, {"error": str(exc)})
+                except (OSError, sqlite3.Error) as exc:
+                    self.send_json(503, {"error": "Profile paper ledger storage unavailable (" + type(exc).__name__ + ")."})
+                return
+            if action == "set-profile-initial-balance":
+                try:
+                    result = set_profile_virtual_balance(payload.get("profile_id"), payload.get("amount"))
+                    self.send_json(200, {"result": result, "report": load_profile_paper_simulation_report(payload.get("profile_id"))})
                 except ValueError as exc:
                     status = 404 if str(exc) == "Profile not found." else 400
                     self.send_json(status, {"error": str(exc)})

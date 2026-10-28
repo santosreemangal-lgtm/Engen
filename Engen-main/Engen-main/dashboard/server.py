@@ -109,6 +109,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             self.send_json(200, {"history": paper_trader.history()})
             return
 
+        if path == "/api/copy/settings":
+            self.send_json(200, load_copy_settings())
+            return
+
+        if path == "/api/copy/status":
+            self.send_json(200, {
+                "mode": "paper",
+                "real_trading": False,
+                "balances": copy_paper_trader.get_balances(),
+                "trade_count": len(copy_paper_trader.trades),
+                "history": list(reversed(copy_paper_trader.trades[-100:])),
+                "settings": load_copy_settings(),
+            })
+            return
+
         return super().do_GET()
 
     def do_POST(self):
@@ -116,6 +131,30 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         payload = self.read_json()
 
         if payload is None:
+            return
+
+        if path == "/api/copy/settings":
+            mode = payload.get("mode")
+            value = payload.get("value")
+            if mode not in ("percentage", "fixed"):
+                self.send_json(400, {"error": "Mode must be percentage or fixed."})
+                return
+            try:
+                amount = Decimal(str(value))
+            except (InvalidOperation, ValueError, TypeError):
+                self.send_json(400, {"error": "Copy value must be a valid number."})
+                return
+            if (
+                not amount.is_finite()
+                or amount <= 0
+                or (mode == "percentage" and amount > 100)
+                or (mode == "fixed" and amount > Decimal("10000"))
+            ):
+                self.send_json(400, {"error": "Percentage must be 0-100; fixed USDT amount must be greater than 0 and no more than 10000."})
+                return
+            settings = {"mode": mode, "value": str(amount)}
+            save_copy_settings(settings)
+            self.send_json(200, settings)
             return
 
         if path == "/api/paper/control":

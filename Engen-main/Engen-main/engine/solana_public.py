@@ -158,7 +158,7 @@ def get_transaction(signature, rpc_url=DEFAULT_RPC_URL, timeout=10):
             "params": [
                 signature,
                 {
-                    "encoding": "json",
+                    "encoding": "jsonParsed",
                     "commitment": "confirmed",
                     "maxSupportedTransactionVersion": 0,
                 },

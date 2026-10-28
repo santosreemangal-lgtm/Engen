@@ -357,6 +357,7 @@ async function loadTransactionHistory(){
    const item=document.createElement("article");item.className="history-item";
    const title=document.createElement("strong");title.textContent=(tx.classification||"UNKNOWN").replaceAll("_"," ")+" · "+(tx.status||"unknown");item.append(title);
    const evidence=tx.evidence&&typeof tx.evidence==="object"?tx.evidence:{};
+   appendHistoryField(item,"Metadata status",evidence.metadata_status);
    appendHistoryField(item,"Classification reason",evidence.classification_reason||evidence.classification_note);
    appendHistoryField(item,"Monitored wallet signer",evidence.monitored_wallet_is_signer===true?"Confirmed":evidence.monitored_wallet_is_signer===false?"Not confirmed":"Not recorded");
    appendHistoryField(item,"Classification confidence",evidence.confidence);

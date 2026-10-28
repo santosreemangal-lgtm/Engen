@@ -3,7 +3,9 @@
 
 from engine.signature_store import SignatureStore
 from engine.transaction_monitor import monitor_wallet
-from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders
+from engine.paper_copy_runner import (
+    queue_paper_orders, execute_pending_paper_orders, PAPER_SIMULATOR_LOCK,
+)
 
 
 def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter=None, simulator_getter=None):
@@ -23,11 +25,13 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             allowed_sides = side_getter() if side_getter is not None else "BOTH"
             copy_settings = settings_getter() if settings_getter is not None else {}
             simulator = simulator_getter() if simulator_getter is not None else None
-            queued_orders = queue_paper_orders(
-                address, results, simulator=simulator,
-                allowed_sides=allowed_sides, copy_settings=copy_settings
-            )
-            execution_outcomes = execute_pending_paper_orders(address, simulator=simulator)
+            # Serialize monitor-side writes with dashboard balance/order API writes.
+            with PAPER_SIMULATOR_LOCK:
+                queued_orders = queue_paper_orders(
+                    address, results, simulator=simulator,
+                    allowed_sides=allowed_sides, copy_settings=copy_settings
+                )
+                execution_outcomes = execute_pending_paper_orders(address, simulator=simulator)
             outcomes_by_signal = {
                 item["signal_id"]: item for item in execution_outcomes
                 if item.get("signal_id")

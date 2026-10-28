@@ -129,8 +129,8 @@ function renderWallets(){
   const row=document.createElement("div");row.className="wallet";
   const code=document.createElement("div");code.className="address";code.textContent=address;
   const actions=document.createElement("div");actions.className="wallet-actions";
-  const assigned=selected()?.source_wallets||[];const isAssigned=assigned.includes(address);if(selectedProfile&&!isAssigned)return;
-  const assign=document.createElement("button");assign.className="secondary";assign.textContent=isAssigned?"Assigned to profile":"Add to profile";assign.disabled=!selectedProfile||isAssigned;
+  const assigned=selected()?.source_wallets||[];const isAssigned=assigned.includes(address);
+  const assign=document.createElement("button");assign.className="secondary";assign.textContent=isAssigned?"Assigned to profile":"Add to selected profile";assign.disabled=!selectedProfile||isAssigned;
   assign.addEventListener("click",async()=>{try{await post("/api/profiles",{action:"associate-source-wallet",profile_id:selectedProfile,wallet_address:address});say("wallet-message","Source wallet associated with selected profile only.");await loadProfiles();renderWallets();}catch(e){say("wallet-message",e.message);}});
   const remove=document.createElement("button");remove.className="danger";remove.textContent=isAssigned?"Unassign from this wallet":"Remove saved";remove.addEventListener("click",async()=>{try{if(isAssigned&&selectedProfile){await post("/api/profiles",{action:"disassociate-source-wallet",profile_id:selectedProfile,wallet_address:address});say("wallet-message","Source wallet unassigned from this destination profile; it remains saved for other profiles.");await loadProfiles();}else{await post("/api/wallets",{action:"remove",address});say("wallet-message","Saved source wallet removed from the global saved list.");await loadWallets();}}catch(e){say("wallet-message",e.message);}});
   actions.append(assign,remove);row.append(code,actions);list.append(row);

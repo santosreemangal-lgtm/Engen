@@ -206,5 +206,37 @@ class PaperTraderTests(unittest.TestCase):
             self.assertEqual(len(restarted.trades), 1)
 
 
+
+    def test_add_virtual_balance_persists_across_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            usdt = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+            db_path = Path(directory) / "balance-adjustment.db"
+            trader = PaperTrader({usdt: "100"}, db_path=db_path)
+
+            result = trader.set_balance(usdt, "25", action="add")
+            self.assertEqual(result["balance"], "125")
+            self.assertEqual(trader.get_balances()[usdt], "125")
+
+            restarted = PaperTrader({usdt: "999"}, db_path=db_path)
+            self.assertEqual(restarted.get_balances()[usdt], "125")
+
+    def test_set_virtual_balance_persists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            usdt = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+            db_path = Path(directory) / "balance-set.db"
+            trader = PaperTrader({usdt: "100"}, db_path=db_path)
+
+            result = trader.set_balance(usdt, "250", action="set")
+            self.assertEqual(result["balance"], "250")
+            restarted = PaperTrader({usdt: "999"}, db_path=db_path)
+            self.assertEqual(restarted.get_balances()[usdt], "250")
+
+    def test_rejects_invalid_virtual_balance_adjustment(self):
+        trader = PaperTrader({"USDT": "100"})
+        with self.assertRaises(ValueError):
+            trader.set_balance("USDT", "0", action="add")
+        with self.assertRaises(ValueError):
+            trader.set_balance("USDT", "10", action="withdraw")
+
 if __name__ == "__main__":
     unittest.main()

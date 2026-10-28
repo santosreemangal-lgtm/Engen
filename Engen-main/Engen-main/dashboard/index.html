@@ -46,7 +46,7 @@ button:active:not(:disabled){transform:translateY(0)}
 .wallet-actions{align-items:center}
 .history-item{background:linear-gradient(145deg,#121e32,#0e1727);border-color:#2c3d58}
 details summary{padding:12px 0}
-.status{padding:6px 10px;border:1px solid #2d3c56;border-radius:999px;background:#101a2b}
+.status{padding:6px 10px;border:1px solid #2d3c56;border-radius:999px;background:#101a2b}.status-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.api-auth-details{margin:12px 4px;padding:10px 12px;border:1px solid #293953;border-radius:12px;background:#0d1727}.api-auth-details summary{padding:5px 0}.api-auth-details .field{margin-bottom:0}.api-auth-details input{margin:8px 0}.api-auth-details .row{flex-wrap:wrap}.api-auth-details .row button{flex:1}
 .message{line-height:1.6}
 footer.hint{padding:10px 4px;line-height:1.7}
 @media(max-width:760px){main{margin-top:30px}.panel{padding:19px}.metric{padding:15px;min-height:102px}}
@@ -81,7 +81,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <body><main>
 <header><div class="brand">Paper trading · Read-only monitoring</div><h1>Solana Copy Engine</h1><p class="subtitle">A simple dashboard for tracked wallets and paper-copy settings.</p></header>
 
-<section class="panel"><div class="panel-head"><h2>Portfolio</h2><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span></div>
+<section class="panel"><div class="panel-head"><h2>Portfolio</h2><div class="status-group"><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span><span id="rpc-health-status" class="status" title="Read-only public Solana RPC health"><span id="rpc-health-dot" class="dot"></span><span id="rpc-health-state">RPC checking…</span></span></div></div>
 <div class="virtual-balance-editor">
 <div><h3>Virtual USD Balance</h3><p class="hint">Set or change your paper cash balance. This is simulated money only; no wallet is funded.</p></div>
 <form id="virtual-balance-form" class="row"><label class="sr-only" for="virtual-balance-value">Virtual USD balance</label><input id="virtual-balance-value" type="number" min="0.01" max="1000000000" step="0.01" placeholder="Enter amount in $" required disabled><button id="save-virtual-balance" type="submit" disabled>Confirm Balance</button></form>
@@ -131,7 +131,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <label class="choice"><input type="radio" name="direction" value="BOTH" checked> Buy and sell</label>
 </div></div>
 <div class="field"><label>Trade Amount</label><div class="choice-row two">
-<label class="choice"><input type="radio" name="sizing" value="FIXED_USD"> Fixed amount (USDT)</label>
+<label class="choice"><input type="radio" name="sizing" value="FIXED_USD"> Fixed amount (USD-equivalent)</label>
 <label class="choice"><input type="radio" name="sizing" value="SOURCE_PERCENT" checked> Percentage of source trade</label>
 </div></div>
 <div class="field"><label id="amount-label" for="amount-value">Source trade percentage</label><div class="amount-input-wrap"><input id="amount-value" type="number" min="0.01" max="99.99" step="any" value="5" required><span id="amount-suffix" class="amount-suffix">%</span></div><p class="hint" id="amount-hint">Choose any percentage greater than 0 and strictly below 100. Settings apply only after confirmation.</p></div>
@@ -145,17 +145,23 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <section class="history-subpanel"><h3>Simulated Paper Trades</h3><p class="hint">Paper orders created by the copy engine. No signing or blockchain transaction is sent.</p><div id="paper-trade-history-list" class="history-list"><p class="empty">Select a profile to load paper trades.</p></div><p id="paper-trade-history-message" class="message" role="status"></p></section>
 </div></details>
 </section>
+<details id="api-auth-details" class="api-auth-details"><summary>Optional API authentication</summary><div class="field"><label for="api-token">Dashboard API token</label><input id="api-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste bearer token (at least 32 characters)"><div class="row"><button id="save-api-token" type="button">Use Token</button><button id="clear-api-token" type="button" class="secondary">Clear Token</button></div><p id="api-auth-message" class="message" role="status">Only needed when DASHBOARD_AUTH_TOKEN is configured. The token is kept in this browser tab’s session storage.</p></div></details>
 <footer class="hint">Paper mode only. No private keys, signing, or live transactions. Portfolio prices and P&amp;L may remain unavailable when verified market prices are not available.</footer>
 </main>
 <script>
 const $ = id => document.getElementById(id);
 let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, balanceInputDirty = false, balanceSaveInProgress = false;
 const headers = {"Content-Type":"application/json"};
+function apiRequestHeaders(extra={}) {
+  let token = "";
+  try { token = sessionStorage.getItem("dashboard-api-token") || ""; } catch {}
+  return {...headers, ...(token ? {Authorization:"Bearer "+token} : {}), ...(extra || {})};
+}
 async function api(path, options={}) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 12000);
   try {
-    const response = await fetch(path,{...options,signal:controller.signal,headers:{...headers,...(options.headers||{})}});
+    const response = await fetch(path,{...options,signal:controller.signal,headers:apiRequestHeaders(options.headers)});
     let data;
     try { data=await response.json(); } catch { throw new Error("Backend returned an invalid response."); }
     if(!response.ok) throw new Error(data.error || "Request failed ("+response.status+").");
@@ -203,7 +209,20 @@ async function loadWallets(){
   $("wallet-count").textContent=wallets.length+" saved";
   renderWallets();
   await loadProfiles();
- }catch(e){backendReady=false;$("engine-dot").classList.remove("on");say("engine-state","Backend unavailable");say("wallet-message",e.message);}
+ }catch(e){backendReady=false;$("engine-dot").classList.remove("on");say("engine-state","Backend unavailable");say("wallet-message",e.message);if(/authentication required/i.test(e.message)){$("api-auth-details").open=true;say("api-auth-message","The backend requires a bearer token. Enter it above and click Use Token.");}}
+}
+async function loadRpcHealth(){
+ try{
+  const report=await api("/api/rpc-health");
+  const healthy=report.available===true;
+  $("rpc-health-dot").classList.toggle("on",healthy);
+  $("rpc-health-state").textContent=healthy?"RPC healthy":"RPC "+String(report.status||"unavailable").replaceAll("_"," ");
+  $("rpc-health-status").title=report.checked_at?"Last checked: "+report.checked_at:(healthy?"RPC health check succeeded":"RPC health check unavailable");
+ }catch(e){
+  $("rpc-health-dot").classList.remove("on");
+  $("rpc-health-state").textContent=/authentication required/i.test(e.message)?"RPC auth required":"RPC check failed";
+  $("rpc-health-status").title=e.message;
+ }
 }
 async function loadMonitor(){
  const p=selected();
@@ -290,7 +309,7 @@ function updateAmountLabel(){
  $("amount-value").min=mode==="SOURCE_PERCENT"?"0.01":"0.01";$("amount-value").max=mode==="SOURCE_PERCENT"?"99.99":"1000000";
  $("amount-label").textContent=mode==="SOURCE_PERCENT"?"Source trade percentage":"Fixed amount";
  $("amount-suffix").textContent=mode==="SOURCE_PERCENT"?"%":"$";
- $("amount-hint").textContent=mode==="SOURCE_PERCENT"?"Enter any percentage greater than 0 and strictly below 100.":"Enter a dollar-denominated virtual USD amount. Settings apply only after confirmation.";
+ $("amount-hint").textContent=mode==="SOURCE_PERCENT"?"Enter any percentage greater than 0 and strictly below 100.":"Enter a USD-equivalent virtual amount. Paper accounting uses USD; no real USDT is held. Settings apply only after confirmation.";
 }
 document.querySelectorAll('input[name="sizing"]').forEach(x=>x.addEventListener("change",updateAmountLabel));
 $("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const address=$("wallet-address").value.trim();if(!selectedProfile){say("wallet-message","Create or select a paper profile before adding a public source wallet.");return;}try{await post("/api/wallets",{action:"add",address});await post("/api/profiles",{action:"associate-source-wallet",profile_id:selectedProfile,wallet_address:address});$("wallet-address").value="";say("wallet-message","Public source wallet saved and associated with the selected paper profile.");await loadWallets();}catch(err){say("wallet-message","Source wallet was not fully added: "+err.message+" Refresh the wallet list and verify the association.");await loadProfiles();}});
@@ -368,7 +387,26 @@ async function loadPaperTradeHistory(reportOverride){
 }
 async function loadHistory(){await Promise.all([loadTransactionHistory(),loadPaperTradeHistory(null)]);}
 $("history-details").addEventListener("toggle",()=>{if($("history-details").open)loadHistory();});
+function initApiAuthUi(){
+ const input=$("api-token");
+ try { input.value=sessionStorage.getItem("dashboard-api-token")||""; } catch {}
+ $("save-api-token").addEventListener("click",async()=>{
+  const token=input.value.trim();
+  if(token&&token.length<32){say("api-auth-message","Dashboard API tokens must contain at least 32 characters.");return;}
+  try { if(token)sessionStorage.setItem("dashboard-api-token",token);else sessionStorage.removeItem("dashboard-api-token"); }
+  catch { say("api-auth-message","This browser tab cannot store a session token. Check browser privacy settings.");return; }
+  say("api-auth-message",token?"Token stored in this tab; checking backend…":"Token cleared; checking default/local access…");
+  await loadWallets();await loadRpcHealth();
+ });
+ $("clear-api-token").addEventListener("click",async()=>{
+  try { sessionStorage.removeItem("dashboard-api-token"); } catch {}
+  input.value="";say("api-auth-message","Token cleared from this tab.");
+  await loadWallets();await loadRpcHealth();
+ });
+}
+initApiAuthUi();
 loadWallets();
+loadRpcHealth();
 let refreshInProgress = false;
 setInterval(async()=> {
   if(!backendReady || refreshInProgress) return;
@@ -376,4 +414,5 @@ setInterval(async()=> {
   try { await Promise.all([loadMonitor(), loadPortfolioForProfile(), loadTransactionHistory()]); }
   finally { refreshInProgress = false; }
 },15000);
+setInterval(loadRpcHealth,30000);
 </script></body></html>

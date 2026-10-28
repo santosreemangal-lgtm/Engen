@@ -94,7 +94,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <body><main>
 <header><div class="brand">Paper trading · Read-only monitoring</div><h1>Solana Copy Engine</h1><p class="subtitle">A simple dashboard for tracked wallets and paper-copy settings.</p></header>
 
-<section class="panel"><div class="panel-head"><h2>Portfolio</h2><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span></div>
+<section class="panel"><div class="panel-head"><div><h2>Portfolio</h2><p id="portfolio-profile-status" class="hint">Choose or create a wallet profile to load its paper balance.</p></div><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span></div>
 <div class="grid portfolio-grid">
 <div class="metric"><div class="label">Total Value</div><p id="total-value" class="value">$—</p></div>
 <div class="metric"><div class="label">Available USD</div><p id="available" class="value">$—</p></div>
@@ -169,7 +169,17 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </main>
 <script>
 const $ = id => document.getElementById(id);
-let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, portfolioRequestVersion = 0;
+const PROFILE_STORAGE_KEY = "solana-copy-engine.selected-profile";
+function readSavedProfileId(){
+ try{return window.localStorage.getItem(PROFILE_STORAGE_KEY)||"";}catch{return "";}
+}
+function rememberSelectedProfile(){
+ try{
+  if(selectedProfile)window.localStorage.setItem(PROFILE_STORAGE_KEY,selectedProfile);
+  else window.localStorage.removeItem(PROFILE_STORAGE_KEY);
+ }catch{/* Storage may be disabled; in-memory selection still works. */}
+}
+let wallets = [], profiles = [], selectedProfile = readSavedProfileId(), backendReady = false, currentMonitor = false, portfolioRequestVersion = 0;
 const headers = {"Content-Type":"application/json"};
 async function api(path, options={}) {
   const response = await fetch(path,{...options,headers:{...headers,...(options.headers||{})}});
@@ -285,6 +295,7 @@ function renderProfileOptions(){
 }
 async function setSelectedProfile(profileId){
  selectedProfile=profiles.some(p=>p.profile_id===profileId)?profileId:"";
+ rememberSelectedProfile();
  $("profile-select").value=selectedProfile;
  $("profile-address-edit").value=selected()?.destination_public_address||"";
  $("profile-address-edit").disabled=!selectedProfile;
@@ -301,8 +312,13 @@ async function loadProfiles(){
   const sel=$("profile-select");sel.replaceChildren();const blank=document.createElement("option");blank.value="";blank.textContent="No profile selected";sel.append(blank);
   profiles.forEach(p=>{const o=document.createElement("option");o.value=p.profile_id;o.textContent=p.name+(p.destination_public_address?" · "+p.destination_public_address.slice(0,6)+"…":"");sel.append(o);});
   if(selectedProfile&&profiles.some(p=>p.profile_id===selectedProfile)){sel.value=selectedProfile;}
+  else if(profiles.length){selectedProfile=profiles[0].profile_id;sel.value=selectedProfile;}
   else{selectedProfile="";sel.value="";}
-  say("profile-load-status",profiles.length?"Loaded "+profiles.length+" saved profile(s). Choose one using the dropdown or a button below.":"The backend returned no saved profiles. Create a profile first.");
+  rememberSelectedProfile();
+  say("profile-load-status",profiles.length?"Loaded "+profiles.length+" saved profile(s). Selected: "+(selected()?.name||"saved profile")+".":"The backend returned no saved profiles. Create a profile first.");
+  $("portfolio-profile-status").textContent=selectedProfile
+   ?"Paper portfolio for: "+(selected()?.name||"selected profile")
+   :"No profile selected. Create a profile below to enable virtual balance controls.";
   $("profile-address-edit").value=selected()?.destination_public_address||"";
   $("profile-address-edit").disabled=!selectedProfile;
   $("save-destination").disabled=!selectedProfile;
@@ -325,6 +341,7 @@ async function loadPortfolioForProfile(){
  const requestProfile=selectedProfile;
  const requestVersion=++portfolioRequestVersion;
  if(!requestProfile){
+  $("portfolio-profile-status").textContent="No profile selected. Create a profile in Wallets & Source Selection to enable virtual balance controls.";
   for(const id of ["total-value","available","realized","unrealized"])$(id).textContent="$—";
   $("realized-percent").textContent="—%";
   $("initial-balance").disabled=true;$("set-initial-balance").disabled=true;
@@ -334,6 +351,7 @@ async function loadPortfolioForProfile(){
   return;
  }
  try{
+  $("portfolio-profile-status").textContent="Loading paper portfolio for: "+(selected()?.name||"selected profile")+"…";
   const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(requestProfile)),r=d.report||d;
   if(requestVersion!==portfolioRequestVersion||requestProfile!==selectedProfile)return;
   if(r.profile_id&&r.profile_id!==requestProfile)throw new Error("Portfolio response did not match the selected profile.");
@@ -356,6 +374,7 @@ async function loadPortfolioForProfile(){
   $("set-virtual-balance").disabled=!hasInitial;
   const cash=(r.balances&&r.balances.USD!==undefined)?String(r.balances.USD):(hasInitial?String(r.initial_balance):"");
   if(document.activeElement!==$("target-balance"))$("target-balance").value=cash;
+  $("portfolio-profile-status").textContent="Paper portfolio: "+(selected()?.name||"selected profile");
   if(r.error){
    say("portfolio-message",r.error);
   }else if(!hasInitial){
@@ -367,6 +386,7 @@ async function loadPortfolioForProfile(){
   }
  }catch(e){
   if(requestVersion!==portfolioRequestVersion||requestProfile!==selectedProfile)return;
+  $("portfolio-profile-status").textContent="Unable to load the selected profile's paper portfolio.";
   for(const id of ["total-value","available","realized","unrealized"])$(id).textContent="$—";
   $("realized-percent").textContent="—%";
   $("initial-balance").disabled=true;$("set-initial-balance").disabled=true;

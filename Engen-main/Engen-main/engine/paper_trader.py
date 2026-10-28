@@ -348,6 +348,11 @@ class PaperTrader:
         with self._lock:
             return {mint: str(amount) for mint, amount in self.balances.items()}
 
+    def get_trade_count(self):
+        """Return the total number of recorded virtual trades."""
+        with self._lock:
+            return len(self.trades)
+
     def get_trades(self, limit=100):
         """Return a safe, newest-first snapshot of recent virtual trades."""
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:

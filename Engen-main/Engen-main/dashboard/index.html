@@ -212,9 +212,10 @@ async function loadMonitor(){
 async function loadProfiles(){
  try{
   const d=await api("/api/profiles");profiles=Array.isArray(d.profiles)?d.profiles:[];
-  const sel=$("profile-select");sel.replaceChildren();const blank=document.createElement("option");blank.value="";blank.textContent=profiles.length?"Select profile":"No profile yet";sel.append(blank);
+  const sel=$("profile-select");sel.replaceChildren();const blank=document.createElement("option");blank.value="";blank.textContent="No profile selected";sel.append(blank);
   profiles.forEach(p=>{const o=document.createElement("option");o.value=p.profile_id;o.textContent=p.name+(p.destination_public_address?" · "+p.destination_public_address.slice(0,6)+"…":"");sel.append(o);});
-  if(selectedProfile&&profiles.some(p=>p.profile_id===selectedProfile))sel.value=selectedProfile;else{selectedProfile=profiles[0]?.profile_id||"";sel.value=selectedProfile;}
+  if(selectedProfile&&profiles.some(p=>p.profile_id===selectedProfile)){sel.value=selectedProfile;}
+  else{selectedProfile="";sel.value="";}
   $("profile-address-edit").value=selected()?.destination_public_address||"";
   $("profile-address-edit").disabled=!selectedProfile;
   $("save-destination").disabled=!selectedProfile;

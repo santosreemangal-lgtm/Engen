@@ -103,7 +103,17 @@ const $ = id => document.getElementById(id);
 let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false;
 const headers = {"Content-Type":"application/json"};
 async function api(path, options={}) {
-  const response = await fetch(path,{...options,headers:{...headers,...(options.headers||{})}});
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  let response;
+  try {
+    response = await fetch(path,{...options,signal:options.signal||controller.signal,headers:{...headers,...(options.headers||{})}});
+  } catch (error) {
+    if (error && error.name === "AbortError") throw new Error("Request timed out after 12 seconds. Check that the dashboard backend is running.");
+    throw new Error("Could not reach the dashboard backend. Check that it is running.");
+  } finally {
+    clearTimeout(timeoutId);
+  }
   let data; try { data=await response.json(); } catch { throw new Error("Backend returned an invalid response."); }
   if(!response.ok) throw new Error(data.error || "Request failed ("+response.status+").");
   return data;
@@ -205,7 +215,7 @@ $("confirm-settings").addEventListener("click",async()=>{
  catch(err){say("settings-message","Settings were not saved: "+err.message);}
  finally{$("confirm-settings").disabled=false;}
 });
-$("start-monitoring").addEventListener("click",async()=>{const p=selected();if(!p){say("monitor-message","Select a profile first.");return;}if(p.status!=="active"){say("monitor-message","Activate this profile before starting monitoring.");return;}if(!Array.isArray(p.source_wallets)||!p.source_wallets.length){say("monitor-message","Add at least one source wallet to this profile first.");return;}if(!confirm("Start read-only monitoring for this profile's selected source wallets only? No signing or real trades will occur."))return;try{await post("/api/profile-monitor",{action:"start",profile_id:selectedProfile});say("monitor-message","Profile monitoring start requested.");await loadMonitor();}catch(e){say("monitor-message",e.message);}});
+$("start-monitoring").addEventListener("click",async()=>{const p=selected();if(!p){say("monitor-message","Select a profile first.");return;}if(String(p.status||"").toLowerCase()!=="active"){say("monitor-message","Activate this profile before starting monitoring.");return;}if(!Array.isArray(p.source_wallets)||!p.source_wallets.length){say("monitor-message","Add at least one source wallet to this profile first.");return;}if(!confirm("Start read-only monitoring for this profile's selected source wallets only? No signing or real trades will occur."))return;try{await post("/api/profile-monitor",{action:"start",profile_id:selectedProfile});say("monitor-message","Profile monitoring start requested.");await loadMonitor();}catch(e){say("monitor-message",e.message);}});
 $("stop-monitoring").addEventListener("click",async()=>{if(!selectedProfile){say("monitor-message","Select a profile first.");return;}try{await post("/api/profile-monitor",{action:"stop",profile_id:selectedProfile});say("monitor-message","Selected profile monitoring stopped.");await loadMonitor();}catch(e){say("monitor-message",e.message);}});
 $("wallet-search").addEventListener("input",()=>renderWallets());
 $("save-destination").addEventListener("click",async()=>{if(!selectedProfile){say("wallet-message","Create or select a profile first.");return;}try{await post("/api/profiles",{action:"update",profile_id:selectedProfile,destination_public_address:$("profile-address-edit").value.trim()});say("wallet-message","Destination public address saved for this profile.");await loadProfiles();}catch(e){say("wallet-message",e.message);}});
@@ -220,6 +230,12 @@ async function loadHistory(){
  }catch(e){say("history-message",e.message);}
 }
 $("history-details").addEventListener("toggle",()=>{if($("history-details").open)loadHistory();});
-loadWallets();loadPortfolio();
-setInterval(()=>{if(backendReady){loadMonitor();loadPortfolioForProfile();}},15000);
+loadWallets();
+let refreshInProgress = false;
+setInterval(async()=> {
+  if(!backendReady || refreshInProgress) return;
+  refreshInProgress = true;
+  try { await Promise.all([loadMonitor(), loadPortfolioForProfile()]); }
+  finally { refreshInProgress = false; }
+},15000);
 </script></body></html>

@@ -71,6 +71,9 @@ class MonitorService:
             if address not in cleaned:
                 cleaned.append(address)
 
+        if not cleaned:
+            raise ValueError("At least one valid public wallet address is required.")
+
         # Serialize start/stop operations so two callers cannot create
         # overlapping monitor threads.
         with self._lifecycle_lock:

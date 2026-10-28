@@ -256,5 +256,12 @@ class MonitorServiceTests(unittest.TestCase):
             if worker is not None:
                 worker.join(timeout=3)
 
+
+    def test_rejects_empty_wallet_list(self):
+        service = MonitorService(lambda address: [], interval=30)
+        with self.assertRaises(ValueError):
+            service.start([])
+        self.assertFalse(service.status()["enabled"])
+
 if __name__ == "__main__":
     unittest.main()

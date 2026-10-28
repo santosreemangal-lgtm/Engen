@@ -114,6 +114,15 @@
       grid-template-columns: repeat(4, minmax(0, 1fr));
     }
     .portfolio-item .overview-value { font-size: clamp(20px, 3vw, 28px); }
+    .portfolio-item {
+      position: relative;
+      background: linear-gradient(145deg, rgba(30, 45, 69, 0.96), rgba(15, 24, 41, 0.98));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+    }
+    .portfolio-item:first-child { border-top: 2px solid var(--accent); }
+    .portfolio-item:nth-child(2) { border-top: 2px solid #48D6A0; }
+    .portfolio-item:nth-child(3) { border-top: 2px solid #7C9DFF; }
+    .portfolio-item:nth-child(4) { border-top: 2px solid #F0B86E; }
     .portfolio-item .form-row { margin-top: 8px; }
     .portfolio-item .form-row input { width: 100%; }
     .portfolio-item .muted { font-size: 12px; }
@@ -121,7 +130,7 @@
     .overview-item {
       min-width: 0;
       padding: 14px;
-      background: #101114;
+      background: rgba(20, 31, 50, 0.92);
       border: 1px solid var(--border);
       border-radius: 12px;
     }
@@ -165,7 +174,7 @@
       flex: 1;
       padding: 14px;
       color: var(--text);
-      background: #101114;
+      background: #0b1425;
       border: 1px solid var(--border);
       border-radius: 10px;
       outline: none;
@@ -426,7 +435,7 @@
       padding: 16px;
       border: 1px solid var(--border);
       border-radius: 12px;
-      background: #101114;
+      background: rgba(20, 31, 50, 0.92);
       min-width: 0;
     }
 
@@ -1695,6 +1704,42 @@
           ? currentPaperSettings.copy_side : "BOTH";
         copySideLabel.appendChild(copySideSelect);
         editForm.appendChild(copySideLabel);
+
+        const sizingModeLabel = document.createElement("label");
+        sizingModeLabel.textContent = "Automatic paper order size";
+        const sizingModeSelect = document.createElement("select");
+        [
+          ["SOURCE_PERCENT", "Percentage of source trader's token quantity"],
+          ["FIXED_USD", "Fixed USD amount"],
+        ].forEach(([value, label]) => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = label;
+          sizingModeSelect.appendChild(option);
+        });
+        sizingModeSelect.value = currentPaperSettings.sizing_mode === "FIXED_USD"
+          ? "FIXED_USD" : "SOURCE_PERCENT";
+        sizingModeLabel.appendChild(sizingModeSelect);
+        editForm.appendChild(sizingModeLabel);
+
+        const sizingValueLabel = document.createElement("label");
+        sizingValueLabel.textContent = sizingModeSelect.value === "SOURCE_PERCENT"
+          ? "Sizing value (percentage 1–100)" : "Sizing value (USD; maximum 1,000,000)";
+        const sizingValueInput = document.createElement("input");
+        sizingValueInput.type = "number";
+        sizingValueInput.min = "0.000001";
+        sizingValueInput.max = sizingModeSelect.value === "SOURCE_PERCENT" ? "100" : "1000000";
+        sizingValueInput.step = "any";
+        sizingValueInput.required = true;
+        sizingValueInput.value = currentPaperSettings.sizing_value ?? (sizingModeSelect.value === "SOURCE_PERCENT" ? "100" : "10");
+        sizingValueLabel.appendChild(sizingValueInput);
+        editForm.appendChild(sizingValueLabel);
+        sizingModeSelect.addEventListener("change", () => {
+          sizingValueInput.max = sizingModeSelect.value === "SOURCE_PERCENT" ? "100" : "1000000";
+          sizingValueLabel.firstChild.textContent = sizingModeSelect.value === "SOURCE_PERCENT"
+            ? "Sizing value (percentage 1–100)" : "Sizing value (USD; maximum 1,000,000)";
+        });
+
         const statusLabel = document.createElement("label");
         statusLabel.textContent = "Profile status";
         const statusSelect = document.createElement("select");
@@ -1738,6 +1783,16 @@
             settings.paper_trading = {};
           }
           settings.paper_trading.copy_side = copySideSelect.value;
+          const sizingValue = Number(sizingValueInput.value);
+          if (!Number.isFinite(sizingValue) || sizingValue <= 0 ||
+              (sizingModeSelect.value === "SOURCE_PERCENT" && sizingValue > 100) ||
+              (sizingModeSelect.value === "FIXED_USD" && sizingValue > 1000000)) {
+            profileMessage.textContent = "Sizing value must be positive; percentage cannot exceed 100 and USD cannot exceed 1,000,000.";
+            sizingValueInput.focus();
+            return;
+          }
+          settings.paper_trading.sizing_mode = sizingModeSelect.value;
+          settings.paper_trading.sizing_value = String(sizingValue);
           saveButton.disabled = true;
           try {
             await postProfile({action: "update", profile_id: profile.profile_id,

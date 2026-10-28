@@ -2,9 +2,9 @@ name: Engen Safety and Unit Tests
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "feature/paper-balance-dashboard-refresh"]
   pull_request:
-    branches: ["main"]
+    branches: ["main", "feature/paper-trading-dashboard-integration"]
   workflow_dispatch:
 
 jobs:

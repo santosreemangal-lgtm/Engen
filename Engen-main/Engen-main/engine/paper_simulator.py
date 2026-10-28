@@ -169,9 +169,9 @@ class PaperSimulator:
         if not isinstance(mint, str) or not mint.strip() or len(mint.strip()) > 128:
             raise ValueError("A virtual balance currency is required.")
         mint = mint.strip()
-        value = decimal_value(amount, "Virtual balance")
-        if value <= 0:
-            raise ValueError("Virtual balance must be greater than zero.")
+        value = decimal_value(amount, "Virtual balance", allow_zero=True)
+        if value < 0:
+            raise ValueError("Virtual balance cannot be negative.")
         if self.db_path is not None:
             with closing(self._connect()) as db:
                 with db:
@@ -180,12 +180,11 @@ class PaperSimulator:
                         ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount""",
                         (mint, str(value)),
                     )
-                    # Treat a user-confirmed balance update as the new virtual
-                    # starting balance for display; historical paper orders/fills
-                    # remain available in their own history.
+                    # Preserve the original starting balance after manual
+                    # adjustments so historical paper-trade P&L is not rebased.
                     db.execute(
                         """INSERT INTO simulator_meta(key, value) VALUES('initial_balance', ?)
-                        ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                        ON CONFLICT(key) DO NOTHING""",
                         (str(value),),
                     )
         self.balances[mint] = value

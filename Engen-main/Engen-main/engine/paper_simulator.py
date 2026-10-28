@@ -2,6 +2,7 @@
 import json
 import sqlite3
 import uuid
+from datetime import datetime, timezone
 from contextlib import closing
 from decimal import Decimal
 from pathlib import Path
@@ -21,6 +22,7 @@ class PaperSimulator:
             self.balances[mint] = decimal_value(amount, "Initial balance", allow_zero=True)
         self.orders = {}
         self.fills = []
+        self.transactions = []
         self.processed_signals = set()
         self._initial_balance_value = None
         self._initial_balance_mint = None
@@ -56,6 +58,10 @@ class PaperSimulator:
                     price_source TEXT NOT NULL, price_timestamp TEXT NOT NULL,
                     price_age_seconds INTEGER NOT NULL, slippage_bps INTEGER NOT NULL,
                     created_at TEXT NOT NULL)""")
+                db.execute("""CREATE TABLE IF NOT EXISTS simulator_transactions(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL, mint TEXT NOT NULL, amount TEXT NOT NULL,
+                    balance_after TEXT NOT NULL, created_at TEXT NOT NULL)""")
                 initialized = db.execute("SELECT value FROM simulator_meta WHERE key='initialized'").fetchone()
                 if initialized is None:
                     db.executemany("INSERT INTO simulator_balances VALUES(?,?)",
@@ -83,6 +89,13 @@ class PaperSimulator:
                      "reference_price","execution_price","gross_quote","fee","network_cost",
                      "net_quote","currency","price_source","price_timestamp","price_age_seconds",
                      "slippage_bps","created_at"), row)) for row in fill_rows]
+                tx_rows = db.execute("""SELECT id,kind,mint,amount,balance_after,created_at
+                    FROM simulator_transactions ORDER BY id""").fetchall()
+                self.transactions = [
+                    {"id": row[0], "kind": row[1], "mint": row[2], "amount": row[3],
+                     "balance_after": row[4], "created_at": row[5], "simulated": True}
+                    for row in tx_rows
+                ]
         self._rebuild_pnl_ledger()
 
     def _persist(self, order, balances=None, fill=None):
@@ -145,24 +158,48 @@ class PaperSimulator:
                     "simulated": True, "real_trading": False, "transaction_broadcast": False}
         if any(order.get("status") == "FILLED" for order in self.orders.values()):
             raise ValueError("Starting balance cannot be changed after a paper order has filled.")
+        self._save_balance_change(
+            "INITIAL_BALANCE", mint, value, value, set_initial_balance=True
+        )
+        return {"mint": mint, "initial_balance": str(value), "balance": str(value),
+                "simulated": True, "real_trading": False, "transaction_broadcast": False}
+
+    def _save_balance_change(self, kind, mint, amount, balance_after, *, set_initial_balance=False):
+        """Persist a virtual balance mutation and its audit event together."""
+        created_at = datetime.now(timezone.utc).isoformat()
+        event = {
+            "kind": kind, "mint": mint, "amount": str(amount),
+            "balance_after": str(balance_after), "created_at": created_at,
+            "simulated": True,
+        }
         if self.db_path is not None:
             with closing(self._connect()) as db:
                 with db:
                     db.execute(
                         """INSERT INTO simulator_balances(mint, amount) VALUES(?, ?)
                         ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount""",
-                        (mint, str(value)),
+                        (mint, str(balance_after)),
                     )
-                    db.execute(
-                        """INSERT INTO simulator_meta(key, value) VALUES('initial_balance', ?)
-                        ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
-                        (str(value),),
+                    if set_initial_balance:
+                        db.execute(
+                            """INSERT INTO simulator_meta(key, value) VALUES('initial_balance', ?)
+                            ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                            (str(amount),),
+                        )
+                    cursor = db.execute(
+                        """INSERT INTO simulator_transactions
+                        (kind,mint,amount,balance_after,created_at) VALUES(?,?,?,?,?)""",
+                        (kind, mint, str(amount), str(balance_after), created_at),
                     )
-        self.balances[mint] = value
-        self._initial_balance_value = str(value)
-        self._initial_balance_mint = mint
-        return {"mint": mint, "initial_balance": str(value), "balance": str(value),
-                "simulated": True, "real_trading": False, "transaction_broadcast": False}
+                    event["id"] = cursor.lastrowid
+        else:
+            event["id"] = len(self.transactions) + 1
+        self.balances[mint] = balance_after
+        if set_initial_balance:
+            self._initial_balance_value = str(amount)
+            self._initial_balance_mint = mint
+        self.transactions.append(event)
+        return event
 
     def add_virtual_balance(self, mint, amount):
         """Add explicitly virtual funds to one paper token balance; never touches a real wallet."""
@@ -171,15 +208,7 @@ class PaperSimulator:
         mint = mint.strip()
         value = decimal_value(amount, "Virtual funding amount")
         updated = self.balances.get(mint, Decimal("0")) + value
-        if self.db_path is not None:
-            with closing(self._connect()) as db:
-                with db:
-                    db.execute(
-                        """INSERT INTO simulator_balances(mint, amount) VALUES(?, ?)
-                        ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount""",
-                        (mint, str(updated)),
-                    )
-        self.balances[mint] = updated
+        self._save_balance_change("DEPOSIT", mint, value, updated)
         return {"mint": mint, "added": str(value), "balance": str(updated),
                 "simulated": True, "real_trading": False,
                 "transaction_broadcast": False}
@@ -360,4 +389,5 @@ class PaperSimulator:
                 "initial_balance": self._stored_initial_balance(),
                 "orders":[dict(order) for order in self.orders.values()],
                 "fills":[dict(fill) for fill in self.fills],
+                "transactions":[dict(event) for event in self.transactions],
                 "pnl":self.pnl_summary()}

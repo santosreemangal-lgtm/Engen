@@ -1,7 +1,12 @@
+import tempfile
 import unittest
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
+from unittest.mock import patch
 
+from engine import paper_copy_runner
 from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders
 from engine.paper_simulator import PaperSimulator
 from engine.pnl import MarketPrice
@@ -65,6 +70,35 @@ def candidate_result(*, confirmation="finalized", classification="BUY_CANDIDATE"
 
 
 class PaperCopyRunnerTests(unittest.TestCase):
+    def test_profile_simulators_are_isolated_and_persistent(self):
+        first_profile = str(uuid.uuid4())
+        second_profile = str(uuid.uuid4())
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(paper_copy_runner, "PROFILE_DATA_DIR", Path(directory)):
+                with patch.dict(paper_copy_runner._PROFILE_SIMULATORS, {}, clear=True):
+                    first = paper_copy_runner.get_paper_simulator(first_profile)
+                    second = paper_copy_runner.get_paper_simulator(second_profile)
+                    self.assertIsNot(first, second)
+
+                    first.set_initial_virtual_balance("1000")
+                    second.set_initial_virtual_balance("250")
+                    first.add_virtual_balance("USD", "25")
+
+                    self.assertEqual(first.balances["USD"], Decimal("1025"))
+                    self.assertEqual(second.balances["USD"], Decimal("250"))
+                    self.assertNotEqual(
+                        paper_copy_runner.profile_paper_simulator_db_path(first_profile),
+                        paper_copy_runner.profile_paper_simulator_db_path(second_profile),
+                    )
+
+                    paper_copy_runner._PROFILE_SIMULATORS.clear()
+                    restored = paper_copy_runner.get_paper_simulator(first_profile)
+                    self.assertEqual(restored.balances["USD"], Decimal("1025"))
+                    self.assertEqual(
+                        [event["kind"] for event in restored.report()["transactions"]],
+                        ["INITIAL_BALANCE", "DEPOSIT"],
+                    )
+
     def test_confirmed_candidate_creates_deduplicated_paper_order(self):
         simulator = FakeSimulator()
         queued = queue_paper_orders(WALLET, [candidate_result()], simulator)

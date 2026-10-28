@@ -217,5 +217,38 @@ class MonitorServiceTests(unittest.TestCase):
                 worker.join(timeout=3)
 
 
+
+    def test_handles_available_result_and_acknowledges_signature(self):
+        handled = []
+        acknowledged = []
+        completed = threading.Event()
+
+        def fake_scan(address):
+            return [{"signature": "paper-signature", "available": True}]
+
+        fake_scan.mark_processed = lambda address, signature: acknowledged.append(
+            (address, signature)
+        )
+
+        def on_result(address, result):
+            handled.append((address, result["signature"]))
+            completed.set()
+
+        service = MonitorService(fake_scan, interval=30, on_result=on_result)
+        service._interval = 0
+        try:
+            service.start(["public_wallet"])
+            self.assertTrue(completed.wait(timeout=3))
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline and not acknowledged:
+                time.sleep(0.01)
+            self.assertEqual(handled, [("public_wallet", "paper-signature")])
+            self.assertEqual(acknowledged, [("public_wallet", "paper-signature")])
+        finally:
+            service.stop()
+            worker = service._thread
+            if worker is not None:
+                worker.join(timeout=3)
+
 if __name__ == "__main__":
     unittest.main()

@@ -218,6 +218,32 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertEqual(second_report["portfolio_value_usd"], "2500.75")
         self.assertFalse(second_report["real_trading"])
         self.assertFalse(second_report["transaction_broadcast"])
+    def test_transaction_history_upgrades_pending_record_when_metadata_arrives(self):
+        signature = "pending-then-confirmed"
+        self.store.save_transaction(
+            signature, PUBLIC_WALLET, classification="UNKNOWN", status="pending",
+            evidence={"metadata_status": "pending"}, profile_ids=[self.profile_id],
+        )
+        self.store.save_transaction(
+            signature, PUBLIC_WALLET, classification="BUY_CANDIDATE", status="confirmed",
+            evidence={"metadata_status": "complete"}, slot=123, block_time=1700000000,
+            raw_amount="1250000", token_mint=TOKEN_MINT, token_decimals=6,
+            profile_ids=[self.profile_id],
+        )
+        # A stale retry must not downgrade an already terminal confirmed status.
+        self.store.save_transaction(
+            signature, PUBLIC_WALLET, classification="UNKNOWN", status="pending",
+            evidence={}, profile_ids=[self.profile_id],
+        )
+        report = dashboard_server.load_profile_transactions(
+            parse_qs("profile_id=" + self.profile_id + "&page=1&page_size=25")
+        )
+        self.assertEqual(report["total"], 1)
+        item = report["transactions"][0]
+        self.assertEqual(item["status"], "confirmed")
+        self.assertEqual(item["classification"], "BUY_CANDIDATE")
+        self.assertEqual(item["amount"], "1.25")
+        self.assertEqual(item["evidence"]["metadata_status"], "complete")
     def test_monitor_bridge_persists_observed_transaction_metadata_separately(self):
         signature = "1" * 64
         observation = {

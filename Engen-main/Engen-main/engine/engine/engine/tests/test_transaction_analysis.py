@@ -256,6 +256,48 @@ class TransactionAnalysisTests(unittest.TestCase):
         )
         self.assertEqual(signal["classification"], "BUY_CANDIDATE")
 
+    def test_balance_delta_reconciles_one_sided_missing_owner(self):
+        wallet = "WALLET_A"
+        meta = {
+            "preTokenBalances": [{
+                "accountIndex": 9,
+                "mint": "TOKEN_A",
+                "uiTokenAmount": {"amount": "100", "decimals": 2},
+            }],
+            "postTokenBalances": [{
+                "accountIndex": 9,
+                "mint": "TOKEN_A",
+                "owner": wallet,
+                "uiTokenAmount": {"amount": "175", "decimals": 2},
+            }],
+        }
+
+        changes = analyze_token_balance_changes(meta)
+
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0]["owner"], wallet)
+        self.assertEqual(changes[0]["delta_amount"], "75")
+        self.assertEqual(changes[0]["pre_amount"], "100")
+        self.assertEqual(changes[0]["post_amount"], "175")
+
+    def test_balance_delta_is_ignored_when_owner_changes(self):
+        meta = {
+            "preTokenBalances": [{
+                "accountIndex": 9,
+                "mint": "TOKEN_A",
+                "owner": "WALLET_A",
+                "uiTokenAmount": {"amount": "100", "decimals": 2},
+            }],
+            "postTokenBalances": [{
+                "accountIndex": 9,
+                "mint": "TOKEN_A",
+                "owner": "WALLET_B",
+                "uiTokenAmount": {"amount": "175", "decimals": 2},
+            }],
+        }
+
+        self.assertEqual(analyze_token_balance_changes(meta), [])
+
     def test_closed_token_account_balance(self):
         meta = {
             "preTokenBalances": [{

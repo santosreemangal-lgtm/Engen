@@ -1,6 +1,8 @@
 
 """Bridge between the dashboard and the read-only Solana engine."""
 
+import sqlite3
+
 from engine.signature_store import SignatureStore
 from engine.transaction_monitor import monitor_wallet
 from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders, PAPER_SIMULATOR_LOCK
@@ -66,7 +68,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     profile_ids=(profile_id,),
                 )
                 persisted.append({**item, "profile_history_status": "saved"})
-            except (ValueError, OSError, RuntimeError):
+            except (ValueError, OSError, RuntimeError, sqlite3.Error):
                 persisted.append({**item, "profile_history_status": "save_failed"})
         return persisted
 

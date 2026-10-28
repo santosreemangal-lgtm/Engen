@@ -315,7 +315,24 @@ document.querySelectorAll('input[name="sizing"]').forEach(x=>x.addEventListener(
 $("amount-value").addEventListener("input",updateAmountLabel);
 $("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const address=$("wallet-address").value.trim();$("add-wallet").disabled=true;try{await post("/api/wallets",{action:"add",address});$("wallet-address").value="";say("wallet-message","Source wallet saved. Use Add to profile to select it for the chosen profile.");await loadWallets();}catch(err){say("wallet-message",err.message);}finally{$("add-wallet").disabled=false;}});
 $("create-profile").addEventListener("click",()=>{$("profile-form").classList.toggle("hidden");say("profile-form-message","");if(!$("profile-form").classList.contains("hidden"))$("profile-name").focus();});
-$("delete-profile").addEventListener("click",async()=>{const p=selected();if(!p||!selectedProfile)return;if(!confirm("Delete the saved profile \""+p.name+"\"? It will disappear from this list. Existing history will be preserved."))return;const id=selectedProfile;$("delete-profile").disabled=true;try{await post("/api/profiles",{action:"delete",profile_id:id});selectedProfile="";say("wallet-message","Profile deleted. Existing history is preserved.");await loadProfiles();}catch(e){say("wallet-message","Profile was not deleted: "+e.message);$("delete-profile").disabled=!selectedProfile;} });
+$("delete-profile").addEventListener("click",async()=>{
+ const p=selected();
+ if(!p||!selectedProfile){say("wallet-message","Select a saved profile before deleting it.");return;}
+ if(!confirm("Delete the saved profile \""+p.name+"\"? It will disappear from this list. Existing history will be preserved."))return;
+ const id=selectedProfile,button=$("delete-profile");
+ button.disabled=true;say("wallet-message","Deleting saved profile…");
+ try{
+  const result=await post("/api/profiles",{action:"delete",profile_id:id});
+  if(result?.deleted!==true)throw new Error("The server did not confirm profile deletion.");
+  selectedProfile="";
+  await loadProfiles();
+  if(profiles.some(item=>item.profile_id===id))throw new Error("The profile still appears in the refreshed saved-profile list.");
+  say("wallet-message","Profile deleted. Existing history is preserved.");
+ }catch(e){
+  say("wallet-message","Profile was not deleted: "+e.message);
+  await loadProfiles();
+ }finally{button.disabled=!selectedProfile;}
+});
 $("profile-form").addEventListener("submit",async e=>{
  e.preventDefault();
  const name=$("profile-name").value.trim();

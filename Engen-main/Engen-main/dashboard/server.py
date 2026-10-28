@@ -974,6 +974,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             except ValueError as exc:
                 status = 404 if str(exc) == "Profile not found." else 400
                 self.send_json(status, {"error": str(exc)})
+            except (OSError, sqlite3.Error, RuntimeError) as exc:
+                self.send_json(503, {
+                    "error": "Could not persist monitor state or complete the requested action ("
+                        + type(exc).__name__ + ")."
+                })
             return
 
         if path == "/api/profiles":

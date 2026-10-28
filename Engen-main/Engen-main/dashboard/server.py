@@ -294,7 +294,7 @@ def initialize_profile_paper_ledger(profile_id):
 
 
 def set_profile_virtual_balance(profile_id, amount):
-    """Set a profile's initial virtual USDT balance once."""
+    """Set or replace a profile's virtual USD cash balance."""
     from decimal import Decimal, InvalidOperation
     profile_id = canonical_profile_id(profile_id)
     try:
@@ -302,28 +302,40 @@ def set_profile_virtual_balance(profile_id, amount):
     except (InvalidOperation, TypeError, ValueError) as exc:
         raise ValueError("Enter a valid virtual balance amount.") from exc
     if not value.is_finite() or value <= 0 or value > Decimal("1000000000"):
-        raise ValueError("Virtual balance must be greater than zero and at most 1,000,000,000 USDT.")
+        raise ValueError("Virtual balance must be greater than zero and at most 1,000,000,000 USD.")
     initialize_profile_paper_ledger(profile_id)
-    path = profile_paper_db_path(profile_id)
-    with sqlite3.connect(str(path), timeout=10) as db:
-        db.execute("PRAGMA busy_timeout=10000")
-        db.execute("INSERT INTO paper_balances(mint,amount) VALUES('USDT',?) ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount", (format(value, 'f'),))
-        db.commit()
-    return {"profile_id": profile_id, "mint": "USDT", "amount": format(value, 'f'), "initial_balance_set": True, "real_trading": False, "transaction_broadcast": False}
-
+    with paper_simulator_lock:
+        simulator = get_profile_paper_simulator(profile_id)
+        result = simulator.set_virtual_balance(format(value, "f"), "USD")
+        # Keep the earlier balance table in sync for safe migration/diagnostics.
+        path = profile_paper_db_path(profile_id)
+        with sqlite3.connect(str(path), timeout=10) as db:
+            db.execute("PRAGMA busy_timeout=10000")
+            db.execute(
+                "INSERT INTO paper_balances(mint,amount) VALUES('USD',?) "
+                "ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount",
+                (format(value, "f"),),
+            )
+            db.execute("DELETE FROM paper_balances WHERE mint='USDT'")
+            db.commit()
+    return {"profile_id": profile_id, "mint": "USD", "amount": format(value, "f"),
+            "balance_updated": True, "real_trading": False, "transaction_broadcast": False}
 
 def load_profile_paper_simulation_report(profile_id):
-    """Read one profile's PaperTrader ledger without creating or mutating it."""
+    """Return the selected profile's isolated paper simulator, balances and history."""
     profile_id = canonical_profile_id(profile_id)
     base = {
         "mode": "PAPER_SIMULATION", "simulated": True,
         "real_wallet_balances_included": False, "real_trading": False,
         "transaction_broadcast": False, "profile_id": profile_id,
         "database_available": False, "balances": {}, "orders": [], "fills": [],
+        "available_balance": None, "available_balance_usd": None,
+        "initial_balance": None, "portfolio_value_usd": None,
+        "realized_pnl_usd": None, "unrealized_pnl_usd": None,
         "pnl": {
-            "cost_basis_method": "unavailable_without_verified_fill_prices",
-            "currency": "USD", "realized_by_mint": {},
-            "unrealized_status": "unavailable_profile_paper_ledger_has_no_verified_prices",
+            "cost_basis_method": "average_cost", "currency": "USD",
+            "realized_by_mint": {},
+            "unrealized_status": "unavailable_no_verified_fresh_market_price",
         },
     }
     if not PROFILE_STORE_DB.is_file():
@@ -341,34 +353,41 @@ def load_profile_paper_simulation_report(profile_id):
         path = profile_paper_db_path(profile_id)
         if not path.is_file():
             return base
-        with sqlite3.connect("file:" + str(path.resolve()) + "?mode=ro", uri=True) as db:
-            tables = {row[0] for row in db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )}
-            if not {"paper_balances", "paper_trades"}.issubset(tables):
-                base["error"] = "Profile paper ledger schema is not initialized."
-                return base
-            base["balances"] = {
-                mint: amount for mint, amount in db.execute(
-                    "SELECT mint,amount FROM paper_balances ORDER BY mint"
-                )
-            }
-            base["available_balance"] = base["balances"].get("USDT")
-            base["available_balance_usd"] = base["available_balance"]
-            base["initial_balance"] = base["available_balance"]
-            base["orders"] = [
-                {"order_id": row[0], "signal_id": row[1], "side": row[2],
-                 "asset_mint": row[3], "quantity": row[4], "quote_mint": row[5],
-                 "status": row[6], "reason": None, "created_at": row[7]}
-                for row in db.execute("""SELECT id,signature,side,asset_mint,asset_amount,
-                    quote_mint,status,created_at FROM paper_trades
-                    ORDER BY id DESC LIMIT 100""")
-            ]
-            base["database_available"] = True
+        with paper_simulator_lock:
+            report = get_profile_paper_simulator(profile_id).report()
+        base["balances"] = report.get("balances", {})
+        base["available_balance"] = base["balances"].get("USD")
+        base["available_balance_usd"] = base["available_balance"]
+        base["initial_balance"] = report.get("initial_balance")
+        base["orders"] = [
+            {**order, "simulated": True, "real_trading": False, "transaction_broadcast": False}
+            for order in report.get("orders", [])
+        ]
+        base["fills"] = report.get("fills", [])
+        base["pnl"] = report.get("pnl", base["pnl"])
+        realized = base["pnl"].get("realized_by_mint", {})
+        if not realized:
+            base["realized_pnl_usd"] = "0"
+        elif all(item.get("status") == "calculated" and item.get("pnl") is not None
+                 for item in realized.values()):
+            base["realized_pnl_usd"] = format(
+                sum((Decimal(item["pnl"]) for item in realized.values()), Decimal("0")), "f")
+        else:
+            base["realized_pnl_usd"] = None
+        has_unpriced_holdings = any(
+            mint != "USD" and Decimal(str(amount)) != 0
+            for mint, amount in base["balances"].items()
+        )
+        # With no unpriced token holdings, cash is the known portfolio value.
+        # Once tokens are held, a verified fresh price is required to value them.
+        base["portfolio_value_usd"] = None if has_unpriced_holdings else base["available_balance"]
+        base["unrealized_pnl_usd"] = None if has_unpriced_holdings else "0"
+        base["database_available"] = True
+        base["real_trading"] = False
+        base["transaction_broadcast"] = False
     except (OSError, sqlite3.Error, ValueError) as exc:
         base["error"] = "Profile paper report unavailable (" + type(exc).__name__ + ")."
     return base
-
 
 def load_paper_simulation_report(profile_id=None):
     """Read paper simulation data only; profile IDs never fall back to global data."""

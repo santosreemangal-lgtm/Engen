@@ -133,6 +133,25 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if payload is None:
             return
 
+        if path == "/api/copy/balance":
+            action = payload.get("action", "add")
+            amount = payload.get("amount")
+            try:
+                updated = copy_paper_trader.set_balance(
+                    USDT_MINT,
+                    amount,
+                    action=action,
+                )
+            except (ValueError, InvalidOperation) as error:
+                self.send_json(400, {"error": str(error)})
+                return
+            self.send_json(200, {
+                **updated,
+                "balances": copy_paper_trader.get_balances(),
+                "real_trading": False,
+            })
+            return
+
         if path == "/api/copy/settings":
             mode = payload.get("mode")
             value = payload.get("value")

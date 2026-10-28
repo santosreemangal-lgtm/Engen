@@ -90,8 +90,7 @@ class DashboardProfileApiTests(unittest.TestCase):
                 return {"enabled": False, "interval_seconds": 30, "wallets": []}
 
         fake = FakeMonitorService()
-        with patch.object(dashboard_server, "get_profile_monitor_service", return_value=fake), \\
-             patch.object(dashboard_server, "MONITOR_STATE_FILE", state_path):
+        with patch.object(dashboard_server, "get_profile_monitor_service", return_value=fake), patch.object(dashboard_server, "MONITOR_STATE_FILE", state_path):
             status, body = self._post_dashboard_api(
                 "/api/profile-monitor", {"action": "start", "profile_id": self.profile_id}
             )

@@ -22,9 +22,14 @@ class PaperSimulator:
         self.orders = {}
         self.fills = []
         self.processed_signals = set()
+        self._initial_balance_value = None
+        self._initial_balance_mint = None
         self._rebuild_pnl_ledger()
         if self.db_path:
             self._initialize()
+            self._initial_balance_value = self._stored_initial_balance()
+            if self._initial_balance_value is not None:
+                self._initial_balance_mint = "USD"
 
     def _connect(self):
         return sqlite3.connect(str(self.db_path))
@@ -122,6 +127,43 @@ class PaperSimulator:
         self.processed_signals.add(signal_id)
         return dict(order)
 
+    def set_initial_virtual_balance(self, amount, mint="USD"):
+        """Set the starting paper balance exactly once before any simulated fills."""
+        if not isinstance(mint, str) or not mint.strip() or len(mint.strip()) > 128:
+            raise ValueError("A token mint or paper asset symbol (max 128 characters) is required.")
+        mint = mint.strip()
+        value = decimal_value(amount, "Initial virtual balance", allow_zero=True)
+        stored_initial_balance = self._stored_initial_balance()
+        if stored_initial_balance is None:
+            stored_initial_balance = self._initial_balance_value
+        if stored_initial_balance is not None:
+            if Decimal(stored_initial_balance) != value or self._initial_balance_mint != mint:
+                raise ValueError("Starting balance has already been set and cannot be changed.")
+            if self.balances.get(mint) != value:
+                raise ValueError("The stored starting balance does not match this asset balance.")
+            return {"mint": mint, "initial_balance": str(value), "balance": str(value),
+                    "simulated": True, "real_trading": False, "transaction_broadcast": False}
+        if any(order.get("status") == "FILLED" for order in self.orders.values()):
+            raise ValueError("Starting balance cannot be changed after a paper order has filled.")
+        if self.db_path is not None:
+            with closing(self._connect()) as db:
+                with db:
+                    db.execute(
+                        """INSERT INTO simulator_balances(mint, amount) VALUES(?, ?)
+                        ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount""",
+                        (mint, str(value)),
+                    )
+                    db.execute(
+                        """INSERT INTO simulator_meta(key, value) VALUES('initial_balance', ?)
+                        ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                        (str(value),),
+                    )
+        self.balances[mint] = value
+        self._initial_balance_value = str(value)
+        self._initial_balance_mint = mint
+        return {"mint": mint, "initial_balance": str(value), "balance": str(value),
+                "simulated": True, "real_trading": False, "transaction_broadcast": False}
+
     def add_virtual_balance(self, mint, amount):
         """Add explicitly virtual funds to one paper token balance; never touches a real wallet."""
         if not isinstance(mint, str) or not mint.strip() or len(mint.strip()) > 128:
@@ -190,6 +232,16 @@ class PaperSimulator:
             if not isinstance(value,int) or isinstance(value,bool) or not 0 <= value <= 10000:
                 raise ValueError(f"{name} must be an integer from 0 to 10000.")
         qty = Decimal(order["quantity"])
+        target_notional = (order.get("details") or {}).get("target_notional_usd")
+        if target_notional is not None:
+            target_value = decimal_value(target_notional, "Target USD paper order size")
+            if target_value <= 0:
+                return self._reject(order, "Target USD paper order size must be positive.")
+            qty = target_value / market_price.price
+            if qty <= 0:
+                return self._reject(order, "Target USD paper order size produced an invalid quantity.")
+            order["quantity"] = str(qty)
+            self._persist(order)
         reference = market_price.price
         multiplier = Decimal(10000 + slippage_bps if order["side"] == "BUY" else 10000 - slippage_bps) / Decimal(10000)
         execution = reference * multiplier
@@ -291,10 +343,21 @@ class PaperSimulator:
                 "unrealized_status": "unavailable_no_verified_fresh_market_price",
                 "unrealized_note": "No verified market-price provider is connected to the simulator."}
 
+    def _stored_initial_balance(self):
+        if self.db_path is None or not self.db_path.is_file():
+            return None
+        try:
+            with closing(self._connect()) as db:
+                row = db.execute("SELECT value FROM simulator_meta WHERE key='initial_balance'").fetchone()
+            return row[0] if row else None
+        except sqlite3.Error:
+            return None
+
     def report(self):
         return {"mode":"PAPER_SIMULATION","simulated":True,"real_wallet_balances_included":False,
                 "real_trading":False,"transaction_broadcast":False,
                 "balances":{mint:str(amount) for mint,amount in self.balances.items()},
+                "initial_balance": self._stored_initial_balance(),
                 "orders":[dict(order) for order in self.orders.values()],
                 "fills":[dict(fill) for fill in self.fills],
                 "pnl":self.pnl_summary()}

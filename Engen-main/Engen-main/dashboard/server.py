@@ -1,5 +1,5 @@
 
-"""Read-only web backend for the Solana Monitor dashboard."""
+"""Dashboard backend for read-only chain monitoring and paper-only simulation."""
 
 import json
 import os
@@ -312,6 +312,14 @@ def load_paper_simulation_report(profile_id=None):
                 return base
             base["balances"] = {mint: amount for mint, amount in db.execute(
                 "SELECT mint, amount FROM simulator_balances ORDER BY mint")}
+            meta_table = db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='simulator_meta'"
+            ).fetchone()
+            if meta_table:
+                initial = db.execute(
+                    "SELECT value FROM simulator_meta WHERE key='initial_balance'"
+                ).fetchone()
+                base["initial_balance"] = initial[0] if initial else None
             base["orders"] = [
                 {"order_id": row[0], "signal_id": row[1], "side": row[2],
                  "asset_mint": row[3], "quantity": row[4], "quote_mint": row[5],
@@ -447,12 +455,25 @@ def profile_copy_side(profile_id):
     return side.upper() if isinstance(side, str) and side.upper() in ("BUY", "SELL", "BOTH") else "NONE"
 
 
+def profile_paper_settings(profile_id):
+    """Return stored paper-trading settings for one profile."""
+    profile = get_profile_record(profile_id)
+    if profile is None:
+        return {}
+    settings = profile.get("settings") or {}
+    paper = settings.get("paper_trading") if isinstance(settings, dict) else {}
+    return paper if isinstance(paper, dict) else {}
+
+
 def get_profile_monitor_service(profile_id):
     """Return a dedicated monitor service for a validated profile UUID."""
     canonical = canonical_profile_id(profile_id)
     if canonical not in profile_monitor_services:
         profile_monitor_services[canonical] = MonitorService(
-            create_scan_function(side_getter=lambda: profile_copy_side(canonical)),
+            create_scan_function(
+                side_getter=lambda: profile_copy_side(canonical),
+                settings_getter=lambda: profile_paper_settings(canonical),
+            ),
             interval=30,
         )
     return profile_monitor_services[canonical]
@@ -722,6 +743,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             try:
                 with paper_simulator_lock:
                     simulator = get_paper_simulator()
+                    if action == "set-initial-balance":
+                        result = simulator.set_initial_virtual_balance(
+                            payload.get("amount"), payload.get("mint", "USD")
+                        )
+                        self.send_json(200, {"result": result, "report": dict(simulator.report(), database_available=True)})
+                        return
                     if action == "add-balance":
                         result = simulator.add_virtual_balance(
                             payload.get("mint"), payload.get("amount")
@@ -770,7 +797,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         )
                         self.send_json(200, {"result": result, "report": dict(simulator.report(), database_available=True)})
                         return
-                    self.send_json(400, {"error": "Action must be add-balance or create-order."})
+                    self.send_json(400, {"error": "Action must be set-initial-balance, add-balance, or create-order."})
             except ValueError as exc:
                 self.send_json(400, {"error": str(exc)})
             except (OSError, sqlite3.Error) as exc:
@@ -855,6 +882,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     store.associate_source_wallet(profile_id, payload.get("wallet_address"))
                     self.send_json(200, {"profile": store.get_profile(profile_id), "simulated": False})
                     return
+                if action == "disassociate-source-wallet":
+                    store.disassociate_source_wallet(profile_id, payload.get("wallet_address"))
+                    self.send_json(200, {"profile": store.get_profile(profile_id), "simulated": False})
+                    return
                 if action == "delete":
                     service = profile_monitor_services.get(profile_id)
                     if service is not None:
@@ -864,7 +895,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     store.delete_profile(profile_id)
                     self.send_json(200, {"deleted": True, "profile_id": profile_id, "history_preserved": True})
                     return
-                raise ValueError("Action must be create, update, settings, associate-source-wallet, or delete.")
+                raise ValueError("Action must be create, update, settings, associate-source-wallet, disassociate-source-wallet, or delete.")
             except ValueError as exc:
                 self.send_json(400, {"error": str(exc)})
             except (OSError, RuntimeError) as exc:

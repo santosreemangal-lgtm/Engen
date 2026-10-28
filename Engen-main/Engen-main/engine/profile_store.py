@@ -167,6 +167,12 @@ class ProfileStore:
         settings_json_value = settings_json(settings)
         pid, now = str(uuid.uuid4()), utc_now()
         with self.session() as db:
+            # Enforce the destination-profile limit in the data layer as well as the UI.
+            active_profiles = db.execute(
+                "SELECT COUNT(*) FROM profiles WHERE deleted_at IS NULL AND status != 'archived'"
+            ).fetchone()[0]
+            if active_profiles >= 3:
+                raise ValueError("A maximum of 3 destination wallet profiles is allowed. Archive or delete one before creating another.")
             db.execute("INSERT INTO profiles VALUES(?,?,?,'disabled',?,?,NULL)",
                        (pid,name.strip(),destination_public_address,now,now))
             db.execute("INSERT INTO profile_settings VALUES(?,?,?)",(pid,settings_json_value,now))
@@ -264,6 +270,20 @@ class ProfileStore:
             db.execute("INSERT OR IGNORE INTO source_wallets VALUES(?,?)",(wallet_address,now))
             db.execute("INSERT OR IGNORE INTO profile_source_wallets VALUES(?,?,?)",
                        (profile_id,wallet_address,now))
+
+    def disassociate_source_wallet(self, profile_id, wallet_address):
+        """Remove a source-wallet association from one profile without deleting it elsewhere."""
+        validate_public_address(wallet_address)
+        with self.session() as db:
+            if not db.execute(
+                "SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
+                (profile_id,),
+            ).fetchone():
+                raise ValueError("Profile not found.")
+            db.execute(
+                "DELETE FROM profile_source_wallets WHERE profile_id=? AND wallet_address=?",
+                (profile_id, wallet_address),
+            )
 
     def save_transaction(self, signature, source_wallet_address, *, classification="UNKNOWN",
                          status="unknown", evidence=None, slot=None, block_time=None,

@@ -583,6 +583,9 @@ def get_profile_monitor_service(profile_id):
             create_scan_function(
                 side_getter=lambda: profile_copy_side(canonical),
                 settings_getter=lambda: profile_paper_settings(canonical),
+                simulator_getter=lambda: get_profile_paper_simulator(canonical),
+                profile_id=canonical,
+                profile_store=ProfileStore(PROFILE_STORE_DB),
             ),
             interval=30,
         )

@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qs
 
 from dashboard import server as dashboard_server
+from dashboard import monitor_bridge
 from engine.profile_store import ProfileStore
 from engine.paper_trader import PaperTrader
 
@@ -217,6 +218,57 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertEqual(second_report["portfolio_value_usd"], "2500.75")
         self.assertFalse(second_report["real_trading"])
         self.assertFalse(second_report["transaction_broadcast"])
+    def test_monitor_bridge_persists_observed_transaction_metadata_separately(self):
+        signature = "1" * 64
+        observation = {
+            "signature": signature,
+            "available": True,
+            "status": "success",
+            "metadata_complete": True,
+            "metadata_status": "available",
+            "signers": [PUBLIC_WALLET],
+            "signature_observation": {
+                "confirmation_status": "confirmed", "slot": 123, "block_time": 1700000000,
+            },
+            "trade_signal": {
+                "classification": "UNKNOWN", "reason": "test observation",
+                "asset_mints": [TOKEN_MINT], "quote_mints": [],
+            },
+            "token_balance_changes": [
+                {"owner": PUBLIC_WALLET, "mint": TOKEN_MINT,
+                 "decimals": 6, "delta_amount": "1.25"},
+            ],
+        }
+
+        class FakeSignatureStore:
+            def mark_processed(self, wallet_address, stored_signature):
+                self.last_processed = (wallet_address, stored_signature)
+
+        with patch.object(monitor_bridge, "SignatureStore", FakeSignatureStore), patch.object(
+            monitor_bridge, "monitor_wallet", return_value=[observation]
+        ):
+            scan = monitor_bridge.create_scan_function(
+                side_getter=lambda: "BOTH",
+                settings_getter=lambda: {},
+                simulator_getter=lambda: dashboard_server.get_profile_paper_simulator(self.profile_id),
+                profile_id=self.profile_id,
+                profile_store=self.store,
+            )
+            results = scan(PUBLIC_WALLET)
+
+        self.assertEqual(results[0]["profile_history_status"], "saved")
+        report = dashboard_server.load_profile_transactions(
+            parse_qs("profile_id=" + self.profile_id + "&page=1&page_size=25")
+        )
+        self.assertEqual(report["total"], 1)
+        stored = report["transactions"][0]
+        self.assertEqual(stored["signature"], signature)
+        self.assertEqual(stored["token_mint"], TOKEN_MINT)
+        self.assertEqual(stored["token_decimals"], 6)
+        self.assertEqual(stored["amount"], "1.25")
+        self.assertFalse(stored["simulated"])
+        paper_report = dashboard_server.load_profile_paper_simulation_report(self.profile_id)
+        self.assertEqual(paper_report["orders"], [])
     def test_profile_paper_reports_keep_balances_and_history_separate(self):
         second_profile = self.store.create_profile("Second API profile")
         first_db = dashboard_server.profile_paper_db_path(self.profile_id)

@@ -302,7 +302,7 @@ async function loadTradeHistory(){
     ?String(details.sizing_value??"—")+"% of source trade"
     :(details.sizing_mode==="FIXED_USD"?"Fixed "+money(details.target_notional_usd??details.sizing_value):"Paper order");
    const rows=[
-    ["Token",order.asset_mint],["Quantity",fill?.quantity??order.quantity],
+    ["Token",order.asset_mint],["Quantity",fill?.quantity??(details.target_notional_usd!==null&&details.target_notional_usd!==undefined?"Calculated from eligible USD price when available":order.quantity)],
     ["Sizing",sizing],["Execution price",fill?money(fill.execution_price):"Not filled"],
     ["Gross USD",fill?money(fill.gross_quote):"—"],["Fee",fill?money(fill.fee):"—"],
     ["Reason",order.reason],["Created",order.created_at],["Mode","PAPER ONLY · no transaction broadcast"]

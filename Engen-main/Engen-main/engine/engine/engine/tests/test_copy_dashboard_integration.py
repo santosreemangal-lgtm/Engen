@@ -78,5 +78,26 @@ class CopyDashboardIntegrationTests(unittest.TestCase):
         self.assertEqual(result["paper_result"]["quote_amount"], "10")
 
 
+
+    def test_sell_signal_reduces_virtual_asset_and_adds_usdt(self):
+        self.ledger.set_balance("TOKEN_A", "10", action="set")
+        result = server.handle_monitored_result(
+            "public-wallet",
+            self.result(side="SELL_CANDIDATE"),
+        )
+        self.assertEqual(result["paper_result"]["status"], "PAPER_FILLED")
+        self.assertEqual(self.ledger.get_balances()["TOKEN_A"], "5")
+        self.assertEqual(self.ledger.get_balances()[USDT], "10001")
+
+    def test_invalid_saved_settings_fall_back_safely(self):
+        self.settings_path.write_text(
+            '{"mode":"percentage","value":"1000"}',
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            server.load_copy_settings(),
+            {"mode": "percentage", "value": "100"},
+        )
+
 if __name__ == "__main__":
     unittest.main()

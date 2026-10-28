@@ -75,6 +75,8 @@ def save_copy_settings(settings):
 
 def handle_monitored_result(wallet_address, result):
     """Convert a supported public-wallet signal into a virtual paper trade."""
+    if not isinstance(result, dict):
+        return {"status": "SKIPPED", "reason": "Invalid transaction result."}
     signal = result.get("trade_signal")
     if not isinstance(signal, dict):
         return {"status": "SKIPPED", "reason": "No classified trade signal."}
@@ -101,50 +103,54 @@ def handle_monitored_result(wallet_address, result):
 
     asset_delta = CopyPaperTrader._delta_for_mint(changes, asset_mint)
     quote_delta = CopyPaperTrader._delta_for_mint(changes, quote_mint)
-    quote_places = next(
-        (
+    if asset_delta is None or quote_delta is None or quote_delta == 0:
+        return {"status": "SKIPPED", "reason": "Token amounts are unavailable or invalid."}
+
+    def decimals_for(mint):
+        values = {
             item.get("decimals") for item in changes
-            if isinstance(item, dict) and item.get("mint") == quote_mint
-        ),
-        None,
-    )
-    if (
-        asset_delta is None or quote_delta is None or quote_delta == 0
-        or not isinstance(quote_places, int) or isinstance(quote_places, bool)
-        or quote_places < 0
-    ):
-        return {"status": "SKIPPED", "reason": "Token amounts or decimals are unavailable."}
+            if isinstance(item, dict) and item.get("mint") == mint
+        }
+        if len(values) != 1:
+            return None
+        value = next(iter(values))
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return None
+        return value
+
+    asset_places, quote_places = decimals_for(asset_mint), decimals_for(quote_mint)
+    if asset_places is None or quote_places is None:
+        return {"status": "SKIPPED", "reason": "Token decimals are unavailable or inconsistent."}
 
     settings = load_copy_settings()
     setting_value = Decimal(settings["value"])
     if settings["mode"] == "percentage":
         scale = setting_value / Decimal("100")
     else:
-        target_raw = setting_value * (Decimal("10") ** quote_places)
-        scale = target_raw / abs(quote_delta * (Decimal("10") ** quote_places))
-        # _delta_for_mint returns human units; convert back to raw-unit scale.
+        # quote_delta is in human USDT units, so this scales the observed
+        # swap to the configured fixed USDT amount (not raw integer units).
         scale = setting_value / abs(quote_delta)
 
     if not scale.is_finite() or scale <= 0:
         return {"status": "SKIPPED", "reason": "Copy size is invalid."}
 
+    # Consolidate each token to one raw-unit change before scaling. This avoids
+    # independently rounding multiple token accounts and accidentally changing
+    # the ratio or dropping small-but-valid swaps.
     scaled_changes = []
-    for change in changes:
-        if not isinstance(change, dict):
-            continue
-        copied = dict(change)
-        if copied.get("mint") in (asset_mint, quote_mint):
-            try:
-                raw = Decimal(str(copied.get("delta_amount")))
-                if not raw.is_finite() or raw != raw.to_integral_value():
-                    return {"status": "SKIPPED", "reason": "Token raw amount is invalid."}
-                scaled_raw = (raw * scale).to_integral_value(rounding=ROUND_DOWN)
-                if scaled_raw == 0:
-                    return {"status": "SKIPPED", "reason": "Copy size is below token precision."}
-                copied["delta_amount"] = str(int(scaled_raw))
-            except (InvalidOperation, ValueError, TypeError):
-                return {"status": "SKIPPED", "reason": "Could not scale token amounts safely."}
-        scaled_changes.append(copied)
+    for mint, places, human_delta in (
+        (asset_mint, asset_places, asset_delta),
+        (quote_mint, quote_places, quote_delta),
+    ):
+        raw_delta = human_delta * (Decimal("10") ** places)
+        scaled_raw = (raw_delta * scale).to_integral_value(rounding=ROUND_DOWN)
+        if scaled_raw == 0:
+            return {"status": "SKIPPED", "reason": "Copy size is below token precision."}
+        scaled_changes.append({
+            "mint": mint,
+            "delta_amount": str(int(scaled_raw)),
+            "decimals": places,
+        })
 
     copied_result = dict(result)
     copied_result["token_balance_changes"] = scaled_changes
@@ -386,10 +392,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if address not in wallets:
                 wallets.append(address)
                 save_wallets(wallets)
+            if monitor_service.status()["enabled"]:
+                monitor_service.start(wallets)
 
         elif action == "remove":
             wallets = [item for item in wallets if item != address]
             save_wallets(wallets)
+            if monitor_service.status()["enabled"]:
+                if wallets:
+                    monitor_service.start(wallets)
+                else:
+                    monitor_service.stop()
 
         else:
             self.send_json(

@@ -345,6 +345,8 @@ async function loadPortfolioForProfile(){
   for(const id of ["total-value","available","realized","unrealized"])$(id).textContent="$—";
   $("realized-percent").textContent="—%";
   $("initial-balance").disabled=true;$("set-initial-balance").disabled=true;
+  $("set-initial-balance").textContent="Set Starting Balance";
+  $("initial-balance-hint").textContent="Select a wallet profile first. Each profile has its own virtual USD balance.";
   $("add-balance").disabled=true;$("add-virtual-balance").disabled=true;
   $("target-balance").value="";$("target-balance").disabled=true;$("set-virtual-balance").disabled=true;
   say("portfolio-message","Create or select a profile to view its paper portfolio.");
@@ -364,6 +366,7 @@ async function loadPortfolioForProfile(){
   const hasInitial=r.initial_balance!==null&&r.initial_balance!==undefined;
   $("initial-balance").disabled=hasInitial;
   $("set-initial-balance").disabled=hasInitial;
+  $("set-initial-balance").textContent=hasInitial?"Starting Balance Set":"Set Starting Balance";
   if(document.activeElement!==$("initial-balance"))$("initial-balance").value=hasInitial?String(r.initial_balance):"1000";
   $("initial-balance-hint").textContent=hasInitial
    ?"Starting balance is "+money(r.initial_balance)+". Change current available USD using the adjustment control; starting balance stays in history."

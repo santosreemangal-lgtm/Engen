@@ -102,49 +102,93 @@ section[id]{scroll-margin-top:88px}
 .recent-item a:hover{text-decoration:underline}
 .profile-edit-fields{padding:12px;border:1px solid #273852;border-radius:12px;background:#0b1423}
 .profile-edit-fields .row{align-items:stretch}
+/* Simplified portfolio-first layout */
+.dashboard-nav{display:none!important}
+.portfolio-profile-row{display:grid;gap:7px;margin:0 0 4px}
+.portfolio-profile-row>label{margin:0;color:#cbd6eb;font-size:12px}
+.portfolio-profile-controls{display:grid;grid-template-columns:minmax(160px,1fr) auto auto;gap:8px;align-items:center}
+.portfolio-profile-controls select{min-width:0}
+#profile-options{display:none!important}
+#profile-load-status{margin-top:4px}
+#profile-form{padding:14px;border:1px solid #2b3b55;border-radius:13px;background:#0b1423}
+.confirmation-message{min-height:22px;padding:10px 12px;margin:8px 0 14px;border-radius:10px;border:1px solid #314b5d;background:#0e1f2a;color:#c9f7e6;font-weight:650}
+.portfolio-chart-card{margin:18px 0;padding:17px;border:1px solid #2b3b55;border-radius:16px;background:linear-gradient(145deg,#101b2e,#0b1423)}
+.chart-card-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.chart-card-heading h3{margin:0 0 2px}
+.chart-card-heading .hint{margin:0}
+#chart-current-balance{font-size:18px;white-space:nowrap}
+.portfolio-chart{width:100%;min-height:160px;overflow:hidden}
+.portfolio-chart svg{display:block;width:100%;height:auto;min-height:160px}
+.portfolio-balance-grid{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.portfolio-balance-grid .field{padding:15px;border:1px solid #2b3b55;border-radius:14px;background:rgba(11,20,35,.62);margin:8px 0}
+.balance-action-row{margin-top:10px}
+.balance-action-row>*{flex:1}
+.starting-balance-summary{font-weight:650}
+.extra-tools{padding:16px 20px;margin-top:20px}
+.extra-tools>summary{padding:5px 2px;font-size:15px}
+.extra-tools-content{margin-top:12px}
+.extra-tools-content>.panel{margin:14px 0;padding:18px}
+@media(max-width:560px){
+ .portfolio-profile-controls{grid-template-columns:1fr 1fr}
+ .portfolio-profile-controls select{grid-column:1/-1}
+ .chart-card-heading{align-items:flex-start}
+ .balance-action-row{flex-direction:row}
+ .extra-tools{padding:14px}
+}
 </style>
 </head>
 <body><main>
 <header><div class="brand">Paper trading · Read-only monitoring</div><h1>Solana Copy Engine</h1><p class="subtitle">A simple dashboard for tracked wallets and paper-copy settings.</p></header>
-<nav class="dashboard-nav" aria-label="Dashboard navigation">
- <a href="#dashboard-home">Home</a>
- <a href="#wallets">Wallets</a>
- <a href="#monitoring">Monitoring</a>
- <a href="#trade-history">Trade History</a>
- <a href="#transaction-history">Transaction History</a>
- <a href="#settings">Settings</a>
-</nav>
 
-<section class="panel" id="dashboard-home" aria-labelledby="dashboard-home-heading"><div class="panel-head"><div><h2 id="dashboard-home-heading">Portfolio</h2><p id="portfolio-profile-status" class="hint">Choose or create a wallet profile to load its paper balance.</p></div><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span></div>
-<div class="grid portfolio-grid">
-<div class="metric"><div class="label">Total Value</div><p id="total-value" class="value">$—</p></div>
-<div class="metric"><div class="label">Available USD</div><p id="available" class="value">$—</p></div>
-<div class="metric"><div class="label">Realized P&amp;L</div><p id="realized" class="value">$—</p></div>
-<div class="metric"><div class="label">Unrealized P&amp;L</div><p id="unrealized" class="value">$—</p></div>
-<div class="metric"><div class="label">Realized Return</div><p id="realized-percent" class="value">—%</p></div>
+<section class="panel" id="dashboard-home" aria-labelledby="dashboard-home-heading"><div class="panel-head"><div><h2 id="dashboard-home-heading">Portfolio</h2><p id="portfolio-profile-status" class="hint">Select a profile to load its virtual USD balance.</p></div><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span></div>
+<div class="portfolio-profile-row">
+ <label for="profile-select">Profile</label>
+ <div class="portfolio-profile-controls">
+  <select id="profile-select" aria-label="Select wallet profile"><option value="">No profile selected</option></select>
+  <button id="create-profile" type="button" class="secondary">New Profile</button>
+  <button id="delete-profile" type="button" class="danger" disabled title="Select a profile before deleting it.">Delete</button>
+ </div>
+ <div id="profile-options" class="profile-options" aria-label="Saved profiles"></div>
+ <p id="profile-load-status" class="hint" role="status" aria-live="polite">Loading profiles…</p>
+ <form id="profile-form" class="hidden field"><label for="profile-name">New profile name</label><div class="stack"><input id="profile-name" maxlength="80" placeholder="e.g. Main wallet" required><input id="profile-address" placeholder="Destination public address (optional)" autocomplete="off" spellcheck="false"><button id="create-profile-submit" type="submit">Create Profile</button></div><p class="hint">Use a public address only. Never enter a seed phrase or private key.</p><p id="profile-form-message" class="message" role="status" aria-live="polite"></p></form>
 </div>
-<p id="portfolio-message" class="message" role="status">USD values appear only when supported by the saved paper ledger and verified price data.</p>
+<p id="balance-message" class="message confirmation-message" role="status" aria-live="polite"></p>
+<div class="grid portfolio-grid">
+ <div class="metric"><div class="label">Portfolio Value</div><p id="total-value" class="value">$—</p></div>
+ <div class="metric"><div class="label">Available USD</div><p id="available" class="value">$—</p></div>
+ <div class="metric"><div class="label">Realized P&amp;L</div><p id="realized" class="value">$—</p></div>
+</div>
+<p id="portfolio-message" class="message" role="status">Portfolio values come only from the saved paper ledger.</p>
+<div class="portfolio-chart-card">
+ <div class="chart-card-heading"><div><h3>Virtual USD Chart</h3><p class="hint">Saved paper cash balance over time</p></div><strong id="chart-current-balance">$—</strong></div>
+ <div id="portfolio-chart" class="portfolio-chart" aria-live="polite"><p class="empty">Set a starting balance to begin the chart.</p></div>
+</div>
 <h3>Virtual USD Balance</h3>
 <div class="portfolio-balance-grid">
- <div class="field"><label for="initial-balance">Starting virtual balance (USD)</label><div class="row"><input id="initial-balance" type="number" min="0.01" max="1000000000" step="0.01" value="1000" inputmode="decimal"><button id="set-initial-balance" type="button">Set Starting Balance</button></div><p id="initial-balance-hint" class="hint">Set this profile's starting balance once. It is tracked separately from later adjustments.</p></div>
- <div class="field"><label for="target-balance">Set current available USD balance</label><div class="row"><input id="target-balance" type="number" min="0" max="1000000000" step="0.01" placeholder="e.g. 750.00" inputmode="decimal" disabled><button id="set-virtual-balance" type="button" class="secondary" disabled>Update Balance</button></div><p class="hint">Enter the target cash balance. The difference is recorded as a virtual balance adjustment; starting balance and paper fills are preserved.</p></div>
- <div class="field"><label for="add-balance">Add virtual funds (USD)</label><div class="row"><input id="add-balance" type="number" min="0.01" max="1000000000" step="0.01" placeholder="e.g. 250.00" inputmode="decimal"><button id="add-virtual-balance" type="button" class="secondary">Add Funds</button></div><p class="hint">Adds the entered amount to the current virtual USD cash balance.</p></div>
+ <div id="starting-balance-field" class="field starting-balance-field">
+  <label for="initial-balance">Starting balance (USD)</label>
+  <div class="row"><input id="initial-balance" type="number" min="0.01" max="1000000000" step="0.01" value="1000" inputmode="decimal"><button id="set-initial-balance" type="button">Confirm Starting Balance</button></div>
+  <p id="initial-balance-hint" class="hint">Set the starting virtual USD balance once for this profile.</p>
+ </div>
+ <div class="field balance-adjustment-field">
+  <label for="add-balance">Amount to add or reduce (USD)</label>
+  <input id="add-balance" type="number" min="0.01" max="1000000000" step="0.01" placeholder="e.g. 100.00" inputmode="decimal" disabled>
+  <div class="row balance-action-row"><button id="add-virtual-balance" type="button" disabled>Add USD</button><button id="reduce-virtual-balance" type="button" class="secondary" disabled>Reduce USD</button></div>
+  <p class="hint">Enter one amount, then choose Add or Reduce. Each change is recorded in virtual balance history.</p>
+ </div>
 </div>
-<p class="portfolio-balance-note">Portfolio values are based on the saved paper ledger only. Unpriced token holdings are not assigned a guessed USD value. The Realized Return percentage uses realized P&amp;L divided by the saved starting balance; unrealized P&amp;L stays unavailable unless supported by verified price data.</p>
-<p id="balance-message" class="message" role="status"></p>
-<h3>Recent Activity</h3>
-<p class="hint">The latest visible record from each activity type is summarized here. Open its history section for details.</p>
-<div id="recent-activity-list" class="recent-activity-list" aria-live="polite"><p class="empty">Loading recent activity…</p></div>
+<p id="starting-balance-summary" class="hint starting-balance-summary"></p>
 </section>
 
+<details class="panel extra-tools"><summary>More options — wallets, monitoring and history</summary><div class="extra-tools-content">
 <section class="panel wallet-panel" id="wallets" aria-labelledby="wallets-heading"><div class="panel-head"><div><h2 id="wallets-heading">Wallets &amp; Source Selection</h2><p class="hint">Manage saved profiles first, then set the destination address and choose source wallets.</p></div><span id="wallet-count" class="status">0 saved</span></div>
 <div class="wallet-workspace">
  <section class="wallet-subsection" aria-labelledby="profiles-heading">
   <div class="wallet-section-head"><span class="wallet-step">01</span><div><h3 id="profiles-heading">Wallet Profiles</h3><p>Select a saved profile, create a new one, or remove a profile you no longer need.</p></div></div>
-  <div class="field"><label for="profile-select">Selected profile</label><div class="profile-controls"><select id="profile-select" aria-label="Select your wallet profile"><option value="">No profile selected</option></select><button id="create-profile" type="button" class="secondary">Add Profile</button><button id="delete-profile" type="button" class="danger" disabled title="Select a saved profile before deleting it.">Delete Profile</button><button id="refresh-profiles" type="button" class="secondary">Refresh Profiles</button></div><div id="profile-options" class="profile-options" aria-label="Saved profiles"></div><p id="profile-load-status" class="hint" role="status" aria-live="polite">Loading saved profiles…</p></div>
+  <p class="hint">Select the profile at the top of the Portfolio. Profile naming and wallet settings are managed below.</p>
   <div class="field profile-edit-fields"><label for="edit-profile-name">Selected profile name</label><div class="row"><input id="edit-profile-name" maxlength="80" placeholder="Select a profile first" disabled><button id="save-profile-name" type="button" disabled>Save Profile Name</button></div><p id="profile-edit-message" class="message" role="status" aria-live="polite"></p></div>
   <div class="wallet-profile-help">Profiles keep their destination address and source-wallet selection separate. Creating or selecting a profile does not start monitoring. Existing history is preserved when a profile is deleted.</div>
-  <form id="profile-form" class="hidden field"><label for="profile-name">New profile name</label><div class="stack"><input id="profile-name" maxlength="80" placeholder="e.g. Main wallet" required><input id="profile-address" placeholder="Destination public address (optional)" autocomplete="off" spellcheck="false"><button id="create-profile-submit" type="submit">Create Profile</button></div><p class="hint">Use a public address only. Never enter a seed phrase or private key.</p><p id="profile-form-message" class="message" role="status" aria-live="polite"></p></form>
+  
  </section>
  <section class="wallet-subsection" aria-labelledby="destination-heading">
   <div class="wallet-section-head"><span class="wallet-step">02</span><div><h3 id="destination-heading">Destination Wallet</h3><p>Your own public address. This is not a trader wallet to follow.</p></div></div>
@@ -190,7 +234,8 @@ section[id]{scroll-margin-top:88px}
 <section class="panel" id="balance-activity" aria-labelledby="balance-activity-heading"><div class="panel-head"><h2 id="balance-activity-heading">Virtual Balance Activity</h2></div>
 <div id="balance-history-list" class="history-list"><p class="empty">Set a starting balance or add virtual funds to create balance activity.</p></div><p id="balance-history-message" class="message" role="status"></p>
 </section>
-<footer class="hint">Paper mode only. No private keys, signing, or live transactions. Portfolio prices and P&amp;L may remain unavailable when verified market prices are not available.</footer>
+</div></details>
+<footer class="hint">Paper mode only. No private keys, signing, or live transactions.</footer>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -335,8 +380,6 @@ async function setSelectedProfile(profileId){
  await loadPortfolioForProfile();await loadMonitor();await loadHistory();await loadTradeHistory();await loadBalanceHistory();renderWallets();
 }
 async function loadProfiles(){
- const refresh=$("refresh-profiles");
- if(refresh)refresh.disabled=true;
  $("profile-select").disabled=true;
  say("profile-load-status","Loading saved profiles…");
  try{
@@ -365,7 +408,7 @@ async function loadProfiles(){
   renderProfileOptions();
   renderDirectionFromProfile();
   await loadPortfolioForProfile();await loadMonitor();await loadHistory();await loadTradeHistory();await loadBalanceHistory();
-  renderWallets();updateRecentActivitySummary();
+  renderWallets();
  }catch(e){
   say("profile-load-status","Could not load saved profiles: "+e.message);
   say("wallet-message","Profiles unavailable: "+e.message);
@@ -379,7 +422,6 @@ async function loadProfiles(){
   $("portfolio-profile-status").textContent="Unable to verify the selected profile.";
   say("portfolio-message","Profile data could not be loaded. Check the Dashboard backend, then use Refresh Profiles.");
  }finally{
-  if(refresh)refresh.disabled=false;
  }
 }
 function selected(){return profiles.find(p=>p.profile_id===selectedProfile);}
@@ -391,65 +433,62 @@ function renderDirectionFromProfile(){
  document.querySelectorAll('input[name="sizing"]').forEach(x=>x.checked=x.value===sizing);
  $("amount-value").value=String(amount);updateAmountLabel();
 }
+function renderPortfolioChart(transactions,currentBalance){
+ const container=$("portfolio-chart");if(!container)return;container.replaceChildren();
+ const ns="http://www.w3.org/2000/svg";
+ const create=(tag,attrs={},textValue=null)=>{const node=document.createElementNS(ns,tag);for(const [key,value] of Object.entries(attrs))node.setAttribute(key,String(value));if(textValue!==null)node.textContent=String(textValue);return node;};
+ const list=(Array.isArray(transactions)?transactions:[]).filter(item=>item&&item.balance_after!==null&&item.balance_after!==undefined&&Number.isFinite(Number(item.balance_after))).map(item=>({value:Number(item.balance_after),created_at:item.created_at||"",kind:item.kind||"Balance"})).sort((a,b)=>String(a.created_at).localeCompare(String(b.created_at)));
+ const cash=currentBalance===null||currentBalance===undefined||currentBalance===""?null:Number(currentBalance);
+ if(cash!==null&&Number.isFinite(cash)&&(!list.length||Math.abs(list[list.length-1].value-cash)>0.000001))list.push({value:cash,created_at:new Date().toISOString(),kind:"Current balance"});
+ const points=list.slice(-40);
+ if(!points.length){const empty=document.createElement("p");empty.className="empty";empty.textContent="Set a starting balance to begin the chart.";container.append(empty);$("chart-current-balance").textContent="$—";return;}
+ $("chart-current-balance").textContent=cash!==null&&Number.isFinite(cash)?money(cash):money(points[points.length-1].value);
+ const width=720,height=230,left=72,right=18,top=16,bottom=34,plotWidth=width-left-right,plotHeight=height-top-bottom;
+ let low=Math.min(...points.map(p=>p.value)),high=Math.max(...points.map(p=>p.value));
+ if(low===high){const pad=Math.max(Math.abs(low)*0.08,1);low=Math.max(0,low-pad);high+=pad;}else{const pad=(high-low)*0.12;low=Math.max(0,low-pad);high+=pad;}
+ const y=value=>top+(high-value)/(high-low)*plotHeight,x=index=>points.length===1?left+plotWidth/2:left+index/(points.length-1)*plotWidth;
+ const svg=create("svg",{viewBox:"0 0 "+width+" "+height,role:"img","aria-label":"Virtual USD balance chart"});
+ for(let i=0;i<4;i++){const value=high-(high-low)*i/3,gy=y(value);svg.append(create("line",{x1:left,y1:gy,x2:width-right,y2:gy,stroke:"#2b3b55","stroke-width":1}));svg.append(create("text",{x:left-10,y:gy+4,"text-anchor":"end",fill:"#9aa9c2","font-size":11},money(value)));}
+ const coords=points.map((p,i)=>({x:x(i),y:y(p.value),p})),linePoints=coords.map(p=>p.x+","+p.y).join(" ");
+ const area=coords.length>1?"M "+coords[0].x+" "+(top+plotHeight)+" L "+coords.map(p=>p.x+" "+p.y).join(" L ")+" L "+coords[coords.length-1].x+" "+(top+plotHeight)+" Z":"";
+ if(area)svg.append(create("path",{d:area,fill:"rgba(130,156,255,0.12)",stroke:"none"}));
+ if(coords.length>1)svg.append(create("polyline",{points:linePoints,fill:"none",stroke:"#829cff","stroke-width":3,"stroke-linecap":"round","stroke-linejoin":"round"}));
+ coords.forEach((p,i)=>{if(coords.length<12||i===coords.length-1||i===0)svg.append(create("circle",{cx:p.x,cy:p.y,r:i===coords.length-1?5:3,fill:i===coords.length-1?"#55d8b0":"#829cff",stroke:"#101b2e","stroke-width":2}));});
+ const first=points[0].created_at?new Date(points[0].created_at):null,last=points[points.length-1].created_at?new Date(points[points.length-1].created_at):null,fmt=d=>d&&!Number.isNaN(d.getTime())?d.toLocaleDateString("en-US",{month:"short",day:"numeric"}):"";
+ svg.append(create("text",{x:left,y:height-8,fill:"#9aa9c2","font-size":11},fmt(first)));svg.append(create("text",{x:width-right,y:height-8,"text-anchor":"end",fill:"#9aa9c2","font-size":11},fmt(last)));container.append(svg);
+}
 async function loadPortfolioForProfile(){
- const requestProfile=selectedProfile;
- const requestVersion=++portfolioRequestVersion;
+ const requestProfile=selectedProfile,requestVersion=++portfolioRequestVersion;
  if(!requestProfile){
-  $("portfolio-profile-status").textContent="No profile selected. Create a profile in Wallets & Source Selection to enable virtual balance controls.";
-  for(const id of ["total-value","available","realized","unrealized"])$(id).textContent="$—";
-  $("realized-percent").textContent="—%";
-  $("initial-balance").disabled=true;$("set-initial-balance").disabled=true;
-  $("set-initial-balance").textContent="Set Starting Balance";
-  $("initial-balance-hint").textContent="Select a wallet profile first. Each profile has its own virtual USD balance.";
-  $("add-balance").disabled=true;$("add-virtual-balance").disabled=true;
-  $("target-balance").value="";$("target-balance").disabled=true;$("set-virtual-balance").disabled=true;
-  say("portfolio-message","Create or select a profile to view its paper portfolio.");
-  return;
+  $("portfolio-profile-status").textContent="Select a profile to view its virtual USD balance.";
+  for(const id of ["total-value","available","realized"]){if($(id))$(id).textContent="$—";}
+  $("initial-balance").disabled=true;$("set-initial-balance").disabled=true;$("starting-balance-field").classList.remove("hidden");$("starting-balance-summary").textContent="";
+  $("initial-balance-hint").textContent="Set the starting virtual USD balance once for this profile.";
+  $("add-balance").value="";$("add-balance").disabled=true;$("add-virtual-balance").disabled=true;$("reduce-virtual-balance").disabled=true;
+  renderPortfolioChart([],null);say("portfolio-message","Create or select a profile to view its paper portfolio.");return;
  }
  try{
-  $("portfolio-profile-status").textContent="Loading paper portfolio for: "+(selected()?.name||"selected profile")+"…";
+  $("portfolio-profile-status").textContent="Loading balance for "+(selected()?.name||"selected profile")+"…";
   const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(requestProfile)),r=d.report||d;
   if(requestVersion!==portfolioRequestVersion||requestProfile!==selectedProfile)return;
   if(r.profile_id&&r.profile_id!==requestProfile)throw new Error("Portfolio response did not match the selected profile.");
-  $("total-value").textContent=money(r.portfolio_value_usd);
-  $("available").textContent=money(r.available_balance_usd);
-  $("realized").textContent=money(r.realized_pnl_usd);
-  $("unrealized").textContent=money(r.unrealized_pnl_usd);
-  const returnPercent=r.realized_pnl_percent===null||r.realized_pnl_percent===undefined?"":Number(r.realized_pnl_percent);
-  $("realized-percent").textContent=returnPercent===""||!Number.isFinite(returnPercent)?"—%":returnPercent.toFixed(2)+"%";
+  $("total-value").textContent=money(r.portfolio_value_usd);$("available").textContent=money(r.available_balance_usd);$("realized").textContent=money(r.realized_pnl_usd);
   const hasInitial=r.initial_balance!==null&&r.initial_balance!==undefined;
-  $("initial-balance").disabled=hasInitial;
-  $("set-initial-balance").disabled=hasInitial;
-  $("set-initial-balance").textContent=hasInitial?"Starting Balance Set":"Set Starting Balance";
+  $("starting-balance-field").classList.toggle("hidden",hasInitial);$("initial-balance").disabled=hasInitial;$("set-initial-balance").disabled=hasInitial;
+  $("initial-balance-hint").textContent=hasInitial?"Starting balance has already been set for this profile.":"Set the starting virtual USD balance once for this profile.";
   if(document.activeElement!==$("initial-balance"))$("initial-balance").value=hasInitial?String(r.initial_balance):"1000";
-  $("initial-balance-hint").textContent=hasInitial
-   ?"Starting balance is "+money(r.initial_balance)+". Change current available USD using the adjustment control; starting balance stays in history."
-   :"Set this profile's starting virtual balance first. It is tracked separately from later adjustments.";
-  $("add-balance").disabled=!hasInitial;
-  $("add-virtual-balance").disabled=!hasInitial;
-  $("target-balance").disabled=!hasInitial;
-  $("set-virtual-balance").disabled=!hasInitial;
-  const cash=(r.balances&&r.balances.USD!==undefined)?String(r.balances.USD):(hasInitial?String(r.initial_balance):"");
-  if(document.activeElement!==$("target-balance"))$("target-balance").value=cash;
-  $("portfolio-profile-status").textContent="Paper portfolio: "+(selected()?.name||"selected profile");
-  if(r.error){
-   say("portfolio-message",r.error);
-  }else if(!hasInitial){
-   say("portfolio-message","This profile has no starting virtual USD balance yet. Set it below to initialize the paper portfolio.");
-  }else if(r.portfolio_value_usd===null||r.portfolio_value_usd===undefined){
-   say("portfolio-message","Available USD shows the saved virtual cash balance. Total Value and Unrealized P&L remain unavailable because token holdings need verified current USD prices.");
-  }else{
-   say("portfolio-message","Portfolio values come from this profile's saved paper ledger. Realized Return = realized P&L ÷ starting virtual USD balance. No real-wallet funds are included.");
-  }
+  $("starting-balance-summary").textContent=hasInitial?"Starting balance: "+money(r.initial_balance):"";
+  const cash=(r.balances&&r.balances.USD!==undefined)?String(r.balances.USD):(r.available_balance_usd!==null&&r.available_balance_usd!==undefined?String(r.available_balance_usd):(hasInitial?String(r.initial_balance):""));
+  const hasCash=hasInitial&&cash!=="";$("add-balance").disabled=!hasCash;$("add-virtual-balance").disabled=!hasCash;$("reduce-virtual-balance").disabled=!hasCash;
+  if(document.activeElement!==$("add-balance"))$("add-balance").value="";
+  renderPortfolioChart(r.transactions||[],cash);$("portfolio-profile-status").textContent="Profile: "+(selected()?.name||"selected profile");
+  if(r.error)say("portfolio-message",r.error);else if(!hasInitial)say("portfolio-message","Set a starting balance once. After that, use Add USD or Reduce USD whenever you need.");else if(r.portfolio_value_usd===null||r.portfolio_value_usd===undefined)say("portfolio-message","Virtual cash is shown above. Total portfolio value needs verified USD prices for any token holdings.");else say("portfolio-message","Paper portfolio only. No real-wallet funds or live trades are included.");
  }catch(e){
   if(requestVersion!==portfolioRequestVersion||requestProfile!==selectedProfile)return;
-  $("portfolio-profile-status").textContent="Unable to load the selected profile's paper portfolio.";
-  for(const id of ["total-value","available","realized","unrealized"])$(id).textContent="$—";
-  $("realized-percent").textContent="—%";
-  $("initial-balance").disabled=true;$("set-initial-balance").disabled=true;
-  $("add-balance").disabled=true;$("add-virtual-balance").disabled=true;
-  $("target-balance").disabled=true;$("set-virtual-balance").disabled=true;
-  say("portfolio-message","Portfolio could not be loaded: "+e.message);
+  $("portfolio-profile-status").textContent="Unable to load the selected profile's balance.";
+  for(const id of ["total-value","available","realized"]){if($(id))$(id).textContent="$—";}
+  $("initial-balance").disabled=true;$("set-initial-balance").disabled=true;$("add-balance").disabled=true;$("add-virtual-balance").disabled=true;$("reduce-virtual-balance").disabled=true;
+  renderPortfolioChart([],null);say("portfolio-message","Balance could not be loaded: "+e.message);
  }
 }
 function updateAmountLabel(){
@@ -468,7 +507,7 @@ document.querySelectorAll('input[name="sizing"]').forEach(x=>x.addEventListener(
 $("amount-value").addEventListener("input",updateAmountLabel);
 $("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const address=$("wallet-address").value.trim();$("add-wallet").disabled=true;try{await post("/api/wallets",{action:"add",address});$("wallet-address").value="";say("wallet-message","Source wallet saved. Use Add to profile to select it for the chosen profile.");await loadWallets();}catch(err){say("wallet-message",err.message);}finally{$("add-wallet").disabled=false;}});
 $("create-profile").addEventListener("click",()=>{$("profile-form").classList.toggle("hidden");say("profile-form-message","");if(!$("profile-form").classList.contains("hidden"))$("profile-name").focus();});
-$("refresh-profiles").addEventListener("click",()=>loadProfiles());
+
 $("save-profile-name").addEventListener("click",async()=>{
  const p=selected(),name=$("edit-profile-name").value.trim(),button=$("save-profile-name");
  if(!p||!selectedProfile){say("profile-edit-message","Select a saved profile before changing its name.");return;}
@@ -573,7 +612,7 @@ $("activate-profile").addEventListener("click",async()=>{
 });
 async function loadHistory(){
  const list=$("history-list");list.replaceChildren();
- if(!selectedProfile){const p=document.createElement("p");p.className="empty";p.textContent="Select a profile to view observed on-chain transactions.";list.append(p);say("history-message","");updateRecentActivitySummary();return;}
+ if(!selectedProfile){const p=document.createElement("p");p.className="empty";p.textContent="Select a profile to view observed on-chain transactions.";list.append(p);say("history-message","");return;}
  try{
   const d=await api("/api/profile-transactions?profile_id="+encodeURIComponent(selectedProfile)+"&page=1&page_size=25");
   if(!d.transactions?.length){const p=document.createElement("p");p.className="empty";p.textContent="No stored on-chain transactions for this profile yet.";list.append(p);}
@@ -586,11 +625,11 @@ async function loadHistory(){
    list.append(item);
   });
   say("history-message","Showing "+(d.transactions||[]).length+" of "+(d.total??0)+" observed on-chain transaction(s). These are not paper fills.");
- }catch(e){say("history-message",e.message);}finally{updateRecentActivitySummary();}
+ }catch(e){say("history-message",e.message);}finally{;}
 }
 async function loadTradeHistory(){
  const list=$("trade-history-list");list.replaceChildren();
- if(!selectedProfile){const p=document.createElement("p");p.className="empty";p.textContent="Select a profile to view simulated paper trades.";list.append(p);say("trade-history-message","");updateRecentActivitySummary();return;}
+ if(!selectedProfile){const p=document.createElement("p");p.className="empty";p.textContent="Select a profile to view simulated paper trades.";list.append(p);say("trade-history-message","");return;}
  try{
   const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile)),r=d.report||d;
   const orders=Array.isArray(r.orders)?r.orders:[],fills=Array.isArray(r.fills)?r.fills:[];
@@ -613,37 +652,11 @@ async function loadTradeHistory(){
    list.append(item);
   });
   say("trade-history-message","Showing "+orders.length+" paper order(s) and "+fills.length+" simulated fill(s). No real trades are sent.");
- }catch(e){say("trade-history-message",e.message);}finally{updateRecentActivitySummary();}
-}
-function updateRecentActivitySummary(){
- const list=$("recent-activity-list");
- if(!list)return;
- list.replaceChildren();
- if(!selectedProfile){
-  const empty=document.createElement("p");empty.className="empty";empty.textContent="Select or create a wallet profile to see recent activity.";list.append(empty);return;
- }
- const sources=[
-  {label:"Paper trade",id:"trade-history-list",href:"#trade-history"},
-  {label:"On-chain transaction",id:"history-list",href:"#transaction-history"},
-  {label:"Virtual balance",id:"balance-history-list",href:"#balance-activity"}
- ];
- let count=0;
- for(const source of sources){
-  const row=$(source.id)?.querySelector(".history-item");
-  if(!row)continue;
-  const card=document.createElement("article");card.className="recent-item";
-  const heading=document.createElement("strong");
-  heading.textContent=source.label+": "+(row.querySelector("strong")?.textContent||"Activity");
-  const detail=document.createElement("p");
-  detail.textContent=(row.querySelector("p")?.textContent||"Record available in history.").slice(0,150);
-  const link=document.createElement("a");link.href=source.href;link.textContent="View history";
-  card.append(heading,detail,link);list.append(card);count++;
- }
- if(!count){const empty=document.createElement("p");empty.className="empty";empty.textContent="No recent activity yet. Paper trades, observed transactions, and balance changes will appear here when available.";list.append(empty);}
+ }catch(e){say("trade-history-message",e.message);}finally{;}
 }
 async function loadBalanceHistory(){
  const list=$("balance-history-list");list.replaceChildren();
- if(!selectedProfile){const p=document.createElement("p");p.className="empty";p.textContent="Select a profile to view balance activity.";list.append(p);say("balance-history-message","");updateRecentActivitySummary();return;}
+ if(!selectedProfile){const p=document.createElement("p");p.className="empty";p.textContent="Select a profile to view balance activity.";list.append(p);say("balance-history-message","");return;}
  try{
   const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile)),r=d.report||d;
   const transactions=Array.isArray(r.transactions)?r.transactions:[];
@@ -657,64 +670,54 @@ async function loadBalanceHistory(){
    list.append(item);
   });
   say("balance-history-message","Showing "+transactions.length+" virtual balance event(s). This is separate from on-chain transactions and simulated trades.");
- }catch(e){say("balance-history-message",e.message);}finally{updateRecentActivitySummary();}
+ }catch(e){say("balance-history-message",e.message);}finally{;}
 }
 $("history-details").addEventListener("toggle",()=>{if($("history-details").open)loadHistory();});
 $("trade-history-details").addEventListener("toggle",()=>{if($("trade-history-details").open)loadTradeHistory();});
 $("set-initial-balance").addEventListener("click",async()=>{
  if(!selectedProfile){say("balance-message","Select a profile first.");return;}
- const amount=$("initial-balance").value.trim();
+ const profileId=selectedProfile,amount=$("initial-balance").value.trim();
  if(!Number.isFinite(Number(amount))||Number(amount)<=0||Number(amount)>1000000000){say("balance-message","Enter a starting USD amount greater than zero and no more than $1,000,000,000.");return;}
- $("set-initial-balance").disabled=true;
+ const button=$("set-initial-balance");button.disabled=true;say("balance-message","Saving starting balance…");
  try{
-  await post("/api/paper-simulation",{action:"set-initial-balance",profile_id:selectedProfile,mint:"USD",amount});
-  say("balance-message","Starting virtual USD balance saved for this profile.");
+  const response=await post("/api/paper-simulation",{action:"set-initial-balance",profile_id:profileId,mint:"USD",amount});
+  if(!response.result||response.result.real_trading!==false||response.result.transaction_broadcast!==false)throw new Error("The server did not confirm a paper-only balance change.");
+  if(profileId!==selectedProfile)return;say("balance-message","Starting virtual balance confirmed: "+money(response.result.balance)+".");
   await loadPortfolioForProfile();await loadBalanceHistory();await loadTradeHistory();
- }catch(e){say("balance-message","Balance was not saved: "+e.message);await loadPortfolioForProfile();}
- finally{if(!$("initial-balance").disabled)$("set-initial-balance").disabled=false;}
-});
-$("set-virtual-balance").addEventListener("click",async()=>{
- if(!selectedProfile){say("balance-message","Select a profile first.");return;}
- const profileId=selectedProfile;
- const amount=$("target-balance").value.trim();
- const numericAmount=Number(amount);
- if(amount===""||!Number.isFinite(numericAmount)||numericAmount<0||numericAmount>1000000000){
-  say("balance-message","Enter a target USD balance from $0.00 to $1,000,000,000.");return;
- }
- const button=$("set-virtual-balance");
- button.disabled=true;say("balance-message","Updating virtual USD balance…");
- try{
-  const response=await post("/api/paper-simulation",{action:"set-balance",profile_id:profileId,mint:"USD",amount});
-  const result=response.result;
-  if(!result||result.transaction_broadcast!==false||result.real_trading!==false){
-   throw new Error("The server did not confirm a paper-only balance adjustment.");
-  }
-  if(profileId===selectedProfile){
-   say("balance-message",Number(result.adjustment)===0
-    ?"The virtual USD balance is unchanged."
-    :"Virtual USD balance updated. Adjustment: "+money(result.adjustment)+"; current cash balance: "+money(result.balance)+". This change was recorded in history.");
-   await loadPortfolioForProfile();await loadBalanceHistory();
-  }
- }catch(e){
-  if(profileId===selectedProfile)say("balance-message","Virtual USD balance was not updated: "+e.message);
-  if(profileId===selectedProfile)await loadPortfolioForProfile();
- }finally{button.disabled=!selectedProfile||$("target-balance").disabled;}
+ }catch(e){if(profileId===selectedProfile)say("balance-message","Starting balance was not saved: "+e.message);}
+ finally{if(profileId===selectedProfile)button.disabled=!$("starting-balance-field").classList.contains("hidden");}
 });
 $("add-virtual-balance").addEventListener("click",async()=>{
  if(!selectedProfile){say("balance-message","Select a profile first.");return;}
- const profileId=selectedProfile;
- const amount=$("add-balance").value.trim();
- if(!Number.isFinite(Number(amount))||Number(amount)<=0||Number(amount)>1000000000){say("balance-message","Enter an amount greater than zero and no more than $1,000,000,000.");return;}
- const button=$("add-virtual-balance");
- button.disabled=true;
+ const profileId=selectedProfile,amount=$("add-balance").value.trim(),n=Number(amount);
+ if(amount===""||!Number.isFinite(n)||n<=0||n>1000000000){say("balance-message","Enter an amount greater than $0.00 and no more than $1,000,000,000.");return;}
+ const add=$("add-virtual-balance"),reduce=$("reduce-virtual-balance");add.disabled=true;reduce.disabled=true;say("balance-message","Adding virtual USD…");
  try{
-  await post("/api/paper-simulation",{action:"add-balance",profile_id:profileId,mint:"USD",amount});
-  if(profileId!==selectedProfile)return;
-  $("add-balance").value="";
-  say("balance-message","Virtual USD funds added and recorded in balance activity.");
+  const response=await post("/api/paper-simulation",{action:"add-balance",profile_id:profileId,mint:"USD",amount}),result=response.result;
+  if(!result||result.real_trading!==false||result.transaction_broadcast!==false)throw new Error("The server did not confirm a paper-only balance addition.");
+  if(profileId!==selectedProfile)return;$("add-balance").value="";
+  say("balance-message","Added "+money(result.added)+" virtual USD. New available balance: "+money(result.balance)+".");
   await loadPortfolioForProfile();await loadBalanceHistory();
- }catch(e){if(profileId===selectedProfile)say("balance-message","Virtual funds were not added: "+e.message);}
- finally{button.disabled=!selectedProfile||$("add-balance").disabled;}
+ }catch(e){if(profileId===selectedProfile)say("balance-message","Virtual USD was not added: "+e.message);}
+ finally{if(profileId===selectedProfile){add.disabled=$("add-balance").disabled;reduce.disabled=$("add-balance").disabled;}}
+});
+$("reduce-virtual-balance").addEventListener("click",async()=>{
+ if(!selectedProfile){say("balance-message","Select a profile first.");return;}
+ const profileId=selectedProfile,amount=$("add-balance").value.trim(),n=Number(amount);
+ if(amount===""||!Number.isFinite(n)||n<=0||n>1000000000){say("balance-message","Enter an amount greater than $0.00 and no more than $1,000,000,000.");return;}
+ const add=$("add-virtual-balance"),reduce=$("reduce-virtual-balance");add.disabled=true;reduce.disabled=true;say("balance-message","Checking current virtual USD balance…");
+ try{
+  const latest=await api("/api/paper-simulation?profile_id="+encodeURIComponent(profileId)),report=latest.report||latest;
+  const raw=(report.balances&&report.balances.USD!==undefined)?report.balances.USD:report.available_balance_usd,current=Number(raw);
+  if(!Number.isFinite(current)||current<0)throw new Error("The current virtual USD balance is unavailable.");
+  if(n>current)throw new Error("You cannot reduce more than the current balance of "+money(current)+".");
+  const response=await post("/api/paper-simulation",{action:"set-balance",profile_id:profileId,mint:"USD",amount:(current-n).toFixed(2)}),result=response.result;
+  if(!result||result.real_trading!==false||result.transaction_broadcast!==false)throw new Error("The server did not confirm a paper-only balance reduction.");
+  if(profileId!==selectedProfile)return;$("add-balance").value="";
+  say("balance-message","Reduced "+money(n)+" virtual USD. New available balance: "+money(result.balance)+".");
+  await loadPortfolioForProfile();await loadBalanceHistory();
+ }catch(e){if(profileId===selectedProfile)say("balance-message","Virtual USD was not reduced: "+e.message);}
+ finally{if(profileId===selectedProfile){add.disabled=$("add-balance").disabled;reduce.disabled=$("add-balance").disabled;}}
 });
 loadWallets();
 setInterval(()=>{if(backendReady){loadMonitor();loadPortfolioForProfile();loadTradeHistory();loadBalanceHistory();if($("history-details").open)loadHistory();}},15000);

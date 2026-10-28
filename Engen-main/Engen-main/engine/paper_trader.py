@@ -296,6 +296,39 @@ class PaperTrader:
         self.trades.append(trade)
         return trade
 
+    def set_balance(self, mint, amount, action="set"):
+        """Set or add a virtual token balance and persist it without real transfers."""
+        if not isinstance(mint, str) or not mint.strip():
+            raise ValueError("A token mint is required.")
+        try:
+            quantity = Decimal(str(amount))
+        except Exception as exc:
+            raise ValueError("Invalid virtual balance amount.") from exc
+        if not quantity.is_finite() or quantity <= 0:
+            raise ValueError("Virtual balance amount must be positive.")
+        if action not in ("set", "add"):
+            raise ValueError("Balance action must be set or add.")
+
+        current = self.balances.get(mint, Decimal("0"))
+        updated = current + quantity if action == "add" else quantity
+        balances = dict(self.balances)
+        balances[mint] = updated
+
+        if self.db_path is not None:
+            with closing(self._connect()) as connection:
+                with connection:
+                    connection.execute(
+                        """
+                        INSERT INTO paper_balances (mint, amount)
+                        VALUES (?, ?)
+                        ON CONFLICT(mint) DO UPDATE SET amount = excluded.amount
+                        """,
+                        (mint, str(updated)),
+                    )
+
+        self.balances = balances
+        return {"mint": mint, "balance": str(updated), "action": action}
+
     def get_balances(self):
         """Return a safe copy of virtual balances as strings."""
         return {mint: str(amount) for mint, amount in self.balances.items()}

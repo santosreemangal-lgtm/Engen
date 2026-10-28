@@ -99,6 +99,47 @@ class PaperCopyRunnerTests(unittest.TestCase):
                         ["INITIAL_BALANCE", "DEPOSIT"],
                     )
 
+    def test_virtual_usd_balance_adjustment_is_audited_and_persistent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "paper_simulator.db"
+            simulator = PaperSimulator(db_path=database)
+
+            with self.assertRaisesRegex(ValueError, "starting virtual USD balance"):
+                simulator.set_virtual_balance("500")
+
+            simulator.set_initial_virtual_balance("1000")
+            adjustment = simulator.set_virtual_balance("650.25")
+
+            self.assertEqual(adjustment["previous_balance"], "1000")
+            self.assertEqual(adjustment["adjustment"], "-349.75")
+            self.assertEqual(adjustment["balance"], "650.25")
+            self.assertFalse(adjustment["real_trading"])
+            self.assertFalse(adjustment["transaction_broadcast"])
+
+            report = simulator.report()
+            self.assertEqual(report["initial_balance"], "1000")
+            self.assertEqual(report["balances"]["USD"], "650.25")
+            self.assertEqual(report["transactions"][-1]["kind"], "BALANCE_ADJUSTMENT")
+            self.assertEqual(report["transactions"][-1]["amount"], "-349.75")
+            self.assertEqual(report["transactions"][-1]["balance_after"], "650.25")
+
+            restored = PaperSimulator(db_path=database)
+            restored_report = restored.report()
+            self.assertEqual(restored_report["initial_balance"], "1000")
+            self.assertEqual(restored_report["balances"]["USD"], "650.25")
+            self.assertEqual(restored_report["transactions"][-1]["kind"], "BALANCE_ADJUSTMENT")
+
+    def test_virtual_usd_balance_adjustment_rejects_invalid_targets(self):
+        simulator = PaperSimulator()
+        simulator.set_initial_virtual_balance("1000")
+        with self.assertRaises(ValueError):
+            simulator.set_virtual_balance("-1")
+        with self.assertRaisesRegex(ValueError, "cannot exceed"):
+            simulator.set_virtual_balance("1000000001")
+        with self.assertRaisesRegex(ValueError, "Only the virtual USD"):
+            simulator.set_virtual_balance("100", mint="SOL")
+        self.assertEqual(simulator.balances["USD"], Decimal("1000"))
+
     def test_confirmed_candidate_creates_deduplicated_paper_order(self):
         simulator = FakeSimulator()
         queued = queue_paper_orders(WALLET, [candidate_result()], simulator)

@@ -882,6 +882,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     store.associate_source_wallet(profile_id, payload.get("wallet_address"))
                     self.send_json(200, {"profile": store.get_profile(profile_id), "simulated": False})
                     return
+                if action == "disassociate-source-wallet":
+                    store.disassociate_source_wallet(profile_id, payload.get("wallet_address"))
+                    self.send_json(200, {"profile": store.get_profile(profile_id), "simulated": False})
+                    return
                 if action == "delete":
                     service = profile_monitor_services.get(profile_id)
                     if service is not None:
@@ -891,7 +895,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     store.delete_profile(profile_id)
                     self.send_json(200, {"deleted": True, "profile_id": profile_id, "history_preserved": True})
                     return
-                raise ValueError("Action must be create, update, settings, associate-source-wallet, or delete.")
+                raise ValueError("Action must be create, update, settings, associate-source-wallet, disassociate-source-wallet, or delete.")
             except ValueError as exc:
                 self.send_json(400, {"error": str(exc)})
             except (OSError, RuntimeError) as exc:

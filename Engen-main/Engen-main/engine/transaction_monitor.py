@@ -1,8 +1,8 @@
 """Monitor public Solana wallet transactions without submitting trades."""
 
-from engine.solana_public import DEFAULT_RPC_URL, SolanaRPCError
+from engine.solana_public import DEFAULT_RPC_URL, SolanaRPCError, get_signature_status
 from engine.signature_store import SignatureStore
-from engine.solana_validation import is_valid_transaction_signature
+from engine.solana_validation import is_valid_solana_address, is_valid_transaction_signature
 from engine.transaction_analysis import classify_transaction
 from engine.transaction_processor import process_transaction_signature
 from engine.wallet_monitor import get_and_store_new_wallet_signatures
@@ -168,6 +168,32 @@ def process_new_signatures(
             results.append(_include_signature_observation(pending_result, item))
             continue
 
+        # Some RPC providers omit confirmationStatus from getSignaturesForAddress.
+        # Resolve missing/processed observations with a separate, read-only status
+        # lookup. If the lookup fails or remains unconfirmed, stay conservative.
+        if (
+            wallet_address is not None
+            and is_valid_solana_address(wallet_address)
+            and is_valid_transaction_signature(signature)
+            and result.get("status") == "success"
+            and item.get("confirmationStatus") not in ("confirmed", "finalized")
+        ):
+            try:
+                resolved_status = get_signature_status(
+                    signature, rpc_url=rpc_url, timeout=timeout
+                )
+            except SolanaRPCError:
+                resolved_status = None
+            if isinstance(resolved_status, dict):
+                item = {
+                    **item,
+                    "confirmationStatus": resolved_status.get("confirmationStatus"),
+                }
+                if item.get("slot") is None and resolved_status.get("slot") is not None:
+                    item["slot"] = resolved_status["slot"]
+                if item.get("err") is None and resolved_status.get("err") is not None:
+                    item["err"] = resolved_status["err"]
+
         # Preserve provider observation metadata separately from transaction
         # metadata; a signature-list observation is not itself transaction proof.
         result = _include_signature_observation(result, item)
@@ -207,6 +233,18 @@ def process_new_signatures(
                         wallet_address,
                         result["token_balance_changes"],
                     ),
+                }
+            elif item.get("err") is not None:
+                result = {
+                    **result,
+                    "trade_signal": {**_unknown_signer_signal(),
+                        "reason": (
+                            "Signature status reports a transaction error; "
+                            "no buy/sell candidate was created."
+                        ),
+                    },
+                    "confirmation_sufficient": False,
+                    "retryable": True,
                 }
             elif confirmation not in ("confirmed", "finalized"):
                 result = {

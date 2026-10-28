@@ -29,7 +29,11 @@ from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
 from engine.logger import redact
 from engine.pnl import MarketPrice, realized_pnl_from_fills
-from engine.paper_copy_runner import get_paper_simulator, PAPER_SIMULATOR_LOCK as paper_simulator_lock
+from engine.paper_copy_runner import (
+    get_paper_simulator,
+    profile_paper_simulator_db_path,
+    PAPER_SIMULATOR_LOCK as paper_simulator_lock,
+)
 from engine.solana_public import get_public_health, SolanaRPCError
 
 WALLETS_FILE = Path(os.environ.get("WALLETS_FILE", str(ROOT / "wallets.json")))
@@ -224,23 +228,69 @@ def profile_paper_db_path(profile_id):
     return PROFILE_DATA_DIR / canonical_profile_id(profile_id) / "paper_trading.db"
 
 
+def _add_paper_report_metrics(base, fills):
+    """Calculate only conservative USD metrics supported by the saved paper ledger."""
+    balances = base.get("balances") or {}
+    cash_raw = balances.get("USD")
+    base["available_balance_usd"] = cash_raw
+    base["unrealized_pnl_usd"] = None
+    base["portfolio_value_usd"] = None
+    base["realized_pnl_usd"] = None
+    base["realized_pnl_percent"] = None
+
+    try:
+        cash = Decimal(str(cash_raw)) if cash_raw is not None else None
+        non_usd_position = any(
+            mint != "USD" and Decimal(str(amount)) != 0
+            for mint, amount in balances.items()
+        )
+    except (ValueError, TypeError, ArithmeticError):
+        cash, non_usd_position = None, True
+
+    # Never assign a USD value to unpriced token holdings.
+    if cash is not None and not non_usd_position:
+        base["portfolio_value_usd"] = str(cash)
+
+    try:
+        realized = realized_pnl_from_fills(fills) if fills else {}
+        base.setdefault("pnl", {})["realized_by_mint"] = realized
+        if base.get("database_available") and base.get("initial_balance") is not None:
+            amounts = [item.get("pnl") for item in realized.values()]
+            if all(value is not None for value in amounts):
+                total = sum((Decimal(value) for value in amounts), Decimal("0"))
+                base["realized_pnl_usd"] = str(total)
+                initial = Decimal(str(base["initial_balance"]))
+                if initial > 0:
+                    base["realized_pnl_percent"] = format(
+                        (total / initial) * Decimal("100"), ".2f"
+                    )
+    except (ValueError, TypeError, ArithmeticError):
+        base.setdefault("pnl", {})["realized_by_mint"] = {}
+    return base
+
+
 def load_profile_paper_simulation_report(profile_id):
-    """Read one profile's PaperTrader ledger without creating or mutating it."""
+    """Read one profile's isolated PaperSimulator ledger without mutating it."""
     profile_id = canonical_profile_id(profile_id)
     base = {
         "mode": "PAPER_SIMULATION", "simulated": True,
         "real_wallet_balances_included": False, "real_trading": False,
         "transaction_broadcast": False, "profile_id": profile_id,
         "database_available": False, "balances": {}, "orders": [], "fills": [],
+        "transactions": [], "initial_balance": None,
+        "available_balance_usd": None, "portfolio_value_usd": None,
+        "realized_pnl_usd": None, "realized_pnl_percent": None,
+        "unrealized_pnl_usd": None,
         "pnl": {
-            "cost_basis_method": "unavailable_without_verified_fill_prices",
+            "cost_basis_method": "average_cost",
             "currency": "USD", "realized_by_mint": {},
-            "unrealized_status": "unavailable_profile_paper_ledger_has_no_verified_prices",
+            "unrealized_status": "unavailable_without_verified_fresh_market_price",
         },
     }
     if not PROFILE_STORE_DB.is_file():
         base["error"] = "Profile database is unavailable."
         return base
+
     try:
         with sqlite3.connect("file:" + str(PROFILE_STORE_DB.resolve()) + "?mode=ro", uri=True) as db:
             profile = db.execute(
@@ -250,15 +300,86 @@ def load_profile_paper_simulation_report(profile_id):
         if profile is None:
             base["error"] = "Profile not found."
             return base
-        path = profile_paper_db_path(profile_id)
-        if not path.is_file():
+
+        simulator_path = profile_paper_simulator_db_path(profile_id)
+        if simulator_path.is_file():
+            with sqlite3.connect("file:" + str(simulator_path.resolve()) + "?mode=ro", uri=True) as db:
+                tables = {row[0] for row in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )}
+                required = {"simulator_balances", "simulated_orders", "simulated_fills"}
+                if not required.issubset(tables):
+                    base["error"] = "Profile paper simulator schema is not initialized."
+                    return base
+
+                base["balances"] = {
+                    mint: amount for mint, amount in db.execute(
+                        "SELECT mint,amount FROM simulator_balances ORDER BY mint"
+                    )
+                }
+                meta_exists = "simulator_meta" in tables
+                if meta_exists:
+                    initial = db.execute(
+                        "SELECT value FROM simulator_meta WHERE key='initial_balance'"
+                    ).fetchone()
+                    base["initial_balance"] = initial[0] if initial else None
+                order_rows = db.execute("""SELECT order_id,signal_id,side,asset_mint,quantity,
+                    quote_mint,status,reason,created_at,details_json
+                    FROM simulated_orders ORDER BY created_at DESC LIMIT 100""").fetchall()
+                for row in order_rows:
+                    try:
+                        details = json.loads(row[9])
+                    except (TypeError, json.JSONDecodeError):
+                        details = {}
+                    base["orders"].append({
+                        "order_id": row[0], "signal_id": row[1], "side": row[2],
+                        "asset_mint": row[3], "quantity": row[4], "quote_mint": row[5],
+                        "status": row[6], "reason": row[7], "created_at": row[8],
+                        "details": details,
+                    })
+                fill_rows = db.execute("""SELECT f.fill_id,f.order_id,o.side,f.asset_mint,
+                    f.quantity,f.reference_price,f.execution_price,f.gross_quote,f.fee,
+                    f.network_cost,f.net_quote,f.currency,f.price_source,f.price_timestamp,
+                    f.price_age_seconds,f.slippage_bps,f.created_at
+                    FROM simulated_fills f JOIN simulated_orders o ON o.order_id=f.order_id
+                    ORDER BY f.created_at DESC LIMIT 100""").fetchall()
+                fill_keys = ("fill_id","order_id","side","asset_mint","quantity",
+                    "reference_price","execution_price","gross_quote","fee","network_cost",
+                    "net_quote","currency","price_source","price_timestamp",
+                    "price_age_seconds","slippage_bps","created_at")
+                base["fills"] = [dict(zip(fill_keys, row)) for row in fill_rows]
+                if "simulator_transactions" in tables:
+                    base["transactions"] = [
+                        {"id": row[0], "kind": row[1], "mint": row[2],
+                         "amount": row[3], "balance_after": row[4],
+                         "created_at": row[5], "simulated": True}
+                        for row in db.execute("""SELECT id,kind,mint,amount,balance_after,created_at
+                            FROM simulator_transactions ORDER BY id DESC LIMIT 100""")
+                    ]
+                all_fill_rows = db.execute("""SELECT o.side,f.asset_mint,f.quantity,
+                    f.execution_price,f.fee,f.network_cost,f.created_at
+                    FROM simulated_fills f JOIN simulated_orders o ON o.order_id=f.order_id
+                    ORDER BY f.rowid""").fetchall()
+                all_fills = [
+                    dict(zip(("side","asset_mint","quantity","execution_price","fee",
+                              "network_cost","created_at"), row))
+                    for row in all_fill_rows
+                ]
+                base["database_available"] = True
+
+            _add_paper_report_metrics(base, all_fills)
             return base
-        with sqlite3.connect("file:" + str(path.resolve()) + "?mode=ro", uri=True) as db:
+
+        # Backwards compatibility: retain display of old profile PaperTrader history.
+        legacy_path = profile_paper_db_path(profile_id)
+        if not legacy_path.is_file():
+            return base
+        with sqlite3.connect("file:" + str(legacy_path.resolve()) + "?mode=ro", uri=True) as db:
             tables = {row[0] for row in db.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'"
             )}
             if not {"paper_balances", "paper_trades"}.issubset(tables):
-                base["error"] = "Profile paper ledger schema is not initialized."
+                base["error"] = "Legacy profile paper ledger schema is not initialized."
                 return base
             base["balances"] = {
                 mint: amount for mint, amount in db.execute(
@@ -268,12 +389,14 @@ def load_profile_paper_simulation_report(profile_id):
             base["orders"] = [
                 {"order_id": row[0], "signal_id": row[1], "side": row[2],
                  "asset_mint": row[3], "quantity": row[4], "quote_mint": row[5],
-                 "status": row[6], "reason": None, "created_at": row[7]}
+                 "status": row[6], "reason": None, "created_at": row[7],
+                 "details": {"legacy_paper_ledger": True}}
                 for row in db.execute("""SELECT id,signature,side,asset_mint,asset_amount,
                     quote_mint,status,created_at FROM paper_trades
                     ORDER BY id DESC LIMIT 100""")
             ]
             base["database_available"] = True
+        _add_paper_report_metrics(base, [])
     except (OSError, sqlite3.Error, ValueError) as exc:
         base["error"] = "Profile paper report unavailable (" + type(exc).__name__ + ")."
     return base
@@ -473,6 +596,7 @@ def get_profile_monitor_service(profile_id):
             create_scan_function(
                 side_getter=lambda: profile_copy_side(canonical),
                 settings_getter=lambda: profile_paper_settings(canonical),
+                simulator_getter=lambda: get_paper_simulator(canonical),
             ),
             interval=30,
         )
@@ -741,8 +865,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if path == "/api/paper-simulation":
             action = payload.get("action")
             try:
+                profile_id = payload.get("profile_id")
+                if profile_id is not None:
+                    profile_id = canonical_profile_id(profile_id)
+                    if get_profile_record(profile_id) is None:
+                        self.send_json(404, {"error": "Profile not found."})
+                        return
                 with paper_simulator_lock:
-                    simulator = get_paper_simulator()
+                    simulator = get_paper_simulator(profile_id)
                     if action == "set-initial-balance":
                         result = simulator.set_initial_virtual_balance(
                             payload.get("amount"), payload.get("mint", "USD")

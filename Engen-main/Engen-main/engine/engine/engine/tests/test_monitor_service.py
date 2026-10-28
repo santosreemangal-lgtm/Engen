@@ -223,8 +223,14 @@ class MonitorServiceTests(unittest.TestCase):
         acknowledged = []
         completed = threading.Event()
 
+        scan_count = 0
+
         def fake_scan(address):
-            return [{"signature": "paper-signature", "available": True}]
+            nonlocal scan_count
+            scan_count += 1
+            if scan_count == 1:
+                return [{"signature": "paper-signature", "available": True}]
+            return []
 
         fake_scan.mark_processed = lambda address, signature: acknowledged.append(
             (address, signature)

@@ -288,7 +288,7 @@ async function loadPortfolioForProfile(){
   }
   const balance=r.available_balance_usd??r.available_balance??r.balances?.USD??null;
   if(!balanceInputDirty)input.value=balance===null||balance===undefined?"":String(balance);
-  input.disabled=false;save.disabled=balanceSaveInProgress;
+  input.disabled=false;save.disabled=!selectedProfile||!balanceInputDirty||balanceSaveInProgress;
   $("total-value").textContent=money(r.portfolio_value_usd);
   $("available").textContent=money(balance);
   $("realized").textContent=money(r.realized_pnl_usd);
@@ -299,7 +299,7 @@ async function loadPortfolioForProfile(){
   else{say("portfolio-message","Portfolio value currently reflects virtual USD cash; token holdings are included only when reliably valued.");}
   await loadPaperTradeHistory(r);
  }catch(e){
-  if(!balanceInputDirty){input.disabled=false;save.disabled=false;}
+  if(!balanceInputDirty){input.disabled=false;save.disabled=!selectedProfile||balanceSaveInProgress;}
   say("portfolio-message",e.message);say("virtual-balance-message","Could not load this profile's virtual balance.");
   await loadPaperTradeHistory(null);
  }
@@ -316,9 +316,14 @@ $("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const ad
 $("create-profile").addEventListener("click",()=>{if(profiles.length>=3){say("profile-card-message","You can create up to 3 paper profiles.");return;} $("profile-form").classList.toggle("hidden");});$("cancel-create-profile").addEventListener("click",()=>$("profile-form").classList.add("hidden"));
 $("profile-form").addEventListener("submit",async e=>{e.preventDefault();if(profiles.length>=3){say("wallet-message","Maximum of 3 paper profiles reached.");return;}try{const d=await post("/api/profiles",{action:"create",name:$("profile-name").value.trim(),destination_public_address:null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"SOURCE_PERCENT",sizing_value:"5"}}});selectedProfile=d.profile.profile_id;$("profile-name").value="";$("profile-form").classList.add("hidden");say("wallet-message","Paper profile created. Activate it, then start read-only monitoring when ready.");await loadProfiles();$("profile-select").value=selectedProfile;}catch(err){say("wallet-message",err.message);}});
 $("profile-select").addEventListener("change",async()=>{selectedProfile=$("profile-select").value;renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();if($("history-details").open)loadHistory();renderWallets();});
-$("virtual-balance-value").addEventListener("input",()=>{balanceInputDirty=true;say("virtual-balance-message","Unsaved change. Press Confirm Balance to save this amount.");$("save-virtual-balance").disabled=!selectedProfile;});
+$("virtual-balance-value").addEventListener("input",()=>{
+ balanceInputDirty=true;
+ say("virtual-balance-message","Unsaved change. Press Confirm Balance to save this amount.");
+ $("save-virtual-balance").disabled=!selectedProfile||balanceSaveInProgress;
+});
 $("virtual-balance-form").addEventListener("submit",async e=>{
  e.preventDefault();
+ if(balanceSaveInProgress)return;
  if(!selectedProfile){say("virtual-balance-message","Select a paper profile first.");return;}
  const raw=$("virtual-balance-value").value.trim(),amount=Number(raw);
  if(!raw||!Number.isFinite(amount)||amount<=0||amount>1000000000){say("virtual-balance-message","Enter an amount greater than $0 and no more than $1,000,000,000.");return;}
@@ -329,7 +334,11 @@ $("virtual-balance-form").addEventListener("submit",async e=>{
   await loadPortfolioForProfile();
   say("virtual-balance-message","Virtual USD balance saved for this profile. Paper-trade history is preserved; no real funds were moved.");
  }catch(err){say("virtual-balance-message","Balance was not saved: "+err.message);}
- finally{balanceSaveInProgress=false;$("virtual-balance-value").disabled=!selectedProfile;button.disabled=!selectedProfile;}
+ finally{
+  balanceSaveInProgress=false;
+  $("virtual-balance-value").disabled=!selectedProfile;
+  button.disabled=!selectedProfile||!balanceInputDirty;
+ }
 });
 $("confirm-settings").addEventListener("click",async()=>{
  if(!selectedProfile){say("settings-message","Create or select a profile before confirming settings.");return;}

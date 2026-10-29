@@ -297,16 +297,23 @@ async function loadPortfolio(){
  }catch(e){say("portfolio-message",e.message);}
 }
 function renderWallets(){
- const list=$("wallet-list");list.replaceChildren();const q=$("wallet-search").value.trim().toLowerCase();const visible=wallets.filter(a=>a.toLowerCase().includes(q));
- if(!visible.length){const p=document.createElement("p");p.className="empty";p.textContent=wallets.length?"No saved source address matches that search.":"No saved source wallets yet. Add a public address above.";list.append(p);}
+ const list=$("wallet-list");list.replaceChildren();const q=$("wallet-search").value.trim().toLowerCase();
+ // A wallet may be associated with a profile even if it is absent from wallets.json.
+ // Render the union so profile-linked source wallets are never hidden from this list.
+ const profileWallets=profiles.flatMap(p=>Array.isArray(p.source_wallets)?p.source_wallets:[]);
+ const allWallets=[...new Set([...wallets,...profileWallets])];
+ const visible=allWallets.filter(a=>a.toLowerCase().includes(q));
+ if(!visible.length){const p=document.createElement("p");p.className="empty";p.textContent=allWallets.length?"No source address matches that search.":"No saved or profile-assigned source wallets yet. Add a public address above.";list.append(p);}
  visible.forEach(address=>{
   const row=document.createElement("div");row.className="wallet";
   const code=document.createElement("div");code.className="address";code.textContent=address;
   const actions=document.createElement("div");actions.className="wallet-actions";
   const assigned=selected()?.source_wallets||[];const isAssigned=assigned.includes(address);
+  const isSaved=wallets.includes(address);
+  const assignedElsewhere=profiles.some(p=>p.profile_id!==selectedProfile&&(p.source_wallets||[]).includes(address));
   const monitor=currentMonitorWallets.find(item=>item&&item.address===address);
   const monitorStatus=document.createElement("div");monitorStatus.className="wallet-monitor-status";
-  if(!isAssigned){monitorStatus.textContent="Not assigned to selected profile";monitorStatus.dataset.state="unassigned";}
+  if(!isAssigned){monitorStatus.textContent=assignedElsewhere?"Assigned to another profile": "Not assigned to selected profile";monitorStatus.dataset.state="unassigned";}
   else if(!monitor){monitorStatus.textContent=currentMonitor?"Waiting for monitor status":"Assigned · monitoring stopped";monitorStatus.dataset.state="waiting";}
   else{
    const state=String(monitor.state||"waiting").toLowerCase();
@@ -318,7 +325,11 @@ function renderWallets(){
   }
   const assign=document.createElement("button");assign.className="secondary";assign.textContent=isAssigned?"Assigned":"Assign to profile";assign.disabled=!selectedProfile||isAssigned;
   assign.addEventListener("click",async()=>{try{await post("/api/profiles",{action:"associate-source-wallet",profile_id:selectedProfile,wallet_address:address});say("wallet-message","Public source wallet assigned to this paper profile.");await loadProfiles();renderWallets();}catch(e){say("wallet-message",e.message);}});
-  const remove=document.createElement("button");remove.className="danger";remove.textContent=isAssigned?"Unassign":"Remove saved";remove.addEventListener("click",async()=>{try{if(isAssigned&&selectedProfile){await post("/api/profiles",{action:"disassociate-source-wallet",profile_id:selectedProfile,wallet_address:address});say("wallet-message","Public source wallet unassigned from this profile; it remains saved for other profiles.");await loadProfiles();}else{await post("/api/wallets",{action:"remove",address});say("wallet-message","Saved source wallet removed from the global saved list.");await loadWallets();}}catch(e){say("wallet-message",e.message);}});
+  const remove=document.createElement("button");remove.className="danger";
+  remove.textContent=isAssigned?"Unassign":isSaved?"Remove saved":"Assigned elsewhere";
+  remove.disabled=!isAssigned&&!isSaved;
+  if(remove.disabled)remove.title="Select the profile that currently owns this association to unassign this wallet.";
+  remove.addEventListener("click",async()=>{try{if(isAssigned&&selectedProfile){await post("/api/profiles",{action:"disassociate-source-wallet",profile_id:selectedProfile,wallet_address:address});say("wallet-message","Public source wallet unassigned from this profile; it remains saved for other profiles.");await loadProfiles();}else if(isSaved){await post("/api/wallets",{action:"remove",address});say("wallet-message","Saved source wallet removed from the global saved list.");await loadWallets();}}catch(e){say("wallet-message",e.message);}});
   actions.append(assign,remove);row.append(code,monitorStatus,actions);list.append(row);
  });
 }

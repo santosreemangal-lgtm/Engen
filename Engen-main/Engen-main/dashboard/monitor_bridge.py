@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation
 
 from engine.signature_store import SignatureStore
 from engine.transaction_monitor import monitor_wallet
-from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders, PAPER_SIMULATOR_LOCK
+from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders, get_paper_simulator, PAPER_SIMULATOR_LOCK
 from engine.profile_store import LABELS
 from engine.solana_validation import is_valid_transaction_signature
 
@@ -113,7 +113,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
         try:
             allowed_sides = side_getter() if side_getter is not None else "BOTH"
             copy_settings = settings_getter() if settings_getter is not None else {}
-            simulator = simulator_getter() if simulator_getter is not None else None
+            simulator = simulator_getter() if simulator_getter is not None else get_paper_simulator()
             # Serialize order execution and balance writes against dashboard requests.
             with PAPER_SIMULATOR_LOCK:
                 queued_orders = queue_paper_orders(
@@ -125,15 +125,43 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 item["signal_id"]: item for item in execution_outcomes
                 if item.get("signal_id")
             }
-            # Queue persistence succeeded. Mark complete, non-retryable scans
-            # processed so unsupported transactions do not loop forever.
+            # Do not permanently consume a valid BUY/SELL candidate when
+            # queueing failed. A later scan can retry after transient metadata,
+            # settings, or balance-change issues are resolved. Orders already
+            # queued (including deduplicated existing orders) are safe to mark.
+            queued_signatures = {
+                item.get("signature") for item in queued_orders
+                if isinstance(item, dict) and isinstance(item.get("signature"), str)
+            }
+            allowed_mode = allowed_sides.upper() if isinstance(allowed_sides, str) else "NONE"
+            processed_signals = getattr(simulator, "processed_signals", set())
             for item in results:
                 signature = item.get("signature")
-                if (
-                    isinstance(signature, str)
-                    and item.get("retryable") is not True
-                ):
-                    store.mark_processed(address, signature)
+                if not isinstance(signature, str) or item.get("retryable") is True:
+                    continue
+                signal = item.get("trade_signal")
+                classification = signal.get("classification") if isinstance(signal, dict) else None
+                candidate_side = (
+                    "BUY" if classification == "BUY_CANDIDATE"
+                    else "SELL" if classification == "SELL_CANDIDATE"
+                    else None
+                )
+                side_enabled = (
+                    candidate_side is not None
+                    and allowed_mode in (candidate_side, "BOTH")
+                )
+                signal_id = "wallet-copy:" + address + ":" + signature
+                already_queued = (
+                    signature in queued_signatures
+                    or signal_id in processed_signals
+                )
+                if side_enabled and not already_queued:
+                    item["paper_copy_status"] = "RETRYING_QUEUE"
+                    item["paper_copy_message"] = (
+                        "Eligible swap was not queued; signature remains pending for retry."
+                    )
+                    continue
+                store.mark_processed(address, signature)
             if queued_orders:
                 # Keep the monitor response auditable without exposing raw transactions.
                 queued_by_signature = {

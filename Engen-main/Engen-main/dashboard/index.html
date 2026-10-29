@@ -547,7 +547,7 @@ async function loadHistoryTokenMetadata(mints){
  const needed=[...new Set((mints||[]).filter(m=>typeof m==="string"&&m.length>0))]
   .filter(m=>{
    const cached=historyTokenMetadataCache.get(m);
-   return (!cached||["unavailable","service_error"].includes(cached.status))&&!historyTokenMetadataPending.has(m);
+   return (!cached||["unavailable","service_error","not_found"].includes(cached.status))&&!historyTokenMetadataPending.has(m);
   });
  if(!needed.length)return historyTokenMetadataQueue;
  needed.forEach(m=>historyTokenMetadataPending.add(m));
@@ -740,7 +740,7 @@ let refreshInProgress = false;
 setInterval(async()=> {
   if(!backendReady || refreshInProgress) return;
   refreshInProgress = true;
-  try { await Promise.all([loadMonitor(), loadPortfolioForProfile(), loadTransactionHistory()]); }
+  try { await Promise.all([loadMonitor(), loadPortfolioForProfile(), loadTransactionHistory(), loadPaperTradeHistory(null)]); }
   finally { refreshInProgress = false; }
 },15000);
 setInterval(loadRpcHealth,30000);

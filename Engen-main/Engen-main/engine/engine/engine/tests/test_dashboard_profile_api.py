@@ -1,3 +1,4 @@
+import io
 import json
 import tempfile
 import threading
@@ -123,6 +124,40 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertEqual(profile["balances"][0]["value_kind"], "OBSERVED_ON_CHAIN_SNAPSHOT")
         self.assertFalse(profile["balances"][0]["simulated"])
         self.assertEqual(profile["balances"][0]["source"], "public-rpc")
+
+    def test_public_token_metadata_returns_name_and_symbol_from_pair(self):
+        dashboard_server._TOKEN_METADATA_CACHE.pop(TOKEN_MINT, None)
+        pair_payload = [{
+            "chainId": "solana",
+            "baseToken": {
+                "address": TOKEN_MINT,
+                "name": "Wrapped Solana",
+                "symbol": "SOL",
+            },
+            "quoteToken": {
+                "address": PUBLIC_WALLET,
+                "name": "Test Quote",
+                "symbol": "TST",
+            },
+            "liquidity": {"usd": 25000},
+        }]
+        with patch.object(
+            dashboard_server,
+            "urlopen",
+            return_value=io.BytesIO(json.dumps(pair_payload).encode("utf-8")),
+        ) as mocked_urlopen:
+            report = dashboard_server.load_public_token_metadata([TOKEN_MINT])
+
+        metadata = report["tokens"][TOKEN_MINT]
+        self.assertTrue(metadata["found"])
+        self.assertEqual(metadata["symbol"], "SOL")
+        self.assertEqual(metadata["name"], "Wrapped Solana")
+        self.assertEqual(metadata["status"], "ok")
+        mocked_urlopen.assert_called_once()
+
+    def test_public_token_metadata_rejects_invalid_mint_addresses(self):
+        with self.assertRaises(ValueError):
+            dashboard_server.load_public_token_metadata(["not-a-valid-mint"])
 
     def test_transaction_history_is_bounded_and_paginated(self):
         for index in range(3):

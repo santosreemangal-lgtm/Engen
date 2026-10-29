@@ -2,7 +2,7 @@ name: Engen Safety and Unit Tests
 
 on:
   push:
-    branches: ["main", "feature/paper-balance-dashboard-refresh"]
+    branches: ["main", "feature/paper-balance-dashboard-refresh", "fix/paper-copy-sizing-and-sell-safety-20261029"]
   pull_request:
     branches: ["main", "feature/paper-trading-dashboard-integration"]
   workflow_dispatch:

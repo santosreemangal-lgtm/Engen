@@ -12,7 +12,6 @@ from decimal import Decimal
 
 from engine.paper_simulator import PaperSimulator
 from engine.market_data import fetch_market_price
-from engine.transaction_analysis import QUOTE_TOKEN_MINTS
 from engine.transaction_analysis import WRAPPED_SOL_MINT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -64,6 +63,31 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
             or (wallet_address is not None and details.get("source_wallet") != wallet_address)
         ):
             continue
+        if order.get("side") == "SELL":
+            fraction_raw = details.get("source_sell_fraction")
+            try:
+                sell_fraction = Decimal(str(fraction_raw))
+            except Exception:
+                sell_fraction = Decimal("0")
+            owned_quantity = Decimal(str(simulator.balances.get(order.get("asset_mint"), "0")))
+            if not sell_fraction.is_finite() or sell_fraction <= 0 or sell_fraction > 1:
+                outcomes.append({
+                    "order_id": order.get("order_id"),
+                    "signal_id": order.get("signal_id"),
+                    "status": "WAITING_FOR_POSITION",
+                    "reason": "Source sell fraction is unavailable or invalid; no paper sell was executed.",
+                })
+                continue
+            if owned_quantity <= 0:
+                outcomes.append({
+                    "order_id": order.get("order_id"),
+                    "signal_id": order.get("signal_id"),
+                    "status": "WAITING_FOR_POSITION",
+                    "reason": "No copied token position is currently held; sell remains queued.",
+                })
+                continue
+            order["quantity"] = str(owned_quantity * sell_fraction)
+            simulator._persist(order)
         try:
             market_price = price_provider(order.get("asset_mint"))
         except Exception:
@@ -106,7 +130,7 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
 
 
 def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="BOTH", copy_settings=None):
-    """Queue confirmed swaps using source-trade percentage or fixed USD paper sizing."""
+    """Queue conservative paper-copy orders; buys use virtual USD sizing and sells are position-capped."""
     if not isinstance(allowed_sides, str) or allowed_sides.upper() not in ("BUY", "SELL", "BOTH", "NONE"):
         raise ValueError("allowed_sides must be BUY, SELL, BOTH, or NONE")
     mode = allowed_sides.upper()
@@ -118,19 +142,27 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
     simulator = simulator or get_paper_simulator()
     settings = copy_settings if isinstance(copy_settings, dict) else {}
     sizing_mode = settings.get("sizing_mode", "SOURCE_PERCENT")
-    if sizing_mode not in ("SOURCE_PERCENT", "FIXED_USD"):
-        raise ValueError("sizing_mode must be SOURCE_PERCENT or FIXED_USD")
-    from decimal import Decimal
+    aliases = {"FIXED_PERCENTAGE": "SOURCE_PERCENT", "FIXED_AMOUNT": "FIXED_USD",
+               "MIRROR_BUY_SELL_AMOUNT": "MIRROR_AMOUNT"}
+    sizing_mode = aliases.get(sizing_mode, sizing_mode)
+    if sizing_mode not in ("SOURCE_PERCENT", "FIXED_USD", "MIRROR_AMOUNT"):
+        raise ValueError("sizing_mode must be SOURCE_PERCENT, FIXED_USD, or MIRROR_AMOUNT")
     try:
         sizing_value = Decimal(str(settings.get("sizing_value", 5 if sizing_mode == "SOURCE_PERCENT" else 10)))
+        max_buy_usd = settings.get("max_buy_usd", "10")
+        max_buy_usd = None if max_buy_usd in (None, "") else Decimal(str(max_buy_usd))
     except Exception as exc:
-        raise ValueError("sizing_value must be a positive number.") from exc
+        raise ValueError("Sizing and maximum BUY values must be valid numbers.") from exc
     if not sizing_value.is_finite() or sizing_value <= 0:
         raise ValueError("sizing_value must be a positive finite number.")
     if sizing_mode == "SOURCE_PERCENT" and sizing_value >= 100:
-        raise ValueError("Source-trade percentage must be greater than 0 and strictly less than 100.")
+        raise ValueError("Fixed percentage must be greater than 0 and less than 100.")
     if sizing_mode == "FIXED_USD" and sizing_value > Decimal("1000000"):
         raise ValueError("Fixed USD paper size exceeds the safety limit.")
+    if max_buy_usd is not None and (
+        not max_buy_usd.is_finite() or max_buy_usd <= 0 or max_buy_usd > Decimal("1000000")
+    ):
+        raise ValueError("Maximum BUY amount must be positive and at most $1,000,000.")
     queued = []
 
     for result in results:
@@ -158,7 +190,6 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
         if (
             not isinstance(asset_mints, list) or len(asset_mints) != 1
             or not isinstance(quote_mints, list) or len(quote_mints) != 1
-            or quote_mints[0] not in QUOTE_TOKEN_MINTS
             or not isinstance(changes, list)
         ):
             continue
@@ -166,66 +197,101 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
         asset_mint, quote_mint = asset_mints[0], quote_mints[0]
         asset_changes = [
             item for item in changes
-            if isinstance(item, dict)
-            and item.get("owner") == wallet_address
-            and item.get("mint") == asset_mint
-            and item.get("source") != "native_sol"
+            if isinstance(item, dict) and item.get("owner") == wallet_address
+            and item.get("mint") == asset_mint and item.get("source") != "native_sol"
         ]
         quote_changes = [
             item for item in changes
-            if isinstance(item, dict)
-            and item.get("owner") == wallet_address
-            and (
-                item.get("mint") == quote_mint
-                or (
-                    quote_mint == WRAPPED_SOL_MINT
-                    and item.get("source") == "native_sol"
-                    and item.get("mint") == WRAPPED_SOL_MINT
-                )
-            )
+            if isinstance(item, dict) and item.get("owner") == wallet_address
+            and (item.get("mint") == quote_mint or (
+                quote_mint == WRAPPED_SOL_MINT and item.get("source") == "native_sol"
+                and item.get("mint") == WRAPPED_SOL_MINT
+            ))
         ]
         if len(asset_changes) != 1 or len(quote_changes) != 1:
             continue
-
-        asset_amount = _human_amount(asset_changes[0])
-        quote_amount = _human_amount(quote_changes[0])
+        asset_change, quote_change = asset_changes[0], quote_changes[0]
+        asset_amount = _human_amount(asset_change)
+        quote_amount = _human_amount(quote_change)
         if asset_amount is None or quote_amount is None:
             continue
         side = "BUY" if signal["classification"] == "BUY_CANDIDATE" else "SELL"
-        if (
-            side == "BUY" and (asset_amount <= 0 or quote_amount >= 0)
-        ) or (
+        if (side == "BUY" and (asset_amount <= 0 or quote_amount >= 0)) or (
             side == "SELL" and (asset_amount >= 0 or quote_amount <= 0)
         ):
             continue
-
         if side not in allowed:
             continue
 
-        signal_id = f"wallet-copy:{wallet_address}:{signature}"
-        created_at = datetime.now(timezone.utc).isoformat()
         source_quantity = abs(asset_amount)
         target_notional_usd = None
-        if sizing_mode == "SOURCE_PERCENT":
-            order_quantity = source_quantity * sizing_value / Decimal("100")
-            if order_quantity <= 0:
+        if side == "BUY":
+            balances = getattr(simulator, "balances", {})
+            virtual_usd = balances.get("USD") if isinstance(balances, dict) else None
+            if virtual_usd is None:
+                # A real PaperSimulator must have an explicit virtual USD balance.
+                # Lightweight test doubles without balances may still validate queue logic.
+                if hasattr(simulator, "balances"):
+                    continue
+            else:
+                virtual_usd = Decimal(str(virtual_usd))
+                if virtual_usd <= 0:
+                    continue
+            if sizing_mode == "SOURCE_PERCENT":
+                if virtual_usd is None:
+                    continue
+                target_notional_usd = virtual_usd * sizing_value / Decimal("100")
+            elif sizing_mode == "FIXED_USD":
+                target_notional_usd = sizing_value
+            else:
+                # Only USDC/USDT notionals are safely interpretable as USD here.
+                stable_quote_mints = {
+                    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                }
+                if quote_mint not in stable_quote_mints:
+                    continue
+                target_notional_usd = abs(quote_amount)
+            if max_buy_usd is not None:
+                target_notional_usd = min(target_notional_usd, max_buy_usd)
+            if virtual_usd is not None:
+                target_notional_usd = min(target_notional_usd, virtual_usd)
+            if target_notional_usd <= 0:
                 continue
+            order_quantity = Decimal("1")  # simulator converts the USD target using a fresh price
         else:
-            # Convert USD notional to token quantity only after a fresh verified price is available.
+            # Sell in proportion to the source wallet's observed position reduction,
+            # capped at the entire remaining paper position. Never apply BUY sizing to SELL.
+            pre_source_amount = asset_change.get("pre_amount")
+            if pre_source_amount is None:
+                continue
+            source_before = _human_amount({
+                "delta_amount": str(pre_source_amount),
+                "decimals": asset_change.get("decimals"),
+            })
+            if source_before is None or not source_before.is_finite() or source_before <= 0 or source_quantity > source_before:
+                continue
+            sell_fraction = source_quantity / source_before
+            if sell_fraction <= 0 or sell_fraction > 1:
+                continue
+            # Resolve quantity at execution time, after earlier queued BUYs have had
+            # a chance to fill. This prevents same-scan BUY→SELL signals from being lost.
             order_quantity = Decimal("1")
-            target_notional_usd = str(sizing_value)
+
+        signal_id = f"wallet-copy:{wallet_address}:{signature}"
+        created_at = datetime.now(timezone.utc).isoformat()
         order = simulator.create_order(
-            signal_id=signal_id,
-            side=side,
-            asset_mint=asset_mint,
-            quantity=str(order_quantity),
-            quote_mint="USD",
-            created_at=created_at,
+            signal_id=signal_id, side=side, asset_mint=asset_mint,
+            quantity=str(order_quantity), quote_mint="USD", created_at=created_at,
             details={
-                "sizing_mode": sizing_mode,
-                "sizing_value": str(sizing_value),
-                "target_notional_usd": target_notional_usd,
+                "sizing_mode": sizing_mode if side == "BUY" else "SOURCE_POSITION_REDUCTION",
+                "sizing_value": str(sizing_value) if side == "BUY" else None,
+                "target_notional_usd": str(target_notional_usd) if target_notional_usd is not None else None,
+                "max_buy_usd": str(max_buy_usd) if max_buy_usd is not None else None,
                 "source_asset_quantity": str(source_quantity),
+                "source_asset_pre_amount": asset_change.get("pre_amount"),
+                "source_asset_post_amount": asset_change.get("post_amount"),
+                "source_sell_fraction": str(source_quantity / source_before) if side == "SELL" else None,
                 "origin": "AUTOMATIC_WALLET_COPY",
                 "source_quote_mint": quote_mint,
                 "source_quote_amount": str(abs(quote_amount)),
@@ -242,17 +308,12 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
         if order.get("status") == "DUPLICATE":
             continue
         queued.append({
-            "signature": signature,
-            "order_id": order.get("order_id"),
-            "side": side,
-            "asset_mint": asset_mint,
-            "quantity": str(order_quantity),
-            "sizing_mode": sizing_mode,
-            "sizing_value": str(sizing_value),
-            "target_notional_usd": target_notional_usd,
-            "source_quote_mint": quote_mint,
-            "status": order.get("status"),
+            "signature": signature, "order_id": order.get("order_id"), "side": side,
+            "asset_mint": asset_mint, "quantity": str(order_quantity),
+            "sizing_mode": sizing_mode if side == "BUY" else "SOURCE_POSITION_REDUCTION",
+            "sizing_value": str(sizing_value) if side == "BUY" else None,
+            "target_notional_usd": str(target_notional_usd) if target_notional_usd is not None else None,
+            "source_quote_mint": quote_mint, "status": order.get("status"),
             "execution_state": "AWAITING_VERIFIED_MARKET_DATA",
         })
-
     return queued

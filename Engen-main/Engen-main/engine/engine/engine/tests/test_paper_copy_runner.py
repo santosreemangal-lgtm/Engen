@@ -15,6 +15,7 @@ QUOTE = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 class FakeSimulator:
     def __init__(self):
         self.orders = {}
+        self.balances = {"USD": Decimal("1000"), ASSET: Decimal("10")}
 
     def create_order(self, signal_id, side, asset_mint, quantity, quote_mint, *, created_at, details=None):
         if signal_id in self.orders:
@@ -36,6 +37,8 @@ class FakeSimulator:
 def candidate_result(*, confirmation="finalized", classification="BUY_CANDIDATE"):
     asset_delta = "2500000" if classification == "BUY_CANDIDATE" else "-2500000"
     quote_delta = "-10000000" if classification == "BUY_CANDIDATE" else "10000000"
+    asset_pre = "0" if classification == "BUY_CANDIDATE" else "10000000"
+    asset_post = "2500000" if classification == "BUY_CANDIDATE" else "7500000"
     return {
         "signature": "sig-test-1",
         "status": "success",
@@ -55,6 +58,8 @@ def candidate_result(*, confirmation="finalized", classification="BUY_CANDIDATE"
             {
                 "owner": WALLET, "mint": ASSET, "decimals": 6,
                 "delta_amount": asset_delta,
+                "pre_amount": asset_pre,
+                "post_amount": asset_post,
             },
             {
                 "owner": WALLET, "mint": QUOTE, "decimals": 6,
@@ -71,7 +76,8 @@ class PaperCopyRunnerTests(unittest.TestCase):
 
         self.assertEqual(len(queued), 1)
         self.assertEqual(queued[0]["side"], "BUY")
-        self.assertEqual(queued[0]["quantity"], "0.125")
+        self.assertEqual(queued[0]["quantity"], "1")
+        self.assertEqual(queued[0]["target_notional_usd"], "10")
         self.assertEqual(queued[0]["sizing_mode"], "SOURCE_PERCENT")
         self.assertEqual(queued[0]["sizing_value"], "5")
         self.assertEqual(queued[0]["source_quote_mint"], QUOTE)
@@ -90,17 +96,18 @@ class PaperCopyRunnerTests(unittest.TestCase):
         simulator = FakeSimulator()
         queued = queue_paper_orders(
             WALLET, [candidate_result()], simulator,
-            copy_settings={"sizing_mode": "SOURCE_PERCENT", "sizing_value": 20},
+            copy_settings={"sizing_mode": "SOURCE_PERCENT", "sizing_value": 20, "max_buy_usd": 1000},
         )
         self.assertEqual(len(queued), 1)
-        self.assertEqual(queued[0]["quantity"], "0.5")
+        self.assertEqual(queued[0]["quantity"], "1")
+        self.assertEqual(queued[0]["target_notional_usd"], "200")
         self.assertEqual(queued[0]["sizing_mode"], "SOURCE_PERCENT")
 
     def test_fixed_usd_size_is_recorded_for_verified_price_conversion(self):
         simulator = FakeSimulator()
         queued = queue_paper_orders(
             WALLET, [candidate_result()], simulator,
-            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "25"},
+            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "25", "max_buy_usd": 1000},
         )
         self.assertEqual(len(queued), 1)
         self.assertEqual(queued[0]["sizing_mode"], "FIXED_USD")
@@ -136,6 +143,69 @@ class PaperCopyRunnerTests(unittest.TestCase):
         )
         self.assertEqual(len(queued), 1)
         self.assertEqual(queued[0]["side"], "SELL")
+
+    def test_global_maximum_caps_fixed_and_percentage_buys(self):
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(
+            WALLET, [candidate_result()], simulator,
+            copy_settings={"sizing_mode": "SOURCE_PERCENT", "sizing_value": 20, "max_buy_usd": 10},
+        )
+        self.assertEqual(queued[0]["target_notional_usd"], "10")
+        self.assertEqual(queued[0]["sizing_mode"], "SOURCE_PERCENT")
+
+    def test_mirror_amount_uses_stable_quote_notional(self):
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(
+            WALLET, [candidate_result()], simulator,
+            copy_settings={"sizing_mode": "MIRROR_AMOUNT", "sizing_value": 10},
+        )
+        self.assertEqual(queued[0]["target_notional_usd"], "10")
+
+    def test_sell_uses_source_position_fraction_not_buy_sizing(self):
+        simulator = FakeSimulator()
+        simulator.balances[ASSET] = Decimal("10")
+        queued = queue_paper_orders(
+            WALLET, [candidate_result(classification="SELL_CANDIDATE")], simulator,
+            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": 100, "max_buy_usd": 5},
+        )
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["side"], "SELL")
+        self.assertEqual(Decimal(queued[0]["quantity"]), Decimal("1"))
+        order = next(iter(simulator.orders.values()))
+        self.assertEqual(Decimal(order["details"]["source_sell_fraction"]), Decimal("0.25"))
+        self.assertEqual(queued[0]["sizing_mode"], "SOURCE_POSITION_REDUCTION")
+        self.assertIsNone(queued[0]["target_notional_usd"])
+
+    def test_sell_execution_uses_fraction_of_current_paper_position(self):
+        simulator = PaperSimulator(initial_balances={"USD": "1000", ASSET: "10"})
+        queued = queue_paper_orders(
+            WALLET, [candidate_result(classification="SELL_CANDIDATE")], simulator,
+            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": 100, "max_buy_usd": 5},
+        )
+        self.assertEqual(len(queued), 1)
+        observed_at = datetime.now(timezone.utc).isoformat()
+
+        def provider(mint):
+            return MarketPrice(
+                mint=mint, price=Decimal("4"), currency="USD",
+                source="test-provider", observed_at=observed_at,
+                liquidity_usd=Decimal("20000"), liquidity_source="test-provider",
+                liquidity_observed_at=observed_at,
+            )
+
+        outcomes = execute_pending_paper_orders(WALLET, simulator, provider)
+        self.assertEqual(outcomes[0]["status"], "FILLED")
+        self.assertEqual(Decimal(simulator.report()["fills"][0]["quantity"]), Decimal("2.5"))
+        self.assertEqual(Decimal(simulator.report()["balances"][ASSET]), Decimal("7.5"))
+        self.assertFalse(simulator.report()["real_trading"])
+        self.assertFalse(simulator.report()["transaction_broadcast"])
+
+    def test_sell_without_known_source_pre_balance_is_skipped(self):
+        simulator = FakeSimulator()
+        result = candidate_result(classification="SELL_CANDIDATE")
+        result["token_balance_changes"][0].pop("pre_amount")
+        queued = queue_paper_orders(WALLET, [result], simulator)
+        self.assertEqual(queued, [])
 
     def test_buy_only_mode_does_not_queue_sell_orders(self):
         simulator = FakeSimulator()
@@ -202,7 +272,7 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertEqual(outcomes[0]["status"], "FILLED")
         report = simulator.report()
         self.assertEqual(report["orders"][0]["status"], "FILLED")
-        self.assertEqual(report["balances"][ASSET], "0.125")
+        self.assertEqual(report["balances"][ASSET], "2.5")
         self.assertLess(Decimal(report["balances"]["USD"]), Decimal("1000"))
         self.assertFalse(report["real_trading"])
         self.assertFalse(report["transaction_broadcast"])
@@ -212,7 +282,7 @@ class PaperCopyRunnerTests(unittest.TestCase):
         simulator.add_virtual_balance("USD", "1000")
         queued = queue_paper_orders(
             WALLET, [candidate_result()], simulator,
-            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "25"},
+            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "25", "max_buy_usd": 1000},
         )
         self.assertEqual(len(queued), 1)
         observed_at = datetime.now(timezone.utc).isoformat()
@@ -243,13 +313,27 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertEqual(outcomes[0]["status"], "WAITING_FOR_MARKET_DATA")
         self.assertEqual(simulator.report()["orders"][0]["status"], "CREATED")
 
-    def test_only_recognized_quote_tokens_are_eligible(self):
-        simulator = FakeSimulator()
+    def test_unknown_quote_mint_can_use_fixed_virtual_sizing_but_not_mirror_usd(self):
         result = candidate_result()
-        result["trade_signal"]["quote_mints"] = ["unrecognized-quote"]
-        queued = queue_paper_orders(WALLET, [result], simulator)
-        self.assertEqual(queued, [])
-        self.assertEqual(simulator.orders, {})
+        unknown_quote = "UnknownQuoteMint111111111111111111111111"
+        result["trade_signal"]["quote_mints"] = [unknown_quote]
+        result["token_balance_changes"][1]["mint"] = unknown_quote
+
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(
+            WALLET, [result], simulator,
+            copy_settings={"sizing_mode": "SOURCE_PERCENT", "sizing_value": 5, "max_buy_usd": 10},
+        )
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["target_notional_usd"], "10")
+
+        mirror_simulator = FakeSimulator()
+        mirrored = queue_paper_orders(
+            WALLET, [result], mirror_simulator,
+            copy_settings={"sizing_mode": "MIRROR_AMOUNT", "sizing_value": 10, "max_buy_usd": 10},
+        )
+        self.assertEqual(mirrored, [])
+        self.assertEqual(mirror_simulator.orders, {})
 
 
 if __name__ == "__main__":

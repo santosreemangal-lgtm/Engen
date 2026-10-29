@@ -33,7 +33,7 @@ from dashboard.monitor_service import MonitorService
 from engine.logger import redact
 from engine.pnl import MarketPrice, realized_pnl_from_fills
 from engine.market_data import fetch_market_price
-from engine.paper_copy_runner import get_paper_simulator, PAPER_SIMULATOR_LOCK as paper_simulator_lock
+from engine.paper_copy_runner import (get_paper_simulator, MIN_PAPER_LIQUIDITY_USD, PAPER_SIMULATOR_LOCK as paper_simulator_lock)
 from engine.paper_simulator import PaperSimulator
 from engine.solana_public import get_public_health, SolanaRPCError
 
@@ -1142,7 +1142,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         result = simulator.execute_order(
                             order["order_id"], market_price, now=now,
                             max_price_age_seconds=60, slippage_bps=50, fee_bps=10,
-                            min_liquidity_usd=10000, max_liquidity_age_seconds=60,
+                            min_liquidity_usd=MIN_PAPER_LIQUIDITY_USD, max_liquidity_age_seconds=60,
                             require_liquidity=True,
                         )
                         self.send_json(200, {"result": result, "report": dict(simulator.report(), database_available=True)})

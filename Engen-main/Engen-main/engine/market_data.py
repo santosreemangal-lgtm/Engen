@@ -5,6 +5,8 @@ external estimates, not guaranteed executable quotes; the simulator still
 applies liquidity, freshness, slippage, fee, and balance guards.
 """
 import json
+import threading
+import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from urllib.error import HTTPError, URLError
@@ -18,6 +20,15 @@ from engine.transaction_analysis import WRAPPED_SOL_MINT
 DEXSCREENER_TOKEN_PAIRS_URL = "https://api.dexscreener.com/token-pairs/v1/solana/"
 USER_AGENT = "SolanaCopyTradingEngine-PaperSimulation/1.0"
 MAX_RESPONSE_BYTES = 1_000_000
+PRICE_CACHE_TTL_SECONDS = 5.0
+_PRICE_CACHE = {}
+_PRICE_CACHE_LOCK = threading.RLock()
+
+
+def clear_market_price_cache():
+    """Clear successful public-price snapshots; intended for deterministic tests."""
+    with _PRICE_CACHE_LOCK:
+        _PRICE_CACHE.clear()
 
 
 def _positive_decimal(value):
@@ -42,6 +53,14 @@ def fetch_market_price(mint, timeout=8):
         return None
     if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
         raise ValueError("Market data timeout must be positive.")
+
+    now_monotonic = time.monotonic()
+    with _PRICE_CACHE_LOCK:
+        cached = _PRICE_CACHE.get(mint)
+        if cached is not None and cached[0] > now_monotonic:
+            return cached[1]
+        if cached is not None:
+            _PRICE_CACHE.pop(mint, None)
 
     request = Request(
         DEXSCREENER_TOKEN_PAIRS_URL + mint,
@@ -97,7 +116,7 @@ def fetch_market_price(mint, timeout=8):
 
     liquidity_usd, price = max(candidates, key=lambda item: item[0])
     observed_at = datetime.now(timezone.utc).isoformat()
-    return MarketPrice(
+    snapshot = MarketPrice(
         mint=mint,
         price=price,
         currency="USD",
@@ -107,3 +126,6 @@ def fetch_market_price(mint, timeout=8):
         liquidity_source="dexscreener_public_api",
         liquidity_observed_at=observed_at,
     )
+    with _PRICE_CACHE_LOCK:
+        _PRICE_CACHE[mint] = (time.monotonic() + PRICE_CACHE_TTL_SECONDS, snapshot)
+    return snapshot

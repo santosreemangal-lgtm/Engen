@@ -180,7 +180,7 @@ class MonitorServiceTests(unittest.TestCase):
 
     def test_rejects_interval_below_15_seconds(self):
         with self.assertRaises(ValueError):
-            MonitorService(lambda address: [], interval=14
+            MonitorService(lambda address: [], interval=14)
 
     def test_rejects_non_callable_scan_function(self):
         with self.assertRaises(ValueError):

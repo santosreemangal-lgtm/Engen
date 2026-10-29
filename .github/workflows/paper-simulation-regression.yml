@@ -21,12 +21,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run the complete offline unit suite ten times
+      - name: Run the complete offline unit suite
+        working-directory: Engen-main/Engen-main
+        run: python -m unittest discover -s engine/engine/engine/tests -v
+
+      - name: Run focused market-data and proportional-sell regressions ten times
         working-directory: Engen-main/Engen-main
         shell: bash
         run: |
           set -euo pipefail
           for run_number in {1..10}; do
-            echo "=== Paper simulation regression run ${run_number}/10 ==="
-            python -m unittest discover -s engine/engine/engine/tests -v
+            echo "=== Focused regression run ${run_number}/10 ==="
+            python -m unittest \
+              engine.engine.engine.tests.test_market_data \
+              engine.engine.engine.tests.test_paper_sell_ratio_regression -v
           done

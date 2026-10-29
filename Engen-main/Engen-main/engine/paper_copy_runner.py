@@ -160,19 +160,18 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                     source_quote_mint = details.get("source_quote_mint")
                     if source_quote_mint in stable_quote_mints and source_quote > 0:
                         target = source_quote
-                    elif source_quote_mint == WRAPPED_SOL_MINT and source_quote > 0:
-                        # Pump.fun/Solana swaps commonly use SOL as the quote.
-                        # Convert the source SOL amount using a fresh public SOL/USD
-                        # snapshot, then apply the normal user cap and cash limits.
+                    elif source_quote_mint and source_quote > 0:
+                        # Non-stable quote assets (most commonly SOL) must be
+                        # converted through a fresh public USD price, never guessed.
                         try:
-                            sol_price = price_provider(WRAPPED_SOL_MINT)
-                            price_value = Decimal(str(sol_price.price)) if sol_price is not None else Decimal("0")
+                            quote_price = price_provider(source_quote_mint)
+                            price_value = Decimal(str(quote_price.price)) if quote_price is not None else Decimal("0")
                             if (
-                                sol_price is not None
-                                and sol_price.mint == WRAPPED_SOL_MINT
-                                and str(sol_price.currency).upper() == "USD"
+                                quote_price is not None
+                                and quote_price.mint == source_quote_mint
+                                and str(quote_price.currency).upper() == "USD"
                                 and price_value.is_finite() and price_value > 0
-                                and sol_price.is_fresh(max_age_seconds=60, now=now)
+                                and quote_price.is_fresh(max_age_seconds=60, now=now)
                             ):
                                 target = source_quote * price_value
                         except Exception:
@@ -180,7 +179,10 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
             if target is None or not target.is_finite() or target <= 0:
                 waiting_for_price = (
                     details.get("sizing_mode") == "MIRROR_AMOUNT"
-                    and details.get("source_quote_mint") == WRAPPED_SOL_MINT
+                    and details.get("source_quote_mint") not in {
+                        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                    }
                 )
                 if waiting_for_price:
                     details["execution_state"] = "AWAITING_VERIFIED_MARKET_DATA"
@@ -413,10 +415,10 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
                 }
                 if quote_mint in stable_quote_mints:
                     target_notional_usd = abs(quote_amount)
-                elif quote_mint == WRAPPED_SOL_MINT:
-                    target_notional_usd = None
                 else:
-                    continue
+                    # Queue the verified signal even for a non-stable quote.
+                    # USD sizing is deferred until a fresh quote/USD price exists.
+                    target_notional_usd = None
             if target_notional_usd is not None:
                 if max_buy_usd is not None:
                     target_notional_usd = min(target_notional_usd, max_buy_usd)

@@ -240,11 +240,11 @@ class PaperSimulator:
         if order["status"] != "CREATED":
             return {"status": "REJECTED", "reason": "Order is not awaiting execution."}
         if not isinstance(rpc_ok, bool) or not rpc_ok:
-            return self._reject(order, "RPC/provider data unavailable; no fill created.")
+            return self._wait(order, "RPC/provider data unavailable; retrying without a fill.")
         if not isinstance(market_price, MarketPrice) or market_price.mint != order["asset_mint"]:
-            return self._reject(order, "Market price unavailable or for a different token.")
+            return self._wait(order, "Market price unavailable or for a different token; retrying.")
         if not market_price.is_fresh(max_age_seconds=max_price_age_seconds, now=now):
-            return self._reject(order, "Market price is stale; no fill created.")
+            return self._wait(order, "Market price is stale; retrying without a fill.")
         if not isinstance(require_liquidity, bool):
             raise ValueError("require_liquidity must be boolean.")
         minimum_liquidity = decimal_value(
@@ -256,13 +256,13 @@ class PaperSimulator:
             raise ValueError("max_liquidity_age_seconds must be a non-negative integer.")
         if market_price.liquidity_usd is None:
             if require_liquidity:
-                return self._reject(order, "Liquidity data unavailable; no fill created.")
+                return self._wait(order, "Liquidity data unavailable; retrying without a fill.")
         else:
             liquidity_age = market_price.liquidity_age_seconds(now)
             if liquidity_age > max_liquidity_age_seconds:
-                return self._reject(order, "Liquidity data is stale; no fill created.")
+                return self._wait(order, "Liquidity data is stale; retrying without a fill.")
             if market_price.liquidity_usd < minimum_liquidity:
-                return self._reject(order, "Liquidity is below the configured USD minimum; no fill created.")
+                return self._wait(order, "Liquidity is below the configured USD minimum; retrying without a fill.")
         for name, value in (("slippage_bps",slippage_bps),("fee_bps",fee_bps)):
             if not isinstance(value,int) or isinstance(value,bool) or not 0 <= value <= 10000:
                 raise ValueError(f"{name} must be an integer from 0 to 10000.")
@@ -318,6 +318,15 @@ class PaperSimulator:
         self._rebuild_pnl_ledger()
         return {"status":"FILLED","simulated":True,"real_trading":False,
                 "transaction_broadcast":False,"order":dict(updated),"fill":dict(fill)}
+
+    def _wait(self, order, reason):
+        """Keep transient provider/data failures retryable; never fabricate a fill."""
+        updated = dict(order, status="CREATED", reason=reason,
+                       details={**order["details"], "execution_state":"WAITING_FOR_MARKET_DATA"})
+        self._persist(updated)
+        self.orders[order["order_id"]] = updated
+        return {"status":"WAITING_FOR_MARKET_DATA","reason":reason,
+                "simulated":True,"real_trading":False,"transaction_broadcast":False}
 
     def _reject(self, order, reason):
         updated = dict(order, status="REJECTED", reason=reason,

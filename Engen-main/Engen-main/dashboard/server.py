@@ -29,6 +29,7 @@ from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
 from engine.logger import redact
 from engine.pnl import MarketPrice, realized_pnl_from_fills
+from engine.market_data import fetch_market_price
 from engine.paper_copy_runner import get_paper_simulator, PAPER_SIMULATOR_LOCK as paper_simulator_lock
 from engine.paper_simulator import PaperSimulator
 from engine.solana_public import get_public_health, SolanaRPCError
@@ -417,14 +418,49 @@ def load_profile_paper_simulation_report(profile_id):
                 sum((Decimal(item["pnl"]) for item in realized.values()), Decimal("0")), "f")
         else:
             base["realized_pnl_usd"] = None
-        has_unpriced_holdings = any(
-            mint != "USD" and Decimal(str(amount)) != 0
-            for mint, amount in base["balances"].items()
-        )
-        base["portfolio_value_usd"] = (
-            None if has_unpriced_holdings else base["available_balance"]
-        )
-        base["unrealized_pnl_usd"] = None if has_unpriced_holdings else "0"
+        # Value non-cash holdings only from verified, fresh public market snapshots.
+        # Portfolio value may be known even when cost basis is unknown; in that
+        # case unrealized P&L stays unavailable rather than being guessed.
+        token_values = []
+        unrealized_values = []
+        valuation_notes = []
+        with paper_simulator_lock:
+            simulator = get_profile_paper_simulator(profile_id)
+            ledger = simulator.pnl_ledger
+            for mint, amount in base["balances"].items():
+                quantity = Decimal(str(amount))
+                if mint == "USD" or quantity == 0:
+                    continue
+                market_price = fetch_market_price(mint)
+                if market_price is None or not market_price.is_fresh(max_age_seconds=60):
+                    token_values.append(None)
+                    unrealized_values.append(None)
+                    valuation_notes.append("price_unavailable_or_stale:" + mint)
+                    continue
+                token_values.append(quantity * market_price.price)
+                ledger_position = ledger.snapshot(mint)
+                if Decimal(ledger_position["quantity"]) != quantity:
+                    unrealized_values.append(None)
+                    valuation_notes.append("cost_basis_does_not_match_balance:" + mint)
+                    continue
+                pnl = ledger.unrealized_pnl(mint, market_price, max_age_seconds=60)
+                unrealized_values.append(
+                    Decimal(pnl["pnl"]) if pnl.get("status") == "calculated" else None
+                )
+                if pnl.get("status") != "calculated":
+                    valuation_notes.append(str(pnl.get("status")) + ":" + mint)
+        cash_value = Decimal(str(base["available_balance"] or "0"))
+        if all(value is not None for value in token_values):
+            base["portfolio_value_usd"] = format(cash_value + sum(token_values, Decimal("0")), "f")
+        else:
+            base["portfolio_value_usd"] = None
+        if all(value is not None for value in unrealized_values):
+            base["unrealized_pnl_usd"] = format(sum(unrealized_values, Decimal("0")), "f")
+            base["pnl"]["unrealized_status"] = "calculated"
+        else:
+            base["unrealized_pnl_usd"] = None
+            base["pnl"]["unrealized_status"] = "unavailable_unknown_basis_or_verified_fresh_price"
+        base["pnl"]["valuation_notes"] = valuation_notes
         base["database_available"] = True
         base["real_trading"] = False
         base["transaction_broadcast"] = False

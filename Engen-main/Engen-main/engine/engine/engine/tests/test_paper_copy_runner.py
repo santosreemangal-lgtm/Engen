@@ -303,6 +303,40 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertFalse(report["real_trading"])
         self.assertFalse(report["transaction_broadcast"])
 
+    def test_buy_waits_for_virtual_balance_then_fills_without_losing_signal(self):
+        simulator = PaperSimulator()
+        queued = queue_paper_orders(WALLET, [candidate_result()], simulator)
+
+        self.assertEqual(len(queued), 1)
+        self.assertIsNone(queued[0]["target_notional_usd"])
+        self.assertEqual(queued[0]["execution_state"], "AWAITING_VIRTUAL_BALANCE")
+
+        waiting = execute_pending_paper_orders(
+            WALLET, simulator, price_provider=lambda mint: None
+        )
+        self.assertEqual(waiting[0]["status"], "WAITING_FOR_VIRTUAL_BALANCE")
+        self.assertEqual(simulator.report()["orders"][0]["status"], "CREATED")
+
+        simulator.add_virtual_balance("USD", "1000")
+        observed_at = datetime.now(timezone.utc).isoformat()
+
+        def provider(mint):
+            return MarketPrice(
+                mint=mint, price=Decimal("4"), currency="USD",
+                source="test-provider", observed_at=observed_at,
+                liquidity_usd=Decimal("20000"), liquidity_source="test-provider",
+                liquidity_observed_at=observed_at,
+            )
+
+        outcomes = execute_pending_paper_orders(WALLET, simulator, provider)
+        self.assertEqual(outcomes[0]["status"], "FILLED")
+        report = simulator.report()
+        self.assertEqual(report["orders"][0]["status"], "FILLED")
+        self.assertLess(Decimal(report["balances"]["USD"]), Decimal("1000"))
+        self.assertGreater(Decimal(report["balances"][ASSET]), Decimal("0"))
+        self.assertFalse(report["real_trading"])
+        self.assertFalse(report["transaction_broadcast"])
+
     def test_missing_market_data_leaves_copy_order_queued(self):
         simulator = PaperSimulator()
         simulator.add_virtual_balance("USD", "1000")

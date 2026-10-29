@@ -170,7 +170,7 @@ class PaperCopyRunnerTests(unittest.TestCase):
         )
         self.assertEqual(len(queued), 1)
         self.assertEqual(queued[0]["side"], "SELL")
-        self.assertEqual(queued[0]["quantity"], "2.5")
+        self.assertEqual(Decimal(queued[0]["quantity"]), Decimal("2.5"))
         self.assertEqual(queued[0]["sizing_mode"], "SOURCE_POSITION_REDUCTION")
         self.assertIsNone(queued[0]["target_notional_usd"])
 

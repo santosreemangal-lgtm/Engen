@@ -529,6 +529,30 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertEqual(outcomes[0]["status"], "FILLED")
         self.assertEqual(simulator.report()["orders"][0]["status"], "FILLED")
 
+    def test_buy_sized_to_entire_virtual_balance_reserves_fee_and_slippage(self):
+        simulator = PaperSimulator()
+        simulator.add_virtual_balance("USD", "10")
+        queued = queue_paper_orders(
+            WALLET, [candidate_result()], simulator,
+            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "10", "max_buy_usd": 10},
+        )
+        self.assertEqual(len(queued), 1)
+        observed_at = datetime.now(timezone.utc).isoformat()
+
+        def provider(mint):
+            return MarketPrice(
+                mint=mint, price=Decimal("4"), currency="USD",
+                source="test-provider", observed_at=observed_at,
+                liquidity_usd=Decimal("5000"), liquidity_source="test-provider",
+                liquidity_observed_at=observed_at,
+            )
+
+        outcomes = execute_pending_paper_orders(WALLET, simulator, provider)
+        self.assertEqual(outcomes[0]["status"], "FILLED")
+        report = simulator.report()
+        self.assertEqual(report["orders"][0]["status"], "FILLED")
+        self.assertGreaterEqual(Decimal(report["balances"]["USD"]), Decimal("0"))
+
     def test_large_paper_order_requires_liquidity_relative_to_order_size(self):
         simulator = PaperSimulator()
         simulator.add_virtual_balance("USD", "5000")

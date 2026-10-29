@@ -349,7 +349,8 @@ async function loadMonitor(){
   if(historyFailed){say("monitor-message","Read-only scanning is active, but transaction-history storage failed for at least one observation. The history may be incomplete.");}
   else if(queueFailed){say("monitor-message","Read-only scanning is active, but a paper-order queue step failed. No real transaction was sent; check the paper-trade history and server logs.");}
   else if(failed){say("monitor-message","Monitoring is enabled, but a source-wallet scan failed. "+(failed.last_error||"Check the configured RPC connection."));}
-  else if(connected.length){const newest=connected.map(x=>x.last_successful_check).filter(Boolean).sort().at(-1);say("monitor-message","Read-only scan completed for "+connected.length+" wallet(s). Last successful check: "+(newest?new Date(newest).toLocaleString():"time unavailable")+". Paper-order outcomes are shown in Paper Trade History.");}
+  else if(currentMonitor&&connected.length&&!observed.some(x=>(x.latest_results||[]).some(tx=>["BUY_CANDIDATE","SELL_CANDIDATE"].includes(tx.trade_signal&&tx.trade_signal.classification)))){const newest=connected.map(x=>x.last_successful_check).filter(Boolean).sort().at(-1);say("monitor-message","Monitoring is running, but the latest scan has no new confirmed BUY/SELL candidate to copy. The first scan is a baseline only; it does not replay old transactions. Last successful check: "+(newest?new Date(newest).toLocaleString():"time unavailable")+".");}
+  else if(connected.length){const newest=connected.map(x=>x.last_successful_check).filter(Boolean).sort().at(-1);say("monitor-message","Read-only scan completed for "+connected.length+" wallet(s). Eligible signals and paper-order outcomes are shown in History. Last successful check: "+(newest?new Date(newest).toLocaleString():"time unavailable")+".");}
   else if(currentMonitor){say("monitor-message","Monitoring is enabled. Waiting for the first read-only RPC scan to finish.");}
   else if(!eligible){say("monitor-message",String(p.status||"").toLowerCase()!=="active"?"Activate this paper profile before starting monitoring.":"Add at least one public source wallet to this profile first.");}
   else{say("monitor-message","Ready. Start Monitoring will check the selected public source wallets only.");}
@@ -500,7 +501,8 @@ function updateHistoryTokenCell(container){
  const name=meta&&typeof meta.name==="string"?meta.name.trim():"";
  const symbol=meta&&typeof meta.symbol==="string"?meta.symbol.trim():"";
  // Never display a mint address here, even when public token metadata is missing.
- const display=name||symbol||"Token name unavailable";
+ const unavailable=meta&&["unavailable","service_error"].includes(meta.status);
+ const display=name||symbol||(unavailable?"Token metadata service unavailable":"Token name unavailable");
  primary.textContent=display;
  primary.title=display;
 }
@@ -543,7 +545,10 @@ async function copyHistoryTokenMint(mint,button){
 }
 async function loadHistoryTokenMetadata(mints){
  const needed=[...new Set((mints||[]).filter(m=>typeof m==="string"&&m.length>0))]
-  .filter(m=>!historyTokenMetadataCache.has(m)&&!historyTokenMetadataPending.has(m));
+  .filter(m=>{
+   const cached=historyTokenMetadataCache.get(m);
+   return (!cached||["unavailable","service_error"].includes(cached.status))&&!historyTokenMetadataPending.has(m);
+  });
  if(!needed.length)return historyTokenMetadataQueue;
  needed.forEach(m=>historyTokenMetadataPending.add(m));
  const task=async()=>{
@@ -553,13 +558,18 @@ async function loadHistoryTokenMetadata(mints){
     const response=await api("/api/token-metadata?mints="+encodeURIComponent(batch.join(",")));
     for(const mint of batch){
      const meta=response.tokens&&response.tokens[mint];
-     if(meta&&(meta.found===true||meta.status==="not_found")){
+     if(meta&&(meta.found===true||["not_found","unavailable"].includes(meta.status))){
       historyTokenMetadataCache.set(mint,meta);
+     }else{
+      historyTokenMetadataCache.set(mint,{mint,name:null,symbol:null,found:false,status:"service_error"});
      }
     }
    }
   }catch(error){
-   // Keep the short mint label and retry the public lookup on a later refresh.
+   // Distinguish a failed/missing backend route from a token with no public name.
+   for(const mint of needed){
+    historyTokenMetadataCache.set(mint,{mint,name:null,symbol:null,found:false,status:"service_error"});
+   }
   }finally{
    needed.forEach(m=>historyTokenMetadataPending.delete(m));
    refreshHistoryTokenCells();
@@ -653,7 +663,7 @@ async function loadPaperTradeHistory(reportOverride){
   $("paper-trade-total").textContent=orders.length.toLocaleString();
   $("paper-fill-total").textContent=fills.length.toLocaleString()+" completed fill"+(fills.length===1?"":"s");
   tbody.replaceChildren();
-  if(!orders.length)historySetEmpty(tbody,7,"No Paper Orders have been queued for this profile yet. New eligible wallet signals should appear here as queued orders, even while they wait for balance or verified market data.");
+  if(!orders.length)historySetEmpty(tbody,7,"No Paper Orders have been queued yet. The first scan only establishes a baseline; older transactions are not replayed. A new confirmed BUY/SELL swap must be detected while monitoring is active.");
   orders.forEach(order=>{
    const row=document.createElement("tr"),details=order.details&&typeof order.details==="object"?order.details:{};
    const fill=fills.find(x=>x.order_id===order.order_id);
@@ -679,7 +689,9 @@ async function loadPaperTradeHistory(reportOverride){
    let state=String(order.status||"UNKNOWN").toUpperCase();
    if(fill)state="FILLED";
    else if(details.execution_state==="AWAITING_VIRTUAL_BALANCE")state="WAITING BALANCE";
-   else if(details.execution_state==="AWAITING_VERIFIED_MARKET_DATA")state="WAITING PRICE";
+   else if(details.execution_state==="AWAITING_VERIFIED_MARKET_DATA"||details.execution_state==="WAITING_FOR_MARKET_DATA")state="WAITING PRICE";
+   else if(details.execution_state==="WAITING_FOR_POSITION")state="WAITING POSITION";
+   else if(details.execution_state==="EXECUTION_ERROR")state="EXECUTION ERROR";
    const kind=state==="FILLED"?"filled":state.includes("WAITING")||state==="CREATED"?"waiting":state==="REJECTED"?"rejected":"";
    const pill=historyPill(state,kind);if(order.reason)pill.title=order.reason;stateCell.append(pill);
    if(order.reason){const reason=document.createElement("small");reason.className="history-sub";reason.textContent=order.reason;stateCell.append(reason);}

@@ -70,6 +70,21 @@ def candidate_result(*, confirmation="finalized", classification="BUY_CANDIDATE"
 
 
 class PaperCopyRunnerTests(unittest.TestCase):
+    def test_aggregates_multiple_token_accounts_for_same_asset_and_quote(self):
+        result = candidate_result()
+        asset, quote = result["token_balance_changes"]
+        result["token_balance_changes"] = [
+            {**asset, "delta_amount": "1000000", "pre_amount": "0", "post_amount": "1000000"},
+            {**asset, "delta_amount": "1500000", "pre_amount": "0", "post_amount": "1500000"},
+            {**quote, "delta_amount": "-4000000"},
+            {**quote, "delta_amount": "-6000000"},
+        ]
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(WALLET, [result], simulator)
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["side"], "BUY")
+        self.assertEqual(queued[0]["target_notional_usd"], "10")
+
     def test_confirmed_candidate_creates_deduplicated_paper_order(self):
         simulator = FakeSimulator()
         queued = queue_paper_orders(WALLET, [candidate_result()], simulator)

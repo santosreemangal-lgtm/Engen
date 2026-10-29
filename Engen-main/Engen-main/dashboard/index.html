@@ -319,8 +319,10 @@ function renderWallets(){
    const state=String(monitor.state||"waiting").toLowerCase();
    const checked=monitor.last_successful_check?new Date(monitor.last_successful_check):null;
    const checkedLabel=checked&&!Number.isNaN(checked.getTime())?" · last check "+checked.toLocaleTimeString():"";
+   const scanMs=Number(monitor.last_scan_duration_ms);
+   const durationLabel=Number.isFinite(scanMs)&&scanMs>=0?" · scan cycle "+scanMs.toFixed(1)+" ms":"";
    const resultCount=Array.isArray(monitor.latest_results)?monitor.latest_results.length:0;
-   monitorStatus.textContent=state.replaceAll("_"," ")+checkedLabel+(resultCount?" · "+resultCount+" recent result(s)":"");
+   monitorStatus.textContent=state.replaceAll("_"," ")+checkedLabel+durationLabel+(resultCount?" · "+resultCount+" recent result(s)":"");
    monitorStatus.dataset.state=state;
   }
   const assign=document.createElement("button");assign.className="secondary";assign.textContent=isAssigned?"Assigned":"Assign to profile";assign.disabled=!selectedProfile||isAssigned;

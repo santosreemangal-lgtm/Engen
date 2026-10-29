@@ -63,6 +63,72 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
             or (wallet_address is not None and details.get("source_wallet") != wallet_address)
         ):
             continue
+        if order.get("side") == "BUY":
+            # Keep orders queued when the user has not funded the virtual ledger
+            # yet. Do not reject or silently discard a detected paper-copy signal.
+            balances = getattr(simulator, "balances", {})
+            raw_cash = balances.get(order.get("quote_mint", "USD"), "0") if isinstance(balances, dict) else "0"
+            try:
+                virtual_cash = Decimal(str(raw_cash))
+            except Exception:
+                virtual_cash = Decimal("0")
+            if not virtual_cash.is_finite() or virtual_cash <= 0:
+                outcomes.append({
+                    "order_id": order.get("order_id"),
+                    "signal_id": order.get("signal_id"),
+                    "status": "WAITING_FOR_VIRTUAL_BALANCE",
+                    "reason": "Set a positive virtual USD balance before this paper BUY can execute.",
+                })
+                continue
+
+            target_raw = details.get("target_notional_usd")
+            try:
+                target = Decimal(str(target_raw)) if target_raw is not None else None
+                sizing_value = Decimal(str(details.get("sizing_value", "0")))
+                max_buy = Decimal(str(details.get("max_buy_usd"))) if details.get("max_buy_usd") not in (None, "") else None
+            except Exception:
+                target, sizing_value, max_buy = None, Decimal("0"), None
+            if target is None:
+                sizing_mode = details.get("sizing_mode", "SOURCE_PERCENT")
+                if sizing_mode == "SOURCE_PERCENT" and sizing_value > 0:
+                    target = virtual_cash * sizing_value / Decimal("100")
+                elif sizing_mode == "FIXED_USD" and sizing_value > 0:
+                    target = sizing_value
+                elif sizing_mode == "MIRROR_AMOUNT":
+                    stable_quote_mints = {
+                        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                        "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+                    }
+                    try:
+                        source_quote = Decimal(str(details.get("source_quote_amount", "0")))
+                    except Exception:
+                        source_quote = Decimal("0")
+                    if details.get("source_quote_mint") in stable_quote_mints and source_quote > 0:
+                        target = source_quote
+            if target is None or not target.is_finite() or target <= 0:
+                outcomes.append({
+                    "order_id": order.get("order_id"),
+                    "signal_id": order.get("signal_id"),
+                    "status": "WAITING_FOR_VIRTUAL_BALANCE",
+                    "reason": "Paper BUY sizing is unavailable; check the saved copy settings and virtual balance.",
+                })
+                continue
+            if max_buy is not None and max_buy.is_finite() and max_buy > 0:
+                target = min(target, max_buy)
+            target = min(target, virtual_cash)
+            if target <= 0:
+                outcomes.append({
+                    "order_id": order.get("order_id"),
+                    "signal_id": order.get("signal_id"),
+                    "status": "WAITING_FOR_VIRTUAL_BALANCE",
+                    "reason": "The virtual USD balance is too small for this paper BUY.",
+                })
+                continue
+            details["target_notional_usd"] = str(target)
+            details["execution_state"] = "AWAITING_VERIFIED_MARKET_DATA"
+            order["details"] = details
+            simulator._persist(order)
+
         if order.get("side") == "SELL":
             fraction_raw = details.get("source_sell_fraction")
             try:
@@ -228,36 +294,38 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
         if side == "BUY":
             balances = getattr(simulator, "balances", {})
             virtual_usd = balances.get("USD") if isinstance(balances, dict) else None
-            if virtual_usd is None:
-                # A real PaperSimulator must have an explicit virtual USD balance.
-                # Lightweight test doubles without balances may still validate queue logic.
-                if hasattr(simulator, "balances"):
-                    continue
-            else:
-                virtual_usd = Decimal(str(virtual_usd))
-                if virtual_usd <= 0:
-                    continue
+            if virtual_usd is not None:
+                try:
+                    virtual_usd = Decimal(str(virtual_usd))
+                except Exception:
+                    virtual_usd = None
+                if virtual_usd is not None and (not virtual_usd.is_finite() or virtual_usd <= 0):
+                    virtual_usd = None
             if sizing_mode == "SOURCE_PERCENT":
-                if virtual_usd is None:
-                    continue
-                target_notional_usd = virtual_usd * sizing_value / Decimal("100")
+                # If no virtual cash has been set yet, queue the signal and
+                # resolve its USD size after the user funds the paper ledger.
+                target_notional_usd = (
+                    virtual_usd * sizing_value / Decimal("100")
+                    if virtual_usd is not None else None
+                )
             elif sizing_mode == "FIXED_USD":
                 target_notional_usd = sizing_value
             else:
                 # Only USDC/USDT notionals are safely interpretable as USD here.
                 stable_quote_mints = {
-                    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGkGZwyTDt1v",
                     "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
                 }
                 if quote_mint not in stable_quote_mints:
                     continue
                 target_notional_usd = abs(quote_amount)
-            if max_buy_usd is not None:
-                target_notional_usd = min(target_notional_usd, max_buy_usd)
-            if virtual_usd is not None:
-                target_notional_usd = min(target_notional_usd, virtual_usd)
-            if target_notional_usd <= 0:
-                continue
+            if target_notional_usd is not None:
+                if max_buy_usd is not None:
+                    target_notional_usd = min(target_notional_usd, max_buy_usd)
+                if virtual_usd is not None:
+                    target_notional_usd = min(target_notional_usd, virtual_usd)
+                if target_notional_usd <= 0:
+                    continue
             order_quantity = Decimal("1")  # simulator converts the USD target using a fresh price
         else:
             # Sell in proportion to the source wallet's observed position reduction,
@@ -300,7 +368,11 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
                 "source_slot": observation.get("slot"),
                 "source_block_time": observation.get("block_time"),
                 "source_classification": signal["classification"],
-                "execution_state": "AWAITING_VERIFIED_MARKET_DATA",
+                "execution_state": (
+                    "AWAITING_VIRTUAL_BALANCE"
+                    if side == "BUY" and target_notional_usd is None
+                    else "AWAITING_VERIFIED_MARKET_DATA"
+                ),
                 "real_trading": False,
                 "transaction_broadcast": False,
             },

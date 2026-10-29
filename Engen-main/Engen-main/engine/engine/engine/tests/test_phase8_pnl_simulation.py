@@ -147,15 +147,17 @@ class PaperSimulatorTests(unittest.TestCase):
         order = self.create(simulator)
         result = simulator.execute_order(order["order_id"],
                     price("10", "2026-10-26T11:00:00Z"), now=NOW, max_price_age_seconds=60)
-        self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["status"], "WAITING_FOR_MARKET_DATA")
         self.assertIn("stale", result["reason"])
+        self.assertEqual(order["status"], "CREATED")
         self.assertEqual(simulator.fills, [])
 
     def test_rpc_failure_rejects_without_fill(self):
         simulator = self.make_simulator()
         order = self.create(simulator)
         result = simulator.execute_order(order["order_id"], price(), now=NOW, rpc_ok=False)
-        self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["status"], "WAITING_FOR_MARKET_DATA")
+        self.assertEqual(order["status"], "CREATED")
         self.assertEqual(simulator.fills, [])
 
     def test_missing_price_rejects_without_fabricated_fill(self):
@@ -180,8 +182,9 @@ class PaperSimulatorTests(unittest.TestCase):
         result = simulator.execute_order(
             order["order_id"], price(liquidity_usd=None), now=NOW
         )
-        self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["status"], "WAITING_FOR_MARKET_DATA")
         self.assertIn("Liquidity data unavailable", result["reason"])
+        self.assertEqual(order["status"], "CREATED")
         self.assertEqual(simulator.fills, [])
 
     def test_stale_liquidity_is_rejected(self):
@@ -191,8 +194,9 @@ class PaperSimulatorTests(unittest.TestCase):
             order["order_id"], price(liquidity_timestamp="2026-10-26T11:00:00Z"),
             now=NOW,
         )
-        self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["status"], "WAITING_FOR_MARKET_DATA")
         self.assertIn("Liquidity data is stale", result["reason"])
+        self.assertEqual(order["status"], "CREATED")
         self.assertEqual(simulator.fills, [])
 
     def test_low_liquidity_is_rejected(self):
@@ -202,9 +206,23 @@ class PaperSimulatorTests(unittest.TestCase):
             order["order_id"], price(liquidity_usd="9999.99"), now=NOW,
             min_liquidity_usd="10000",
         )
-        self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["status"], "WAITING_FOR_MARKET_DATA")
         self.assertIn("below the configured USD minimum", result["reason"])
+        self.assertEqual(order["status"], "CREATED")
         self.assertEqual(simulator.fills, [])
+
+    def test_transient_market_data_failure_can_retry_and_fill(self):
+        simulator = self.make_simulator()
+        order = self.create(simulator)
+        waiting = simulator.execute_order(
+            order["order_id"], price("10", "2026-10-26T11:00:00Z"),
+            now=NOW, max_price_age_seconds=60,
+        )
+        self.assertEqual(waiting["status"], "WAITING_FOR_MARKET_DATA")
+        self.assertEqual(simulator.orders[order["order_id"]]["status"], "CREATED")
+        filled = simulator.execute_order(order["order_id"], price("10"), now=NOW)
+        self.assertEqual(filled["status"], "FILLED")
+        self.assertEqual(len(simulator.fills), 1)
 
     def test_sufficient_fresh_liquidity_allows_paper_fill(self):
         simulator = self.make_simulator()

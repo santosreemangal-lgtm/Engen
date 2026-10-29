@@ -32,7 +32,7 @@ jobs:
         run: python tools/verify_profile_store_recovery.py
 
       - name: Read-only RPC benchmark for approved wallet
-        if: github.event_name == 'pull_request' && github.event.pull_request.number == 1
+        if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
         env:
           SOLANA_WALLET: ardinRsN1mNYVeoJWTBsWeYeXvuR9UUDGMsCDKpb6AT
           SOLANA_RPC_URL: https://api.mainnet-beta.solana.com
@@ -133,7 +133,7 @@ jobs:
           PY
 
       - name: Upload RPC benchmark report
-        if: always() && github.event_name == 'pull_request' && github.event.pull_request.number == 1
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
         uses: actions/upload-artifact@v7
         with:
           name: solana-rpc-benchmark-report

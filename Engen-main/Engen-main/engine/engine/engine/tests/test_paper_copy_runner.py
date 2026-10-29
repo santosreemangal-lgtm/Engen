@@ -574,7 +574,7 @@ class PaperCopyRunnerTests(unittest.TestCase):
         outcomes = execute_pending_paper_orders(WALLET, simulator, provider)
         self.assertEqual(outcomes[0]["status"], "WAITING_FOR_MARKET_DATA")
         order = simulator.report()["orders"][0]
-        self.assertIn("below the required", order["reason"])
+        self.assertIn("below the configured USD minimum", order["reason"])
         self.assertEqual(order["status"], "CREATED")
 
     def test_unknown_quote_mint_queues_mirror_order_awaiting_verified_usd_price(self):

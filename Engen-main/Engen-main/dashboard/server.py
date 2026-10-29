@@ -10,6 +10,9 @@ import uuid
 import sys
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -55,6 +58,130 @@ API_RATE_WINDOW_SECONDS = 60
 _API_RATE_LOCK = threading.Lock()
 _API_REQUEST_TIMES = {}
 DASHBOARD_AUTH_TOKEN = os.environ.get("DASHBOARD_AUTH_TOKEN", "")
+
+TOKEN_METADATA_URL = "https://api.dexscreener.com/token-pairs/v1/solana/"
+TOKEN_METADATA_TIMEOUT_SECONDS = 3.0
+MAX_TOKEN_METADATA_BATCH = 50
+_TOKEN_METADATA_CACHE_TTL_SECONDS = 6 * 60 * 60
+_TOKEN_METADATA_EMPTY_TTL_SECONDS = 180
+_TOKEN_METADATA_ERROR_TTL_SECONDS = 30
+_TOKEN_METADATA_CACHE = {}
+_TOKEN_METADATA_LOCK = threading.RLock()
+
+
+def _fetch_public_token_metadata(mint):
+    """Fetch verified public name/symbol metadata for one Solana mint."""
+    validate_public_address(mint, "token mint")
+    request = Request(
+        TOKEN_METADATA_URL + mint,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "SolanaCopyTradingEngine-Dashboard/1.0",
+        },
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=TOKEN_METADATA_TIMEOUT_SECONDS) as response:
+            raw = response.read(1_000_001)
+            if len(raw) > 1_000_000:
+                return {
+                    "mint": mint, "name": None, "symbol": None,
+                    "found": False, "status": "unavailable",
+                }
+            payload = json.loads(raw.decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return {
+            "mint": mint, "name": None, "symbol": None,
+            "found": False, "status": "unavailable",
+        }
+
+    if not isinstance(payload, list):
+        return {
+            "mint": mint, "name": None, "symbol": None,
+            "found": False, "status": "unavailable",
+        }
+
+    candidates = []
+    for pair in payload:
+        if not isinstance(pair, dict) or pair.get("chainId") != "solana":
+            continue
+        base = pair.get("baseToken")
+        quote = pair.get("quoteToken")
+        token = None
+        if isinstance(base, dict) and base.get("address") == mint:
+            token = base
+        elif isinstance(quote, dict) and quote.get("address") == mint:
+            token = quote
+        if not isinstance(token, dict):
+            continue
+
+        liquidity = pair.get("liquidity")
+        liquidity_usd = 0.0
+        if isinstance(liquidity, dict):
+            try:
+                value = float(liquidity.get("usd") or 0)
+                if value >= 0 and value < float("inf"):
+                    liquidity_usd = value
+            except (TypeError, ValueError, OverflowError):
+                pass
+
+        name = token.get("name")
+        symbol = token.get("symbol")
+        name = name.strip()[:80] if isinstance(name, str) and name.strip() else None
+        symbol = symbol.strip()[:32] if isinstance(symbol, str) and symbol.strip() else None
+        if name or symbol:
+            candidates.append((liquidity_usd, name, symbol))
+
+    if not candidates:
+        return {
+            "mint": mint, "name": None, "symbol": None,
+            "found": False, "status": "not_found",
+        }
+    _, name, symbol = max(candidates, key=lambda item: item[0])
+    return {
+        "mint": mint, "name": name, "symbol": symbol,
+        "found": True, "status": "ok",
+    }
+
+
+def _cached_public_token_metadata(mint):
+    """Cache public token metadata to avoid repeating external lookups on refresh."""
+    now = time.monotonic()
+    with _TOKEN_METADATA_LOCK:
+        cached = _TOKEN_METADATA_CACHE.get(mint)
+        if cached and cached[0] > now:
+            return dict(cached[1])
+
+    metadata = _fetch_public_token_metadata(mint)
+    if metadata.get("found"):
+        ttl = _TOKEN_METADATA_CACHE_TTL_SECONDS
+    elif metadata.get("status") == "not_found":
+        ttl = _TOKEN_METADATA_EMPTY_TTL_SECONDS
+    else:
+        ttl = _TOKEN_METADATA_ERROR_TTL_SECONDS
+    with _TOKEN_METADATA_LOCK:
+        _TOKEN_METADATA_CACHE[mint] = (time.monotonic() + ttl, dict(metadata))
+    return metadata
+
+
+def load_public_token_metadata(mints):
+    """Return bounded, cached token names for the selected history page."""
+    if not isinstance(mints, list):
+        raise ValueError("A list of token mint addresses is required.")
+    unique_mints = list(dict.fromkeys(mint.strip() for mint in mints if isinstance(mint, str) and mint.strip()))
+    if not unique_mints:
+        return {"tokens": {}, "source": "public DEX Screener token metadata"}
+    if len(unique_mints) > MAX_TOKEN_METADATA_BATCH:
+        raise ValueError("Request no more than %s unique token mints at once." % MAX_TOKEN_METADATA_BATCH)
+    for mint in unique_mints:
+        validate_public_address(mint, "token mint")
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        metadata = list(pool.map(_cached_public_token_metadata, unique_mints))
+    return {
+        "tokens": {item["mint"]: item for item in metadata},
+        "source": "public DEX Screener token metadata",
+    }
 
 
 def validate_server_config(host, auth_token, trust_proxy=False):
@@ -897,6 +1024,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if path == "/api/profiles":
             report = load_profiles_report()
             self.send_json(200, report)
+            return
+
+        if path == "/api/token-metadata":
+            query = parse_qs(urlparse(self.path).query)
+            raw_mints = (query.get("mints") or [""])[0]
+            mints = [mint.strip() for mint in raw_mints.split(",") if mint.strip()]
+            try:
+                report = load_public_token_metadata(mints)
+                self.send_json(200, report)
+            except ValueError as exc:
+                self.send_json(400, {"error": str(exc)})
             return
 
         if path == "/api/profile-transactions":

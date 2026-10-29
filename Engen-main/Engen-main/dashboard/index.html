@@ -73,7 +73,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 #wallet-list .wallet{align-items:flex-start;border:1px solid #263852;background:#0d1727;border-radius:12px;padding:12px;display:grid;grid-template-columns:minmax(0,1fr);gap:9px}
 #wallet-list .address{font-size:11px;line-height:1.7;overflow-wrap:anywhere}
 #wallet-list .wallet-actions button{font-size:12px;padding:9px 11px;min-height:36px}
-.wallet-section-card .message{overflow-wrap:anywhere}
+.wallet-section-card .message{overflow-wrap:anywhere}.wallet-monitor-status{font-size:12px;color:var(--muted);line-height:1.5;overflow-wrap:anywhere}.wallet-monitor-status[data-state="error"]{color:var(--red)}.wallet-monitor-status[data-state="connected"]{color:var(--green)}
 @media(max-width:760px){.wallet-layout{grid-template-columns:1fr}.wallet-top-actions{width:100%}.wallet-top-actions button{flex:1}}
 @media(max-width:520px){.wallet-top-actions{display:grid;grid-template-columns:1fr 1fr}.wallet-top-actions .status{grid-column:1/-1}.wallet-section-card{padding:14px}.wallet-top-actions button{width:100%;white-space:normal}}
 .amount-input-wrap{display:flex;align-items:center;gap:8px}.amount-input-wrap input{flex:1;min-width:0}.amount-suffix{min-width:54px;text-align:center;padding:11px 12px;font-weight:800;border:1px solid var(--line);border-radius:10px;background:#17243a;color:#cbd6eb}.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.virtual-balance-editor{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:16px;margin:16px 0 18px;border:1px solid #30415f;border-radius:15px;background:linear-gradient(145deg,#111e31,#0c1525)}.virtual-balance-editor h3{margin:0;font-size:15px}.virtual-balance-editor form{align-items:stretch}.virtual-balance-editor input{flex:1;min-width:0}.virtual-balance-editor .message{margin-top:0}.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.history-subpanel{min-width:0;padding:16px;border:1px solid #2a3a55;border-radius:14px;background:linear-gradient(145deg,#111c2d,#0c1422)}.history-subpanel h3{margin:0 0 5px}.history-subpanel .history-list{margin-top:12px}.history-subpanel a{color:#aebeff;font-size:13px;overflow-wrap:anywhere}.history-subpanel .history-item{min-width:0}@media(max-width:760px){.history-grid{grid-template-columns:1fr}}</style>
@@ -221,7 +221,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </main>
 <script>
 const $ = id => document.getElementById(id);
-let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, balanceInputDirty = false, balanceSaveInProgress = false;
+let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, currentMonitorWallets = [], balanceInputDirty = false, balanceSaveInProgress = false;
 const headers = {"Content-Type":"application/json"};
 function apiRequestHeaders(extra={}) {
   let token = "";
@@ -304,10 +304,22 @@ function renderWallets(){
   const code=document.createElement("div");code.className="address";code.textContent=address;
   const actions=document.createElement("div");actions.className="wallet-actions";
   const assigned=selected()?.source_wallets||[];const isAssigned=assigned.includes(address);
+  const monitor=currentMonitorWallets.find(item=>item&&item.address===address);
+  const monitorStatus=document.createElement("div");monitorStatus.className="wallet-monitor-status";
+  if(!isAssigned){monitorStatus.textContent="Not assigned to selected profile";monitorStatus.dataset.state="unassigned";}
+  else if(!monitor){monitorStatus.textContent=currentMonitor?"Waiting for monitor status":"Assigned · monitoring stopped";monitorStatus.dataset.state="waiting";}
+  else{
+   const state=String(monitor.state||"waiting").toLowerCase();
+   const checked=monitor.last_successful_check?new Date(monitor.last_successful_check):null;
+   const checkedLabel=checked&&!Number.isNaN(checked.getTime())?" · last check "+checked.toLocaleTimeString():"";
+   const resultCount=Array.isArray(monitor.latest_results)?monitor.latest_results.length:0;
+   monitorStatus.textContent=state.replaceAll("_"," ")+checkedLabel+(resultCount?" · "+resultCount+" recent result(s)":"");
+   monitorStatus.dataset.state=state;
+  }
   const assign=document.createElement("button");assign.className="secondary";assign.textContent=isAssigned?"Assigned":"Assign to profile";assign.disabled=!selectedProfile||isAssigned;
   assign.addEventListener("click",async()=>{try{await post("/api/profiles",{action:"associate-source-wallet",profile_id:selectedProfile,wallet_address:address});say("wallet-message","Public source wallet assigned to this paper profile.");await loadProfiles();renderWallets();}catch(e){say("wallet-message",e.message);}});
   const remove=document.createElement("button");remove.className="danger";remove.textContent=isAssigned?"Unassign":"Remove saved";remove.addEventListener("click",async()=>{try{if(isAssigned&&selectedProfile){await post("/api/profiles",{action:"disassociate-source-wallet",profile_id:selectedProfile,wallet_address:address});say("wallet-message","Public source wallet unassigned from this profile; it remains saved for other profiles.");await loadProfiles();}else{await post("/api/wallets",{action:"remove",address});say("wallet-message","Saved source wallet removed from the global saved list.");await loadWallets();}}catch(e){say("wallet-message",e.message);}});
-  actions.append(assign,remove);row.append(code,actions);list.append(row);
+  actions.append(assign,remove);row.append(code,monitorStatus,actions);list.append(row);
  });
 }
 async function loadWallets(){
@@ -334,7 +346,7 @@ async function loadRpcHealth(){
 }
 async function loadMonitor(){
  const p=selected();
- if(!selectedProfile||!p){currentMonitor=false;say("monitor-state","Select a profile");say("monitor-message","Choose a paper profile and add at least one public source wallet.");$("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;return;}
+ if(!selectedProfile||!p){currentMonitor=false;currentMonitorWallets=[];renderWallets();say("monitor-state","Select a profile");say("monitor-message","Choose a paper profile and add at least one public source wallet.");$("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;return;}
  const eligible=String(p.status||"").toLowerCase()==="active"&&Array.isArray(p.source_wallets)&&p.source_wallets.length>0;
  try{
   const d=await api("/api/profile-monitor?profile_id="+encodeURIComponent(selectedProfile));const report=d.monitor||d.report||d;
@@ -342,6 +354,8 @@ async function loadMonitor(){
   $("monitor-state").textContent=currentMonitor?"Monitoring enabled":"Monitoring stopped";
   $("start-monitoring").disabled=currentMonitor||!eligible;$("stop-monitoring").disabled=!currentMonitor;
   const observed=Array.isArray(report.wallets)?report.wallets:[];
+  currentMonitorWallets=observed;
+  renderWallets();
   const failed=observed.find(x=>x.state==="error");
   const connected=observed.filter(x=>x.state==="connected");
   const historyFailed=observed.some(x=>(x.latest_results||[]).some(tx=>tx.profile_history_status==="save_failed"));
@@ -354,7 +368,7 @@ async function loadMonitor(){
   else if(currentMonitor){say("monitor-message","Monitoring is enabled. Waiting for the first read-only RPC scan to finish.");}
   else if(!eligible){say("monitor-message",String(p.status||"").toLowerCase()!=="active"?"Activate this paper profile before starting monitoring.":"Add at least one public source wallet to this profile first.");}
   else{say("monitor-message","Ready. Start Monitoring will check the selected public source wallets only.");}
- }catch(e){currentMonitor=false;say("monitor-state","Status unavailable");$("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;say("monitor-message","Could not verify monitor status: "+e.message);}
+ }catch(e){currentMonitor=false;currentMonitorWallets=[];renderWallets();say("monitor-state","Status unavailable");$("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;say("monitor-message","Could not verify monitor status: "+e.message);}
 }
 async function loadProfiles(){
  try{
@@ -547,7 +561,7 @@ async function loadHistoryTokenMetadata(mints){
  const needed=[...new Set((mints||[]).filter(m=>typeof m==="string"&&m.length>0))]
   .filter(m=>{
    const cached=historyTokenMetadataCache.get(m);
-   return (!cached||["unavailable","service_error"].includes(cached.status))&&!historyTokenMetadataPending.has(m);
+   return (!cached||["unavailable","service_error","not_found"].includes(cached.status))&&!historyTokenMetadataPending.has(m);
   });
  if(!needed.length)return historyTokenMetadataQueue;
  needed.forEach(m=>historyTokenMetadataPending.add(m));
@@ -752,7 +766,7 @@ let refreshInProgress = false;
 setInterval(async()=> {
   if(!backendReady || refreshInProgress) return;
   refreshInProgress = true;
-  try { await Promise.all([loadMonitor(), loadTransactionHistory()]); }
+  try { await Promise.all([loadMonitor(), loadTransactionHistory(), loadPaperTradeHistory(null)]); }
   finally { refreshInProgress = false; }
 },15000);
 setInterval(loadRpcHealth,30000);

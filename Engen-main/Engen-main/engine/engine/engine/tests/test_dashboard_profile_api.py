@@ -125,6 +125,16 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertFalse(profile["balances"][0]["simulated"])
         self.assertEqual(profile["balances"][0]["source"], "public-rpc")
 
+    def test_profile_report_includes_all_associated_source_wallets(self):
+        second_wallet = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+        self.store.associate_source_wallet(self.profile_id, second_wallet)
+
+        report = dashboard_server.load_profiles_report()
+
+        self.assertTrue(report["database_available"])
+        profile = next(item for item in report["profiles"] if item["profile_id"] == self.profile_id)
+        self.assertEqual(set(profile["source_wallets"]), {PUBLIC_WALLET, second_wallet})
+
     def test_public_token_metadata_returns_name_and_symbol_from_pair(self):
         dashboard_server._TOKEN_METADATA_CACHE.pop(TOKEN_MINT, None)
         pair_payload = [{

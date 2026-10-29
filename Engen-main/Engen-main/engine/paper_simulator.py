@@ -265,7 +265,7 @@ class PaperSimulator:
                 return self._wait(
                     order,
                     "Pool liquidity $" + format(market_price.liquidity_usd, "f")
-                    + " is below the required $" + format(minimum_liquidity, "f")
+                    + " is below the configured USD minimum of $" + format(minimum_liquidity, "f")
                     + "; waiting for a deeper pool before paper execution.",
                 )
         for name, value in (("slippage_bps",slippage_bps),("fee_bps",fee_bps)):

@@ -23,6 +23,25 @@ PAPER_SIMULATOR_DB = Path(
 )
 _SIMULATOR = None
 PAPER_SIMULATOR_LOCK = threading.RLock()
+# Small paper orders may use smaller pools, but the required liquidity scales
+# with the simulated notional so larger orders still require deeper markets.
+MIN_PAPER_LIQUIDITY_USD = Decimal("1000")
+PAPER_LIQUIDITY_NOTIONAL_MULTIPLE = Decimal("20")
+
+
+def _save_order_reason(simulator, order, reason, execution_state=None):
+    """Persist a visible blocker so the dashboard explains why an order is waiting."""
+    order["reason"] = reason
+    details = dict(order.get("details") or {})
+    if execution_state:
+        details["execution_state"] = execution_state
+    order["details"] = details
+    persist = getattr(simulator, "_persist", None)
+    if callable(persist):
+        persist(order)
+    orders = getattr(simulator, "orders", None)
+    if isinstance(orders, dict) and order.get("order_id"):
+        orders[order["order_id"]] = order
 
 
 def get_paper_simulator():
@@ -127,11 +146,13 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
             except Exception:
                 virtual_cash = Decimal("0")
             if not virtual_cash.is_finite() or virtual_cash <= 0:
+                reason = "Set a positive virtual USD balance before this paper BUY can execute."
+                _save_order_reason(simulator, order, reason, "AWAITING_VIRTUAL_BALANCE")
                 outcomes.append({
                     "order_id": order.get("order_id"),
                     "signal_id": order.get("signal_id"),
                     "status": "WAITING_FOR_VIRTUAL_BALANCE",
-                    "reason": "Set a positive virtual USD balance before this paper BUY can execute.",
+                    "reason": reason,
                 })
                 continue
 
@@ -185,29 +206,29 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                     }
                 )
                 if waiting_for_price:
-                    details["execution_state"] = "AWAITING_VERIFIED_MARKET_DATA"
-                    order["details"] = details
-                    simulator._persist(order)
+                    reason = "A fresh public USD price for the source quote asset is required to size this mirrored paper BUY."
+                    _save_order_reason(simulator, order, reason, "AWAITING_VERIFIED_MARKET_DATA")
+                else:
+                    reason = "Paper BUY sizing is unavailable; check the saved copy settings and virtual balance."
+                    _save_order_reason(simulator, order, reason, "AWAITING_VIRTUAL_BALANCE")
                 outcomes.append({
                     "order_id": order.get("order_id"),
                     "signal_id": order.get("signal_id"),
                     "status": "WAITING_FOR_MARKET_DATA" if waiting_for_price else "WAITING_FOR_VIRTUAL_BALANCE",
-                    "reason": (
-                        "A fresh public USD price for the source quote asset is required to size this mirrored paper BUY."
-                        if waiting_for_price else
-                        "Paper BUY sizing is unavailable; check the saved copy settings and virtual balance."
-                    ),
+                    "reason": reason,
                 })
                 continue
             if max_buy is not None and max_buy.is_finite() and max_buy > 0:
                 target = min(target, max_buy)
             target = min(target, virtual_cash)
             if target <= 0:
+                reason = "The virtual USD balance is too small for this paper BUY."
+                _save_order_reason(simulator, order, reason, "AWAITING_VIRTUAL_BALANCE")
                 outcomes.append({
                     "order_id": order.get("order_id"),
                     "signal_id": order.get("signal_id"),
                     "status": "WAITING_FOR_VIRTUAL_BALANCE",
-                    "reason": "The virtual USD balance is too small for this paper BUY.",
+                    "reason": reason,
                 })
                 continue
             details["target_notional_usd"] = str(target)
@@ -223,19 +244,23 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                 sell_fraction = Decimal("0")
             owned_quantity = Decimal(str(simulator.balances.get(order.get("asset_mint"), "0")))
             if not sell_fraction.is_finite() or sell_fraction <= 0 or sell_fraction > 1:
+                reason = "Source sell fraction is unavailable or invalid; no paper sell was executed."
+                _save_order_reason(simulator, order, reason, "WAITING_FOR_POSITION")
                 outcomes.append({
                     "order_id": order.get("order_id"),
                     "signal_id": order.get("signal_id"),
                     "status": "WAITING_FOR_POSITION",
-                    "reason": "Source sell fraction is unavailable or invalid; no paper sell was executed.",
+                    "reason": reason,
                 })
                 continue
             if owned_quantity <= 0:
+                reason = "No copied token position is currently held; sell remains queued."
+                _save_order_reason(simulator, order, reason, "WAITING_FOR_POSITION")
                 outcomes.append({
                     "order_id": order.get("order_id"),
                     "signal_id": order.get("signal_id"),
                     "status": "WAITING_FOR_POSITION",
-                    "reason": "No copied token position is currently held; sell remains queued.",
+                    "reason": reason,
                 })
                 continue
             order["quantity"] = str(owned_quantity * sell_fraction)
@@ -245,31 +270,52 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
         except Exception:
             market_price = None
         if market_price is None:
+            reason = "No usable public USD price/liquidity snapshot; order remains queued for retry."
+            _save_order_reason(simulator, order, reason, "WAITING_FOR_MARKET_DATA")
             outcomes.append({
                 "order_id": order.get("order_id"),
                 "signal_id": order.get("signal_id"),
                 "status": "WAITING_FOR_MARKET_DATA",
-                "reason": "No usable public USD price/liquidity snapshot; order remains queued.",
+                "reason": reason,
             })
             continue
+        # Scale the liquidity guard to the proposed paper notional. This permits
+        # small test orders in smaller pools without allowing large orders into
+        # shallow markets.
+        try:
+            if order.get("side") == "BUY":
+                estimated_notional = Decimal(str((order.get("details") or {}).get("target_notional_usd") or "0"))
+            else:
+                estimated_notional = Decimal(str(order.get("quantity", "0"))) * Decimal(str(market_price.price))
+        except Exception:
+            estimated_notional = Decimal("0")
+        if not estimated_notional.is_finite() or estimated_notional < 0:
+            estimated_notional = Decimal("0")
+        required_liquidity = max(
+            MIN_PAPER_LIQUIDITY_USD,
+            estimated_notional * PAPER_LIQUIDITY_NOTIONAL_MULTIPLE,
+        )
+        execution_now = datetime.now(timezone.utc).isoformat()
         try:
             result = simulator.execute_order(
                 order["order_id"],
                 market_price,
-                now=now,
+                now=execution_now,
                 max_price_age_seconds=60,
                 slippage_bps=50,
                 fee_bps=10,
-                min_liquidity_usd=10000,
+                min_liquidity_usd=required_liquidity,
                 max_liquidity_age_seconds=60,
                 require_liquidity=True,
             )
         except Exception:
+            reason = "Paper execution failed validation; no simulated fill was recorded. The order will be retried."
+            _save_order_reason(simulator, order, reason, "EXECUTION_ERROR")
             outcomes.append({
                 "order_id": order.get("order_id"),
                 "signal_id": order.get("signal_id"),
                 "status": "EXECUTION_ERROR",
-                "reason": "Paper execution failed; no real transaction was sent.",
+                "reason": reason,
             })
             continue
         outcomes.append({

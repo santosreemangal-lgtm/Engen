@@ -420,53 +420,169 @@ $("stop-monitoring").addEventListener("click",async()=>{if(!selectedProfile){say
 $("wallet-search").addEventListener("input",()=>renderWallets());
 $("activate-profile").addEventListener("click",async()=>{if(!selectedProfile){say("wallet-message","Create or select a profile first.");return;}try{await post("/api/profiles",{action:"update",profile_id:selectedProfile,status:"active"});say("wallet-message","Paper profile activated. Monitoring remains stopped until you start it.");await loadProfiles();await loadMonitor();}catch(e){say("wallet-message",e.message);}});
 function appendHistoryField(card,label,value){const p=document.createElement("p");p.className="hint";p.textContent=label+": "+(value===null||value===undefined||value===""?"unavailable":String(value));card.append(p);}
+let transactionHistoryPage=1;
+const transactionHistoryPageSize=25;
+function historySetEmpty(tbody,colspan,message){
+ tbody.replaceChildren();const row=document.createElement("tr");const cell=document.createElement("td");
+ cell.colSpan=colspan;cell.className="history-empty";cell.textContent=message;row.append(cell);tbody.append(row);
+}
+function historyCell(row,value,className){
+ const cell=document.createElement("td");
+ if(className)cell.className=className;
+ cell.textContent=value===null||value===undefined||value===""?"—":String(value);
+ row.append(cell);return cell;
+}
+function historyPill(label,kind){
+ const el=document.createElement("span");el.className="history-pill"+(kind?" "+kind:"");el.textContent=label;return el;
+}
+function historyDate(value){
+ if(!value)return "—";
+ const date=new Date(value);return Number.isNaN(date.getTime())?String(value):date.toLocaleString();
+}
+function historyAmount(value){
+ if(value===null||value===undefined||value==="")return "—";
+ const parts=String(value).split(".");
+ let whole=parts[0],fraction=(parts[1]||"").slice(0,8).replace(/0+$/,"");
+ const negative=whole.startsWith("-");if(negative)whole=whole.slice(1);
+ whole=whole.replace(/\B(?=(\d{3})+(?!\d))/g,",");
+ return (negative?"-":"")+whole+(fraction?"."+fraction:"");
+}
+function historyShortAddress(value){
+ if(!value)return "—";const text=String(value);
+ return text.length>16?text.slice(0,7)+"…"+text.slice(-6):text;
+}
+function historyLabelForClassification(value){
+ const labels={BUY_CANDIDATE:"BUY",SELL_CANDIDATE:"SELL",FAILED_TRANSACTION:"FAILED",TRANSFER:"TRANSFER",LIQUIDITY_OPERATION:"LIQUIDITY_OPERATION",UNKNOWN:"UNKNOWN",RENT:"RENT"};
+ return labels[value]||String(value||"UNKNOWN").replaceAll("_"," ");
+}
+function historyClassificationKind(value){
+ if(value==="BUY_CANDIDATE")return "buy";
+ if(value==="SELL_CANDIDATE")return "sell";
+ if(value==="FAILED_TRANSACTION")return "failed";
+ return "";
+}
+function setHistoryTab(mode){
+ const observed=mode!=="paper";
+ $("observed-history-panel").classList.toggle("hidden",!observed);
+ $("paper-history-panel").classList.toggle("hidden",observed);
+ $("observed-history-tab").classList.toggle("active",observed);
+ $("paper-history-tab").classList.toggle("active",!observed);
+ $("observed-history-tab").setAttribute("aria-selected",observed?"true":"false");
+ $("paper-history-tab").setAttribute("aria-selected",observed?"false":"true");
+ if(observed)loadTransactionHistory();else loadPaperTradeHistory(null);
+}
 async function loadTransactionHistory(){
- const list=$("transaction-history-list");list.replaceChildren();
- if(!selectedProfile){const p=document.createElement("p");p.className="empty";p.textContent="Select a profile to view observed transactions.";list.append(p);say("transaction-history-message","");return;}
+ const tbody=$("transaction-history-table");
+ if(!selectedProfile){
+  historySetEmpty(tbody,7,"Select a profile to view wallet activity.");
+  $("observed-history-total").textContent="—";$("transaction-history-page").textContent="Page 1";
+  $("transaction-history-prev").disabled=true;$("transaction-history-next").disabled=true;
+  say("transaction-history-message","");return;
+ }
  try{
-  const d=await api("/api/profile-transactions?profile_id="+encodeURIComponent(selectedProfile)+"&page=1&page_size=25");
-  if(d.database_available===false){const p=document.createElement("p");p.className="empty";p.textContent="Transaction history storage is not available yet.";list.append(p);say("transaction-history-message","History storage unavailable.");return;}
-  if(!d.transactions?.length){const p=document.createElement("p");p.className="empty";p.textContent="No observed on-chain transactions stored for this profile yet. Start read-only monitoring to collect source-wallet activity.";list.append(p);}
-  (d.transactions||[]).forEach(tx=>{
-   const item=document.createElement("article");item.className="history-item";
-   const title=document.createElement("strong");title.textContent=(tx.classification||"UNKNOWN").replaceAll("_"," ")+" · "+(tx.status||"unknown");item.append(title);
-   const evidence=tx.evidence&&typeof tx.evidence==="object"?tx.evidence:{};
-   appendHistoryField(item,"Metadata status",evidence.metadata_status);
-   appendHistoryField(item,"Classification reason",evidence.classification_reason||evidence.classification_note);
-   appendHistoryField(item,"Monitored wallet signer",evidence.monitored_wallet_is_signer===true?"Confirmed":evidence.monitored_wallet_is_signer===false?"Not confirmed":"Not recorded");
-   appendHistoryField(item,"Classification confidence",evidence.confidence);
-   appendHistoryField(item,"Confirmation status",evidence.confirmation_status);
-   appendHistoryField(item,"Source wallet",tx.source_wallet_address);appendHistoryField(item,"Token mint",tx.token_mint);appendHistoryField(item,"Amount",tx.amount);appendHistoryField(item,"Observed at",tx.observed_at);appendHistoryField(item,"Slot",tx.slot);
-   if(tx.signature){const line=document.createElement("p");line.className="hint";line.textContent="Signature: "+tx.signature;item.append(line);const link=document.createElement("a");link.href="https://solscan.io/tx/"+encodeURIComponent(tx.signature);link.target="_blank";link.rel="noopener noreferrer";link.textContent="Open transaction explorer";item.append(link);}
-   list.append(item);
+  const query=new URLSearchParams({profile_id:selectedProfile,page:String(transactionHistoryPage),page_size:String(transactionHistoryPageSize)});
+  const classification=$("history-classification").value,status=$("history-status").value,tokenMint=$("history-token-filter").value.trim();
+  if(classification)query.set("classification",classification);
+  if(status)query.set("status",status);
+  if(tokenMint)query.set("token_mint",tokenMint);
+  const d=await api("/api/profile-transactions?"+query.toString());
+  if(d.database_available===false){
+   historySetEmpty(tbody,7,"Transaction history storage is not available yet.");
+   $("observed-history-total").textContent="0";
+   say("transaction-history-message","History storage unavailable.");return;
+  }
+  const transactions=Array.isArray(d.transactions)?d.transactions:[];
+  tbody.replaceChildren();
+  if(!transactions.length)historySetEmpty(tbody,7,d.error||"No activity matches these filters.");
+  transactions.forEach(tx=>{
+   const row=document.createElement("tr");
+   historyCell(row,historyDate(tx.observed_at));
+   const typeCell=document.createElement("td");typeCell.append(historyPill(historyLabelForClassification(tx.classification),historyClassificationKind(tx.classification)));row.append(typeCell);
+   const tokenCell=document.createElement("td");const token=document.createElement("span");token.className="history-main";token.textContent=tx.token_mint||"Token unavailable";tokenCell.append(token);
+   if(tx.slot!==null&&tx.slot!==undefined){const slot=document.createElement("small");slot.className="history-sub";slot.textContent="Slot "+tx.slot;tokenCell.append(slot);}row.append(tokenCell);
+   historyCell(row,historyAmount(tx.amount));
+   const walletCell=document.createElement("td");const wallet=document.createElement("span");wallet.className="history-main";wallet.textContent=historyShortAddress(tx.source_wallet_address);wallet.title=tx.source_wallet_address||"";walletCell.append(wallet);row.append(walletCell);
+   const statusCell=document.createElement("td");const status=String(tx.status||"unknown").toLowerCase();statusCell.append(historyPill(status.toUpperCase(),["confirmed","failed","pending","observed"].includes(status)?status:""));row.append(statusCell);
+   const actionCell=document.createElement("td");
+   if(tx.signature){const link=document.createElement("a");link.className="history-link";link.href="https://solscan.io/tx/"+encodeURIComponent(tx.signature);link.target="_blank";link.rel="noopener noreferrer";link.textContent="View tx ↗";actionCell.append(link);const sig=document.createElement("small");sig.className="history-sub";sig.textContent=historyShortAddress(tx.signature);sig.title=tx.signature;actionCell.append(sig);}
+   else actionCell.textContent="—";
+   row.append(actionCell);tbody.append(row);
   });
-  say("transaction-history-message","Showing "+(d.transactions||[]).length+" of "+(d.total??0)+" observed transaction(s). This list is on-chain metadata, not paper trades.");
- }catch(e){say("transaction-history-message",e.message);}
+  const total=Number(d.total||0),pages=Number(d.pages||0),page=Number(d.page||transactionHistoryPage);
+  $("observed-history-total").textContent=total.toLocaleString();
+  $("transaction-history-page").textContent=total?((page-1)*transactionHistoryPageSize+1)+"–"+Math.min(page*transactionHistoryPageSize,total)+" of "+total.toLocaleString()+" · Page "+page+"/"+Math.max(pages,1):"0 records";
+  $("transaction-history-prev").disabled=page<=1;
+  $("transaction-history-next").disabled=pages===0||page>=pages;
+  say("transaction-history-message","Wallet activity is on-chain metadata; a paper fill appears only after the simulator creates and executes an order.");
+ }catch(e){
+  historySetEmpty(tbody,7,e.message||"Unable to load wallet activity.");
+  say("transaction-history-message",e.message);
+ }
 }
 async function loadPaperTradeHistory(reportOverride){
- const list=$("paper-trade-history-list");list.replaceChildren();
- if(!selectedProfile){const p=document.createElement("p");p.className="empty";p.textContent="Select a profile to view simulated paper trades.";list.append(p);say("paper-trade-history-message","");return;}
+ const tbody=$("paper-trade-history-table");
+ if(!selectedProfile){
+  historySetEmpty(tbody,7,"Select a profile to view simulated paper trades.");
+  $("paper-trade-total").textContent="—";$("paper-fill-total").textContent="0 completed fills";
+  say("paper-trade-history-message","");return;
+ }
  try{
   let r=reportOverride;
   if(!r){const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile));r=d.report||d;}
-  if(r.error){const p=document.createElement("p");p.className="empty";p.textContent="Paper trade history unavailable: "+r.error;list.append(p);say("paper-trade-history-message",r.error);return;}
+  if(r.error){historySetEmpty(tbody,7,"Paper history unavailable: "+r.error);say("paper-trade-history-message",r.error);return;}
   const orders=Array.isArray(r.orders)?r.orders.slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||""))):[];
   const fills=Array.isArray(r.fills)?r.fills:[];
-  if(!orders.length){const p=document.createElement("p");p.className="empty";p.textContent="No simulated paper orders yet. Observed transactions will appear in the separate transaction list; a paper order is shown here only when the engine actually queues one.";list.append(p);}
+  $("paper-trade-total").textContent=orders.length.toLocaleString();
+  $("paper-fill-total").textContent=fills.length.toLocaleString()+" completed fill"+(fills.length===1?"":"s");
+  tbody.replaceChildren();
+  if(!orders.length)historySetEmpty(tbody,7,"No Paper Orders have been queued for this profile yet. New eligible wallet signals should appear here as queued orders, even while they wait for balance or verified market data.");
   orders.forEach(order=>{
-   const item=document.createElement("article");item.className="history-item";const title=document.createElement("strong");title.textContent=(order.side||"ORDER")+" · "+(order.status||"unknown");item.append(title);
-   const details=order.details&&typeof order.details==="object"?order.details:{};
-   appendHistoryField(item,"Asset",order.asset_mint);appendHistoryField(item,"Paper quantity",order.quantity);appendHistoryField(item,"Quote currency",order.quote_mint);appendHistoryField(item,"Quote amount",order.quote_amount===null||order.quote_amount===undefined?null:String(order.quote_amount)+(order.quote_mint?" "+order.quote_mint:""));appendHistoryField(item,"Source wallet",details.source_wallet);appendHistoryField(item,"Sizing mode",details.sizing_mode==="SOURCE_PERCENT"?String(details.sizing_value??"")+"%":details.sizing_mode==="FIXED_USD"?"$"+String(details.target_notional_usd??details.sizing_value??""):details.sizing_mode);appendHistoryField(item,"Created at",order.created_at);appendHistoryField(item,"Status reason",order.reason);
+   const row=document.createElement("tr"),details=order.details&&typeof order.details==="object"?order.details:{};
    const fill=fills.find(x=>x.order_id===order.order_id);
-   if(fill){appendHistoryField(item,"Execution price",fill.execution_price);appendHistoryField(item,"Gross quote",fill.gross_quote+(fill.currency?" "+fill.currency:""));appendHistoryField(item,"Fee",fill.fee+(fill.currency?" "+fill.currency:""));appendHistoryField(item,"Price source",fill.price_source);}
-   if(order.signal_id){appendHistoryField(item,"Paper signal ID",order.signal_id);}
-   const note=document.createElement("p");note.className="hint";note.textContent="SIMULATED ONLY · No real transaction was signed or broadcast.";item.append(note);list.append(item);
+   historyCell(row,historyDate(fill?.created_at||order.created_at));
+   const side=String(order.side||"ORDER").toUpperCase(),sideCell=document.createElement("td");sideCell.append(historyPill(side,side==="BUY"?"buy":side==="SELL"?"sell":""));row.append(sideCell);
+   const tokenCell=document.createElement("td");const token=document.createElement("span");token.className="history-main";token.textContent=order.asset_mint||"Token unavailable";token.title=order.asset_mint||"";tokenCell.append(token);
+   const sourceWallet=details.source_wallet;if(sourceWallet){const source=document.createElement("small");source.className="history-sub";source.textContent="Wallet "+historyShortAddress(sourceWallet);source.title=sourceWallet;tokenCell.append(source);}row.append(tokenCell);
+   let quantity=fill?.quantity;
+   if(!quantity){
+    if(side==="SELL"&&details.source_sell_fraction)quantity="Source position × "+(Number(details.source_sell_fraction)*100).toFixed(2).replace(/\.00$/,"")+"%";
+    else if(details.target_notional_usd)quantity="Target $"+historyAmount(details.target_notional_usd);
+    else quantity=details.execution_state==="AWAITING_VIRTUAL_BALANCE"?"Waiting for virtual balance":"Waiting for verified sizing";
+   }else quantity=historyAmount(quantity);
+   historyCell(row,quantity);
+   const notionalCell=document.createElement("td");
+   if(fill){const gross=document.createElement("span");gross.className="history-main";gross.textContent="$"+historyAmount(fill.gross_quote);notionalCell.append(gross);const price=document.createElement("small");price.className="history-sub";price.textContent="Price $"+historyAmount(fill.execution_price);notionalCell.append(price);}
+   else if(details.target_notional_usd){notionalCell.textContent="$"+historyAmount(details.target_notional_usd); }
+   else notionalCell.textContent="Pending";
+   row.append(notionalCell);
+   const stateCell=document.createElement("td");
+   let state=String(order.status||"UNKNOWN").toUpperCase();
+   if(fill)state="FILLED";
+   else if(details.execution_state==="AWAITING_VIRTUAL_BALANCE")state="WAITING BALANCE";
+   else if(details.execution_state==="AWAITING_VERIFIED_MARKET_DATA")state="WAITING PRICE";
+   const kind=state==="FILLED"?"filled":state.includes("WAITING")||state==="CREATED"?"waiting":state==="REJECTED"?"rejected":"";
+   const pill=historyPill(state,kind);if(order.reason)pill.title=order.reason;stateCell.append(pill);
+   if(order.reason){const reason=document.createElement("small");reason.className="history-sub";reason.textContent=order.reason;stateCell.append(reason);}
+   row.append(stateCell);
+   const sourceCell=document.createElement("td");
+   if(details.source_signature){const link=document.createElement("a");link.className="history-link";link.href="https://solscan.io/tx/"+encodeURIComponent(details.source_signature);link.target="_blank";link.rel="noopener noreferrer";link.textContent="View source ↗";sourceCell.append(link);}
+   else sourceCell.textContent="—";
+   row.append(sourceCell);tbody.append(row);
   });
-  say("paper-trade-history-message","Showing "+orders.length+" stored simulated paper order(s). This history is separate from observed on-chain transactions.");
- }catch(e){say("paper-trade-history-message",e.message);}
+  say("paper-trade-history-message",orders.length?"Showing the latest "+orders.length+" stored paper order(s); "+fills.length+" have simulated fills.":"Paper orders are shown only when the copy engine queues them. On-chain transaction rows are kept separate.");
+ }catch(e){historySetEmpty(tbody,7,e.message||"Unable to load paper history.");say("paper-trade-history-message",e.message);}
 }
 async function loadHistory(){await Promise.all([loadTransactionHistory(),loadPaperTradeHistory(null)]);}
 $("history-details").addEventListener("toggle",()=>{if($("history-details").open)loadHistory();});
+$("observed-history-tab").addEventListener("click",()=>setHistoryTab("observed"));
+$("paper-history-tab").addEventListener("click",()=>setHistoryTab("paper"));
+$("history-apply-filters").addEventListener("click",()=>{transactionHistoryPage=1;loadTransactionHistory();});
+$("history-token-filter").addEventListener("keydown",event=>{if(event.key==="Enter"){transactionHistoryPage=1;loadTransactionHistory();}});
+$("history-classification").addEventListener("change",()=>{transactionHistoryPage=1;loadTransactionHistory();});
+$("history-status").addEventListener("change",()=>{transactionHistoryPage=1;loadTransactionHistory();});
+$("history-refresh").addEventListener("click",loadHistory);
+$("transaction-history-prev").addEventListener("click",()=>{if(transactionHistoryPage>1){transactionHistoryPage--;loadTransactionHistory();}});
+$("transaction-history-next").addEventListener("click",()=>{transactionHistoryPage++;loadTransactionHistory();});
 function initApiAuthUi(){
  const input=$("api-token");
  try { input.value=sessionStorage.getItem("dashboard-api-token")||""; } catch {}

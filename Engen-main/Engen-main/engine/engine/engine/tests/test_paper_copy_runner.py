@@ -313,13 +313,27 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertEqual(outcomes[0]["status"], "WAITING_FOR_MARKET_DATA")
         self.assertEqual(simulator.report()["orders"][0]["status"], "CREATED")
 
-    def test_only_recognized_quote_tokens_are_eligible(self):
-        simulator = FakeSimulator()
+    def test_unknown_quote_mint_can_use_fixed_virtual_sizing_but_not_mirror_usd(self):
         result = candidate_result()
-        result["trade_signal"]["quote_mints"] = ["unrecognized-quote"]
-        queued = queue_paper_orders(WALLET, [result], simulator)
-        self.assertEqual(queued, [])
-        self.assertEqual(simulator.orders, {})
+        unknown_quote = "UnknownQuoteMint111111111111111111111111"
+        result["trade_signal"]["quote_mints"] = [unknown_quote]
+        result["token_balance_changes"][1]["mint"] = unknown_quote
+
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(
+            WALLET, [result], simulator,
+            copy_settings={"sizing_mode": "SOURCE_PERCENT", "sizing_value": 5, "max_buy_usd": 10},
+        )
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["target_notional_usd"], "10")
+
+        mirror_simulator = FakeSimulator()
+        mirrored = queue_paper_orders(
+            WALLET, [result], mirror_simulator,
+            copy_settings={"sizing_mode": "MIRROR_AMOUNT", "sizing_value": 10, "max_buy_usd": 10},
+        )
+        self.assertEqual(mirrored, [])
+        self.assertEqual(mirror_simulator.orders, {})
 
 
 if __name__ == "__main__":

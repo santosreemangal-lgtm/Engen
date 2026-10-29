@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation
 
 from engine.signature_store import SignatureStore
 from engine.transaction_monitor import monitor_wallet
-from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders, PAPER_SIMULATOR_LOCK
+from engine.paper_copy_runner import (\n    queue_paper_orders, execute_pending_paper_orders, get_paper_simulator,\n    PAPER_SIMULATOR_LOCK,\n)
 from engine.profile_store import LABELS
 from engine.solana_validation import is_valid_transaction_signature
 
@@ -113,7 +113,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
         try:
             allowed_sides = side_getter() if side_getter is not None else "BOTH"
             copy_settings = settings_getter() if settings_getter is not None else {}
-            simulator = simulator_getter() if simulator_getter is not None else None
+            simulator = simulator_getter() if simulator_getter is not None else get_paper_simulator()
             # Serialize order execution and balance writes against dashboard requests.
             with PAPER_SIMULATOR_LOCK:
                 queued_orders = queue_paper_orders(

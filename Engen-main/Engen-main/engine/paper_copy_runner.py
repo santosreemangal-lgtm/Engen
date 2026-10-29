@@ -48,6 +48,60 @@ def _human_amount(change):
         return None
     return Decimal(raw) / (Decimal(10) ** decimals)
 
+def _aggregate_owner_mint_change(changes, wallet_address, mint, *, native_sol=False):
+    """Aggregate account-level balance rows for one wallet/mint without mixing SOL sources."""
+    selected = []
+    for item in changes:
+        if not isinstance(item, dict):
+            continue
+        if item.get("owner") != wallet_address or item.get("mint") != mint:
+            continue
+        is_native = item.get("source") == "native_sol"
+        if is_native != native_sol:
+            continue
+        raw_delta = item.get("delta_amount")
+        decimals = item.get("decimals")
+        if (
+            not isinstance(raw_delta, str)
+            or not (raw_delta[1:].isdigit() if raw_delta.startswith("-") else raw_delta.isdigit())
+            or not isinstance(decimals, int)
+            or isinstance(decimals, bool)
+            or not 0 <= decimals <= 30
+        ):
+            return None
+        selected.append(item)
+    if not selected:
+        return None
+
+    decimals = selected[0]["decimals"]
+    if any(item["decimals"] != decimals for item in selected):
+        return None
+
+    total_delta = sum(int(item["delta_amount"]) for item in selected)
+    aggregated = {
+        "owner": wallet_address,
+        "mint": mint,
+        "decimals": decimals,
+        "delta_amount": str(total_delta),
+        "source": "native_sol" if native_sol else "token",
+    }
+    for field in ("pre_amount", "post_amount"):
+        raw_values = [item.get(field) for item in selected]
+        if all(
+            isinstance(value, str)
+            and value.isdigit()
+            for value in raw_values
+        ):
+            aggregated[field] = str(sum(int(value) for value in raw_values))
+    return aggregated
+
+
+def _quote_change_matches_side(amount, side):
+    if amount is None or not amount.is_finite() or amount == 0:
+        return False
+    return amount < 0 if side == "BUY" else amount > 0
+
+
 def execute_pending_paper_orders(wallet_address=None, simulator=None, price_provider=None):
     """Retry queued automatic paper orders using fresh public market snapshots."""
     simulator = simulator or get_paper_simulator()
@@ -261,29 +315,39 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
             continue
 
         asset_mint, quote_mint = asset_mints[0], quote_mints[0]
-        asset_changes = [
-            item for item in changes
-            if isinstance(item, dict) and item.get("owner") == wallet_address
-            and item.get("mint") == asset_mint and item.get("source") != "native_sol"
-        ]
-        quote_changes = [
-            item for item in changes
-            if isinstance(item, dict) and item.get("owner") == wallet_address
-            and (item.get("mint") == quote_mint or (
-                quote_mint == WRAPPED_SOL_MINT and item.get("source") == "native_sol"
-                and item.get("mint") == WRAPPED_SOL_MINT
-            ))
-        ]
-        if len(asset_changes) != 1 or len(quote_changes) != 1:
-            continue
-        asset_change, quote_change = asset_changes[0], quote_changes[0]
-        asset_amount = _human_amount(asset_change)
-        quote_amount = _human_amount(quote_change)
-        if asset_amount is None or quote_amount is None:
-            continue
         side = "BUY" if signal["classification"] == "BUY_CANDIDATE" else "SELL"
-        if (side == "BUY" and (asset_amount <= 0 or quote_amount >= 0)) or (
-            side == "SELL" and (asset_amount >= 0 or quote_amount <= 0)
+        asset_change = _aggregate_owner_mint_change(
+            changes, wallet_address, asset_mint, native_sol=False
+        )
+        asset_amount = _human_amount(asset_change) if asset_change is not None else None
+        if asset_amount is None:
+            continue
+
+        # Token and native-SOL rows use the same wrapped-SOL mint label in the
+        # analyzer, but represent separate balance sources. Prefer the SPL quote
+        # delta only when it agrees with the verified swap direction; otherwise
+        # fall back to the fee-adjusted native-SOL delta. Never double-count them.
+        quote_change = _aggregate_owner_mint_change(
+            changes, wallet_address, quote_mint, native_sol=False
+        )
+        quote_amount = _human_amount(quote_change) if quote_change is not None else None
+        if (
+            quote_mint == WRAPPED_SOL_MINT
+            and not _quote_change_matches_side(quote_amount, side)
+        ):
+            native_quote_change = _aggregate_owner_mint_change(
+                changes, wallet_address, quote_mint, native_sol=True
+            )
+            native_quote_amount = (
+                _human_amount(native_quote_change)
+                if native_quote_change is not None else None
+            )
+            if _quote_change_matches_side(native_quote_amount, side):
+                quote_change, quote_amount = native_quote_change, native_quote_amount
+        if not _quote_change_matches_side(quote_amount, side):
+            continue
+        if (side == "BUY" and asset_amount <= 0) or (
+            side == "SELL" and asset_amount >= 0
         ):
             continue
         if side not in allowed:

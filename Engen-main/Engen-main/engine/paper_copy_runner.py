@@ -48,6 +48,49 @@ def _human_amount(change):
         return None
     return Decimal(raw) / (Decimal(10) ** decimals)
 
+def _aggregate_wallet_mint_changes(changes, wallet_address, mint, *, source):
+    """Aggregate one wallet/mint's account deltas without mixing SOL representations."""
+    matches = [
+        item for item in changes
+        if isinstance(item, dict)
+        and item.get("owner") == wallet_address
+        and item.get("mint") == mint
+        and (
+            (source == "native_sol" and item.get("source") == "native_sol")
+            or (source == "spl" and item.get("source") != "native_sol")
+        )
+    ]
+    if not matches:
+        return None
+    decimals = {item.get("decimals") for item in matches}
+    if len(decimals) != 1:
+        return None
+    decimal_count = next(iter(decimals))
+    if not isinstance(decimal_count, int) or isinstance(decimal_count, bool) or not 0 <= decimal_count <= 30:
+        return None
+
+    def raw_integer(value):
+        if not isinstance(value, str):
+            return None
+        if value.startswith("-"):
+            return int(value) if value[1:].isdigit() else None
+        return int(value) if value.isdigit() else None
+
+    deltas = [raw_integer(item.get("delta_amount")) for item in matches]
+    if any(value is None for value in deltas):
+        return None
+    aggregate = {
+        "owner": wallet_address,
+        "mint": mint,
+        "decimals": decimal_count,
+        "delta_amount": str(sum(deltas)),
+        "source": "native_sol" if source == "native_sol" else "spl",
+    }
+    for field in ("pre_amount", "post_amount"):
+        values = [raw_integer(item.get(field)) for item in matches]
+        aggregate[field] = str(sum(values)) if all(value is not None for value in values) else None
+    return aggregate
+
 def execute_pending_paper_orders(wallet_address=None, simulator=None, price_provider=None):
     """Retry queued automatic paper orders using fresh public market snapshots."""
     simulator = simulator or get_paper_simulator()
@@ -195,22 +238,25 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
             continue
 
         asset_mint, quote_mint = asset_mints[0], quote_mints[0]
-        asset_changes = [
-            item for item in changes
-            if isinstance(item, dict) and item.get("owner") == wallet_address
-            and item.get("mint") == asset_mint and item.get("source") != "native_sol"
-        ]
-        quote_changes = [
-            item for item in changes
-            if isinstance(item, dict) and item.get("owner") == wallet_address
-            and (item.get("mint") == quote_mint or (
-                quote_mint == WRAPPED_SOL_MINT and item.get("source") == "native_sol"
-                and item.get("mint") == WRAPPED_SOL_MINT
-            ))
-        ]
-        if len(asset_changes) != 1 or len(quote_changes) != 1:
+        # A wallet can hold the same mint in multiple token accounts. Aggregate
+        # those account-level deltas before deciding whether this is a copyable swap.
+        # Never mix native SOL movement with wrapped-SOL SPL-token movement.
+        asset_change = _aggregate_wallet_mint_changes(
+            changes, wallet_address, asset_mint, source="spl"
+        )
+        if quote_mint == WRAPPED_SOL_MINT:
+            native_quote = _aggregate_wallet_mint_changes(
+                changes, wallet_address, quote_mint, source="native_sol"
+            )
+            quote_change = native_quote or _aggregate_wallet_mint_changes(
+                changes, wallet_address, quote_mint, source="spl"
+            )
+        else:
+            quote_change = _aggregate_wallet_mint_changes(
+                changes, wallet_address, quote_mint, source="spl"
+            )
+        if asset_change is None or quote_change is None:
             continue
-        asset_change, quote_change = asset_changes[0], quote_changes[0]
         asset_amount = _human_amount(asset_change)
         quote_amount = _human_amount(quote_change)
         if asset_amount is None or quote_amount is None:

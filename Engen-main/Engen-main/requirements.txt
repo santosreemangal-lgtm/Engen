@@ -1,3 +1,4 @@
 # Stage 1 needs no extra packages (Python 3.8+ standard library only).
 # Later stages will add pinned versions here, for example:
 # solders>=0.21,<1.0
+websockets>=12,<16

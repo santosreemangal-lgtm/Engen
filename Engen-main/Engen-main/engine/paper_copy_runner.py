@@ -242,11 +242,11 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
             pre_source_amount = asset_change.get("pre_amount")
             if pre_source_amount is None:
                 continue
-            try:
-                source_before = Decimal(str(pre_source_amount))
-            except Exception:
-                continue
-            if not source_before.is_finite() or source_before <= 0 or source_quantity > source_before:
+            source_before = _human_amount({
+                "delta_amount": str(pre_source_amount),
+                "decimals": asset_change.get("decimals"),
+            })
+            if source_before is None or not source_before.is_finite() or source_before <= 0 or source_quantity > source_before:
                 continue
             balances = getattr(simulator, "balances", {})
             owned_quantity = balances.get(asset_mint) if isinstance(balances, dict) else None
@@ -274,8 +274,7 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
                 "source_asset_quantity": str(source_quantity),
                 "source_asset_pre_amount": asset_change.get("pre_amount"),
                 "source_asset_post_amount": asset_change.get("post_amount"),
-                "source_sell_fraction": str(source_quantity / Decimal(str(asset_change.get("pre_amount"))))
-                    if side == "SELL" and asset_change.get("pre_amount") is not None else None,
+                "source_sell_fraction": str(source_quantity / source_before) if side == "SELL" else None,
                 "origin": "AUTOMATIC_WALLET_COPY",
                 "source_quote_mint": quote_mint,
                 "source_quote_amount": str(abs(quote_amount)),

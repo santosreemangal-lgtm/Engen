@@ -76,7 +76,21 @@ footer.hint{padding:10px 4px;line-height:1.7}
 .wallet-section-card .message{overflow-wrap:anywhere}
 @media(max-width:760px){.wallet-layout{grid-template-columns:1fr}.wallet-top-actions{width:100%}.wallet-top-actions button{flex:1}}
 @media(max-width:520px){.wallet-top-actions{display:grid;grid-template-columns:1fr 1fr}.wallet-top-actions .status{grid-column:1/-1}.wallet-section-card{padding:14px}.wallet-top-actions button{width:100%;white-space:normal}}
-.amount-input-wrap{display:flex;align-items:center;gap:8px}.amount-input-wrap input{flex:1;min-width:0}.amount-suffix{min-width:54px;text-align:center;padding:11px 12px;font-weight:800;border:1px solid var(--line);border-radius:10px;background:#17243a;color:#cbd6eb}.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.virtual-balance-editor{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:16px;margin:16px 0 18px;border:1px solid #30415f;border-radius:15px;background:linear-gradient(145deg,#111e31,#0c1525)}.virtual-balance-editor h3{margin:0;font-size:15px}.virtual-balance-editor form{align-items:stretch}.virtual-balance-editor input{flex:1;min-width:0}.virtual-balance-editor .message{margin-top:0}.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.history-subpanel{min-width:0;padding:16px;border:1px solid #2a3a55;border-radius:14px;background:linear-gradient(145deg,#111c2d,#0c1422)}.history-subpanel h3{margin:0 0 5px}.history-subpanel .history-list{margin-top:12px}.history-subpanel a{color:#aebeff;font-size:13px;overflow-wrap:anywhere}.history-subpanel .history-item{min-width:0}@media(max-width:760px){.history-grid{grid-template-columns:1fr}}</style>
+.amount-input-wrap{display:flex;align-items:center;gap:8px}.amount-input-wrap input{flex:1;min-width:0}.amount-suffix{min-width:54px;text-align:center;padding:11px 12px;font-weight:800;border:1px solid var(--line);border-radius:10px;background:#17243a;color:#cbd6eb}.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.virtual-balance-editor{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:16px;margin:16px 0 18px;border:1px solid #30415f;border-radius:15px;background:linear-gradient(145deg,#111e31,#0c1525)}.virtual-balance-editor h3{margin:0;font-size:15px}.virtual-balance-editor form{align-items:stretch}.virtual-balance-editor input{flex:1;min-width:0}.virtual-balance-editor .message{margin-top:0}.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.history-subpanel{min-width:0;padding:16px;border:1px solid #2a3a55;border-radius:14px;background:linear-gradient(145deg,#111c2d,#0c1422)}.history-subpanel h3{margin:0 0 5px}.history-subpanel .history-list{margin-top:12px}.history-subpanel a{color:#aebeff;font-size:13px;overflow-wrap:anywhere}.history-subpanel .history-item{min-width:0}@media(max-width:760px){.history-grid{grid-template-columns:1fr}}
+
+/* Compact, contextual profile deletion with an inline confirmation step */
+.profile-actions-row{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-top:12px}
+.profile-actions-row>.field{flex:1;min-width:180px;margin:0}
+.profile-delete-trigger{align-self:flex-start;min-height:36px;padding:8px 12px;border:1px solid #5a3342;background:rgba(59,32,45,.62);color:#ffd5dc;box-shadow:none;font-size:12px;border-radius:10px}
+.profile-delete-trigger:hover:not(:disabled){border-color:#a45b6d;background:#502635}
+.profile-delete-confirm{margin-top:12px;padding:12px 14px;border:1px solid #5a3342;border-radius:12px;background:linear-gradient(135deg,rgba(59,32,45,.55),rgba(17,25,40,.84));box-shadow:inset 0 1px 0 #ffffff0d}
+.profile-delete-confirm p{margin:0 0 10px;font-size:13px;color:#f5dbe0;line-height:1.55}
+.profile-delete-confirm .row{justify-content:flex-end;flex-wrap:wrap}
+.profile-delete-confirm button{min-height:36px;padding:8px 12px;font-size:12px}
+.profile-delete-confirm .danger{border:1px solid #a34d63;background:linear-gradient(135deg,#763348,#4a2533);color:#fff0f3;box-shadow:none}
+.profile-delete-confirm .secondary{background:#26344d;border:1px solid #354865;box-shadow:none}
+@media(max-width:520px){.profile-actions-row{align-items:stretch}.profile-actions-row>.field{min-width:0}.profile-actions-row>.profile-delete-trigger{flex:0 0 auto}.profile-delete-confirm .row{display:grid;grid-template-columns:1fr 1fr}.profile-delete-confirm button{white-space:normal}}
+</style>
 </head>
 <body><main>
 <header><div class="brand">Paper trading · Read-only monitoring</div><h1>Solana Copy Engine</h1><p class="subtitle">A simple dashboard for tracked wallets and paper-copy settings.</p></header>
@@ -111,7 +125,14 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <div id="selected-profile-detail" class="profile-detail">
 <div class="panel-head"><div><h3 id="detail-profile-title">Choose a paper profile</h3><p id="detail-profile-subtitle" class="hint">Create or select a profile to manage source wallets.</p></div><span id="detail-profile-status" class="status">No selection</span></div>
 
+<div class="profile-actions-row">
 <div class="field"><button id="activate-profile" class="secondary" type="button" disabled>Activate Profile</button><p class="hint">Activation does not start monitoring. Start Monitoring remains a separate, manual action.</p></div>
+<button id="show-delete-profile" class="profile-delete-trigger" type="button" disabled aria-expanded="false">Delete Profile</button>
+</div>
+<div id="profile-delete-confirm" class="profile-delete-confirm hidden" role="group" aria-labelledby="profile-delete-confirm-text">
+<p id="profile-delete-confirm-text">Confirm that you want to delete this paper profile.</p>
+<div class="row"><button id="cancel-delete-profile" type="button" class="secondary">Cancel</button><button id="confirm-delete-profile" type="button" class="danger">Confirm Delete</button></div>
+</div>
 </div>
 </section>
 <section class="wallet-section-card">
@@ -152,7 +173,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </main>
 <script>
 const $ = id => document.getElementById(id);
-let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, balanceInputDirty = false, balanceSaveInProgress = false;
+let wallets = [], profiles = [], selectedProfile = "", deleteTargetProfileId = "", backendReady = false, currentMonitor = false, balanceInputDirty = false, balanceSaveInProgress = false;
 const headers = {"Content-Type":"application/json"};
 function apiRequestHeaders(extra={}) {
   let token = "";
@@ -259,7 +280,40 @@ async function loadProfiles(){
   renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();renderWallets();if($("history-details").open)await loadHistory();
  }catch(e){say("wallet-message","Profiles unavailable: "+e.message);}
 }
-function renderProfileCards(){const host=$("profile-cards");host.replaceChildren();if(!profiles.length){const p=document.createElement("p");p.className="empty";p.textContent="No paper profile yet. Create one to organize the public wallets you want to monitor.";host.append(p);}profiles.forEach(p=>{const card=document.createElement("button");card.type="button";card.className="profile-card";card.setAttribute("aria-pressed",String(p.profile_id===selectedProfile));const name=document.createElement("span");name.className="card-name";name.textContent=p.name||"Paper profile";const address=document.createElement("span");address.className="card-address";address.textContent="Paper-only · no personal wallet required";const meta=document.createElement("span");meta.className="card-meta";const state=document.createElement("span");state.textContent=(p.status||"disabled").toUpperCase();const count=document.createElement("span");count.textContent=(p.source_wallets||[]).length+" source wallet(s)";meta.append(state,count);card.append(name,address,meta);card.addEventListener("click",async()=>{if(balanceInputDirty&&selectedProfile!==p.profile_id&&!confirm("Discard the unsaved virtual balance change before switching profiles?"))return;balanceInputDirty=false;selectedProfile=p.profile_id;$("profile-select").value=selectedProfile;await loadProfiles();if($("history-details").open)await loadHistory();});host.append(card);});$("create-profile").disabled=profiles.length>=3;$("create-profile").title=profiles.length>=3?"Maximum of 3 paper profiles reached":"";const p=selected();$("detail-profile-title").textContent=p?p.name:"Select a paper profile";$("detail-profile-subtitle").textContent=p?(p.source_wallets||[]).length+" public source wallet(s) assigned":"Create a profile to group source wallets.";$("detail-profile-status").textContent=p?(p.status||"disabled").toUpperCase():"No selection";$("selected-profile-detail").classList.toggle("hidden",!p);$("activate-profile").disabled=!p||String(p.status||"").toLowerCase()==="active";}
+function renderProfileCards(){
+ const host=$("profile-cards");host.replaceChildren();
+ if(!profiles.length){const p=document.createElement("p");p.className="empty";p.textContent="No paper profile yet. Create one to organize the public wallets you want to monitor.";host.append(p);}
+ profiles.forEach(p=>{
+  const card=document.createElement("button");card.type="button";card.className="profile-card";card.setAttribute("aria-pressed",String(p.profile_id===selectedProfile));
+  const name=document.createElement("span");name.className="card-name";name.textContent=p.name||"Paper profile";
+  const address=document.createElement("span");address.className="card-address";address.textContent="Paper-only · no personal wallet required";
+  const meta=document.createElement("span");meta.className="card-meta";
+  const state=document.createElement("span");state.textContent=(p.status||"disabled").toUpperCase();
+  const count=document.createElement("span");count.textContent=(p.source_wallets||[]).length+" source wallet(s)";
+  meta.append(state,count);card.append(name,address,meta);
+  card.addEventListener("click",async()=>{
+   if(balanceInputDirty&&selectedProfile!==p.profile_id&&!confirm("Discard the unsaved virtual balance change before switching profiles?"))return;
+   hideProfileDeleteConfirmation();deleteTargetProfileId="";balanceInputDirty=false;selectedProfile=p.profile_id;$("profile-select").value=selectedProfile;await loadProfiles();if($("history-details").open)await loadHistory();
+  });
+  host.append(card);
+ });
+ $("create-profile").disabled=profiles.length>=3;$("create-profile").title=profiles.length>=3?"Maximum of 3 paper profiles reached":"";
+ const p=selected();
+ $("detail-profile-title").textContent=p?p.name:"Select a paper profile";
+ $("detail-profile-subtitle").textContent=p?(p.source_wallets||[]).length+" public source wallet(s) assigned":"Create a profile to group source wallets.";
+ $("detail-profile-status").textContent=p?(p.status||"disabled").toUpperCase():"No selection";
+ $("selected-profile-detail").classList.toggle("hidden",!p);
+ $("activate-profile").disabled=!p||String(p.status||"").toLowerCase()==="active";
+ $("show-delete-profile").disabled=!p;
+ if(!p){hideProfileDeleteConfirmation();deleteTargetProfileId="";}
+}
+function hideProfileDeleteConfirmation(){
+ const panel=$("profile-delete-confirm"),trigger=$("show-delete-profile"),confirmButton=$("confirm-delete-profile");
+ if(panel)panel.classList.add("hidden");
+ if(trigger)trigger.setAttribute("aria-expanded","false");
+ if(confirmButton)confirmButton.disabled=false;
+}
+
 function selected(){return profiles.find(p=>p.profile_id===selectedProfile);}
 function settingsOf(p){return p?.settings?.paper_trading||p?.settings?.settings?.paper_trading||{};}
 function renderDirectionFromProfile(){
@@ -358,6 +412,40 @@ $("start-monitoring").addEventListener("click",async()=>{const p=selected();if(!
 $("stop-monitoring").addEventListener("click",async()=>{if(!selectedProfile){say("monitor-message","Select a profile first.");return;}try{await post("/api/profile-monitor",{action:"stop",profile_id:selectedProfile});say("monitor-message","Stop requested for this profile.");await loadMonitor();}catch(e){say("monitor-message",e.message);}});
 $("wallet-search").addEventListener("input",()=>renderWallets());
 $("activate-profile").addEventListener("click",async()=>{if(!selectedProfile){say("wallet-message","Create or select a profile first.");return;}try{await post("/api/profiles",{action:"update",profile_id:selectedProfile,status:"active"});say("wallet-message","Paper profile activated. Monitoring remains stopped until you start it.");await loadProfiles();await loadMonitor();}catch(e){say("wallet-message",e.message);}});
+$("show-delete-profile").addEventListener("click",()=>{
+ const p=selected();
+ if(!p||!selectedProfile){say("profile-card-message","Select a paper profile before deleting it.");return;}
+ deleteTargetProfileId=selectedProfile;
+ const unsaved=balanceInputDirty?" Any unsaved virtual-balance edit will be discarded.":"";
+ $("profile-delete-confirm-text").textContent="Delete \""+(p.name||"Paper profile")+"\" from this workspace? Its monitoring will stop, and its stored paper history will be preserved. Other profiles will not be affected."+unsaved;
+ $("profile-delete-confirm").classList.remove("hidden");
+ $("show-delete-profile").setAttribute("aria-expanded","true");
+ $("confirm-delete-profile").disabled=false;
+});
+$("cancel-delete-profile").addEventListener("click",()=>{
+ hideProfileDeleteConfirmation();deleteTargetProfileId="";
+});
+$("confirm-delete-profile").addEventListener("click",async()=>{
+ const targetId=deleteTargetProfileId;
+ const p=profiles.find(item=>item.profile_id===targetId);
+ if(!targetId||!p){hideProfileDeleteConfirmation();deleteTargetProfileId="";say("profile-card-message","The selected profile is no longer available. Refresh the profile list and try again.");return;}
+ if(balanceSaveInProgress){say("profile-card-message","Wait for the virtual-balance save to finish before deleting this profile.");return;}
+ const button=$("confirm-delete-profile"),name=p.name||"Paper profile";
+ button.disabled=true;
+ say("profile-card-message","Deleting "+name+"…");
+ try{
+  const result=await post("/api/profiles",{action:"delete",profile_id:targetId});
+  if(!result||result.deleted!==true)throw new Error("The backend did not confirm profile deletion.");
+  hideProfileDeleteConfirmation();deleteTargetProfileId="";
+  if(selectedProfile===targetId){selectedProfile="";balanceInputDirty=false;}
+  say("profile-card-message",name+" was deleted. Its stored paper history is preserved; other profiles are unchanged.");
+  await loadProfiles();
+  if($("history-details").open)await loadHistory();
+ }catch(e){
+  say("profile-card-message","Could not delete "+name+": "+e.message);
+  button.disabled=false;
+ }
+});
 function appendHistoryField(card,label,value){const p=document.createElement("p");p.className="hint";p.textContent=label+": "+(value===null||value===undefined||value===""?"unavailable":String(value));card.append(p);}
 async function loadTransactionHistory(){
  const list=$("transaction-history-list");list.replaceChildren();

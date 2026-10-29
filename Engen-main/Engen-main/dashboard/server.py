@@ -218,7 +218,7 @@ def is_valid_solana_address(value):
 
 
 # Creating services does not start monitoring or make RPC requests.
-monitor_service = MonitorService(create_scan_function(), interval=30)
+monitor_service = MonitorService(create_scan_function(), interval=15)
 # Each saved profile gets its own in-memory monitor lifecycle. The saved source
 # wallet list remains profile-scoped in ProfileStore.
 profile_monitor_services = {}
@@ -810,7 +810,7 @@ def get_profile_monitor_service(profile_id):
                 profile_id=canonical,
                 profile_store=ProfileStore(PROFILE_STORE_DB),
             ),
-            interval=30,
+            interval=15,
         )
     return profile_monitor_services[canonical]
 
@@ -823,7 +823,7 @@ def profile_monitor_report(profile_id):
         raise ValueError("Profile not found.")
     service = profile_monitor_services.get(canonical)
     status = service.status() if service is not None else {
-        "enabled": False, "interval_seconds": 30, "wallets": [],
+        "enabled": False, "interval_seconds": 15, "wallets": [],
     }
     return {"profile_id": canonical, "profile_status": profile["status"], "monitor": status}
 
@@ -1200,7 +1200,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     set_profile_monitor_persistence(profile_id, False)
                     service = profile_monitor_services.get(profile_id)
                     status = service.stop() if service is not None else {
-                        "enabled": False, "interval_seconds": 30, "wallets": [],
+                        "enabled": False, "interval_seconds": 15, "wallets": [],
                     }
                     self.send_json(200, {"profile_id": profile_id, "monitor": status})
                     return

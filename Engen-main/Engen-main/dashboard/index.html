@@ -495,19 +495,14 @@ let historyTokenMetadataQueue=Promise.resolve();
 function updateHistoryTokenCell(container){
  const mint=container.dataset.tokenMint||"";
  const primary=container.querySelector(".history-token-primary");
- const secondary=container.querySelector(".history-token-secondary");
- if(!primary||!secondary)return;
+ if(!primary)return;
  const meta=historyTokenMetadataCache.get(mint);
- const display=meta&&(meta.symbol||meta.name)?(meta.symbol||meta.name):historyShortAddress(mint);
- primary.textContent=display||"Token unavailable";
- primary.title=meta?.name||mint||"Token unavailable";
- if(meta?.symbol&&meta?.name&&meta.symbol.toLowerCase()!==meta.name.toLowerCase()){
-  secondary.textContent=meta.name;
-  secondary.classList.remove("hidden");
- }else{
-  secondary.textContent="";
-  secondary.classList.add("hidden");
- }
+ const name=meta&&typeof meta.name==="string"?meta.name.trim():"";
+ const symbol=meta&&typeof meta.symbol==="string"?meta.symbol.trim():"";
+ // Never display a mint address here, even when public token metadata is missing.
+ const display=name||symbol||"Token name unavailable";
+ primary.textContent=display;
+ primary.title=display;
 }
 function refreshHistoryTokenCells(){
  document.querySelectorAll(".history-token-cell").forEach(updateHistoryTokenCell);
@@ -517,9 +512,8 @@ function makeHistoryTokenCell(mint){
  if(!mint){cell.textContent="Token unavailable";return cell;}
  const wrapper=document.createElement("div");wrapper.className="history-token-cell";wrapper.dataset.tokenMint=mint;
  const labels=document.createElement("div");labels.className="history-token-labels";
- const primary=document.createElement("span");primary.className="history-token-primary";primary.textContent=historyShortAddress(mint);primary.title=mint;
- const secondary=document.createElement("span");secondary.className="history-token-secondary hidden";
- labels.append(primary,secondary);
+ const primary=document.createElement("span");primary.className="history-token-primary";primary.textContent="Token name unavailable";primary.title="Token name unavailable";
+ labels.append(primary);
  const copy=document.createElement("button");copy.type="button";copy.className="history-token-copy";copy.textContent="Copy";
  copy.title="Copy full token mint address";copy.setAttribute("aria-label","Copy full token mint address");
  copy.addEventListener("click",()=>copyHistoryTokenMint(mint,copy));

@@ -1,0 +1,32 @@
+name: Paper simulation regression
+
+on:
+  pull_request:
+    branches:
+      - feature/paper-balance-dashboard-refresh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paper-simulation-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run the complete offline unit suite ten times
+        working-directory: Engen-main/Engen-main
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run_number in {1..10}; do
+            echo "=== Paper simulation regression run ${run_number}/10 ==="
+            python -m unittest discover -s engine/engine/engine/tests -v
+          done

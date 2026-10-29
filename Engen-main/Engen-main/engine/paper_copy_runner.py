@@ -313,7 +313,7 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
             else:
                 # Only USDC/USDT notionals are safely interpretable as USD here.
                 stable_quote_mints = {
-                    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGkGZwyTDt1v",
+                    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
                     "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
                 }
                 if quote_mint not in stable_quote_mints:

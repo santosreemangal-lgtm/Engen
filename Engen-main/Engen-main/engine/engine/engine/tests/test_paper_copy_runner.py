@@ -504,7 +504,7 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertEqual(outcomes[0]["status"], "WAITING_FOR_MARKET_DATA")
         self.assertEqual(simulator.report()["orders"][0]["status"], "CREATED")
 
-    def test_unknown_quote_mint_can_use_fixed_virtual_sizing_but_not_mirror_usd(self):
+    def test_unknown_quote_mint_queues_mirror_order_awaiting_verified_usd_price(self):
         result = candidate_result()
         unknown_quote = "UnknownQuoteMint111111111111111111111111"
         result["trade_signal"]["quote_mints"] = [unknown_quote]
@@ -521,10 +521,12 @@ class PaperCopyRunnerTests(unittest.TestCase):
         mirror_simulator = FakeSimulator()
         mirrored = queue_paper_orders(
             WALLET, [result], mirror_simulator,
-            copy_settings={"sizing_mode": "MIRROR_AMOUNT", "sizing_value": 10, "max_buy_usd": 10},
+            copy_settings={"sizing_mode": "MIRROR_AMOUNT", "sizing_value": 10, "max_buy_usd": 1000},
         )
-        self.assertEqual(mirrored, [])
-        self.assertEqual(mirror_simulator.orders, {})
+        self.assertEqual(len(mirrored), 1)
+        self.assertIsNone(mirrored[0]["target_notional_usd"])
+        self.assertEqual(mirrored[0]["execution_state"], "AWAITING_VERIFIED_MARKET_DATA")
+        self.assertEqual(len(mirror_simulator.orders), 1)
 
 
 if __name__ == "__main__":

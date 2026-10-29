@@ -77,6 +77,18 @@ footer.hint{padding:10px 4px;line-height:1.7}
 @media(max-width:760px){.wallet-layout{grid-template-columns:1fr}.wallet-top-actions{width:100%}.wallet-top-actions button{flex:1}}
 @media(max-width:520px){.wallet-top-actions{display:grid;grid-template-columns:1fr 1fr}.wallet-top-actions .status{grid-column:1/-1}.wallet-section-card{padding:14px}.wallet-top-actions button{width:100%;white-space:normal}}
 .amount-input-wrap{display:flex;align-items:center;gap:8px}.amount-input-wrap input{flex:1;min-width:0}.amount-suffix{min-width:54px;text-align:center;padding:11px 12px;font-weight:800;border:1px solid var(--line);border-radius:10px;background:#17243a;color:#cbd6eb}.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.virtual-balance-editor{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:16px;margin:16px 0 18px;border:1px solid #30415f;border-radius:15px;background:linear-gradient(145deg,#111e31,#0c1525)}.virtual-balance-editor h3{margin:0;font-size:15px}.virtual-balance-editor form{align-items:stretch}.virtual-balance-editor input{flex:1;min-width:0}.virtual-balance-editor .message{margin-top:0}.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.history-subpanel{min-width:0;padding:16px;border:1px solid #2a3a55;border-radius:14px;background:linear-gradient(145deg,#111c2d,#0c1422)}.history-subpanel h3{margin:0 0 5px}.history-subpanel .history-list{margin-top:12px}.history-subpanel a{color:#aebeff;font-size:13px;overflow-wrap:anywhere}.history-subpanel .history-item{min-width:0}@media(max-width:760px){.history-grid{grid-template-columns:1fr}}
+/* History stays inside compact, independently scrollable panels. */
+.history-subpanel{max-height:480px;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+.history-subpanel h3{position:sticky;top:-1px;z-index:2;padding:4px 0 9px;background:#111c2d}
+.paper-history-table-wrap{max-height:400px;overflow:auto;overscroll-behavior:contain;border:1px solid #2a3a55;border-radius:10px}
+.paper-history-table{width:100%;min-width:700px;border-collapse:separate;border-spacing:0;font-size:12px;text-align:left}
+.paper-history-table th,.paper-history-table td{padding:10px 12px;border-bottom:1px solid #25344b;white-space:nowrap}
+.paper-history-table th{position:sticky;top:0;z-index:1;background:#17243a;color:#cbd6eb;font-weight:700}
+.paper-history-table tbody tr:last-child td{border-bottom:0}
+.paper-history-table .buy{color:#55d8b0;font-weight:800}
+.paper-history-table .sell{color:#ff8798;font-weight:800}
+.paper-history-table .token-cell{max-width:150px;overflow:hidden;text-overflow:ellipsis}
+
 
 /* Compact, contextual profile deletion with an inline confirmation step */
 .profile-actions-row{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-top:12px}
@@ -479,17 +491,34 @@ async function loadPaperTradeHistory(reportOverride){
   if(r.error){const p=document.createElement("p");p.className="empty";p.textContent="Paper trade history unavailable: "+r.error;list.append(p);say("paper-trade-history-message",r.error);return;}
   const orders=Array.isArray(r.orders)?r.orders.slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||""))):[];
   const fills=Array.isArray(r.fills)?r.fills:[];
-  if(!orders.length){const p=document.createElement("p");p.className="empty";p.textContent="No simulated paper orders yet. Observed transactions will appear in the separate transaction list; a paper order is shown here only when the engine actually queues one.";list.append(p);}
+  if(!orders.length){const p=document.createElement("p");p.className="empty";p.textContent="No simulated paper orders yet. Observed transactions are listed separately; orders appear here only after the engine queues them.";list.append(p);say("paper-trade-history-message","No paper orders have been queued for this profile.");return;}
+  const wrap=document.createElement("div");wrap.className="paper-history-table-wrap";
+  const table=document.createElement("table");table.className="paper-history-table";
+  const thead=document.createElement("thead"),headRow=document.createElement("tr");
+  ["Type","Token","Amount","Total USD","Profit","Age","Fee"].forEach(label=>{const th=document.createElement("th");th.textContent=label;headRow.append(th);});
+  thead.append(headRow);table.append(thead);
+  const tbody=document.createElement("tbody");
+  const ageLabel=value=>{const time=Date.parse(value||"");if(!Number.isFinite(time))return "—";const seconds=Math.max(0,Math.floor((Date.now()-time)/1000));return seconds<60?seconds+"s":seconds<3600?Math.floor(seconds/60)+"m":Math.floor(seconds/3600)+"h";};
+  const moneyValue=value=>{const number=Number(value);return Number.isFinite(number)?"$"+number.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—";};
   orders.forEach(order=>{
-   const item=document.createElement("article");item.className="history-item";const title=document.createElement("strong");title.textContent=(order.side||"ORDER")+" · "+(order.status||"unknown");item.append(title);
-   const details=order.details&&typeof order.details==="object"?order.details:{};
-   appendHistoryField(item,"Asset",order.asset_mint);appendHistoryField(item,"Paper quantity",order.quantity);appendHistoryField(item,"Quote currency",order.quote_mint);appendHistoryField(item,"Quote amount",order.quote_amount===null||order.quote_amount===undefined?null:String(order.quote_amount)+(order.quote_mint?" "+order.quote_mint:""));appendHistoryField(item,"Source wallet",details.source_wallet);appendHistoryField(item,"Sizing mode",details.sizing_mode==="SOURCE_PERCENT"?String(details.sizing_value??"")+"%":details.sizing_mode==="FIXED_USD"?"$"+String(details.target_notional_usd??details.sizing_value??""):details.sizing_mode);appendHistoryField(item,"Created at",order.created_at);appendHistoryField(item,"Status reason",order.reason);
    const fill=fills.find(x=>x.order_id===order.order_id);
-   if(fill){appendHistoryField(item,"Execution price",fill.execution_price);appendHistoryField(item,"Gross quote",fill.gross_quote+(fill.currency?" "+fill.currency:""));appendHistoryField(item,"Fee",fill.fee+(fill.currency?" "+fill.currency:""));appendHistoryField(item,"Price source",fill.price_source);}
-   if(order.signal_id){appendHistoryField(item,"Paper signal ID",order.signal_id);}
-   const note=document.createElement("p");note.className="hint";note.textContent="SIMULATED ONLY · No real transaction was signed or broadcast.";item.append(note);list.append(item);
+   const details=order.details&&typeof order.details==="object"?order.details:{};
+   const cells=[
+    (order.side||"ORDER")+" · "+(order.status||"unknown"),
+    order.asset_mint||"—",
+    fill?.quantity??order.quantity??"—",
+    fill?.net_quote!==undefined?moneyValue(fill.net_quote):(details.target_notional_usd!==undefined?moneyValue(details.target_notional_usd):"Pending"),
+    details.realized_pnl!==undefined?moneyValue(details.realized_pnl):"—",
+    ageLabel(order.created_at),
+    fill?.fee!==undefined?moneyValue(fill.fee):"—"
+   ];
+   const tr=document.createElement("tr");
+   cells.forEach((value,index)=>{const td=document.createElement("td");td.textContent=String(value);if(index===0){td.className=String(order.side||"").toLowerCase();}if(index===1){td.className="token-cell";td.title=String(order.asset_mint||"");}tr.append(td);});
+   tbody.append(tr);
   });
-  say("paper-trade-history-message","Showing "+orders.length+" stored simulated paper order(s). This history is separate from observed on-chain transactions.");
+  table.append(tbody);wrap.append(table);list.append(wrap);
+  const note=document.createElement("p");note.className="hint";note.textContent="SIMULATED ONLY · Profit is shown only when the engine records a per-order value; — means unavailable. No real transaction is signed or broadcast.";list.append(note);
+  say("paper-trade-history-message","Showing "+orders.length+" simulated paper order(s). Scroll inside this table to inspect older activity.");
  }catch(e){say("paper-trade-history-message",e.message);}
 }
 async function loadHistory(){await Promise.all([loadTransactionHistory(),loadPaperTradeHistory(null)]);}

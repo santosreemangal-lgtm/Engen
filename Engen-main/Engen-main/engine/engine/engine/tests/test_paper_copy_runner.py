@@ -494,7 +494,7 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertFalse(report["real_trading"])
         self.assertFalse(report["transaction_broadcast"])
 
-    def test_missing_market_data_leaves_copy_order_queued(self):
+    def test_missing_market_data_leaves_copy_order_queued_with_visible_reason(self):
         simulator = PaperSimulator()
         simulator.add_virtual_balance("USD", "1000")
         queue_paper_orders(WALLET, [candidate_result()], simulator)
@@ -502,7 +502,80 @@ class PaperCopyRunnerTests(unittest.TestCase):
             WALLET, simulator, price_provider=lambda mint: None
         )
         self.assertEqual(outcomes[0]["status"], "WAITING_FOR_MARKET_DATA")
-        self.assertEqual(simulator.report()["orders"][0]["status"], "CREATED")
+        report_order = simulator.report()["orders"][0]
+        self.assertEqual(report_order["status"], "CREATED")
+        self.assertIn("No usable public USD price", report_order["reason"])
+        self.assertEqual(report_order["details"]["execution_state"], "WAITING_FOR_MARKET_DATA")
+
+    def test_small_paper_order_fills_with_five_thousand_dollar_liquidity(self):
+        simulator = PaperSimulator()
+        simulator.add_virtual_balance("USD", "1000")
+        queued = queue_paper_orders(
+            WALLET, [candidate_result()], simulator,
+            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "10", "max_buy_usd": 100},
+        )
+        self.assertEqual(len(queued), 1)
+        observed_at = datetime.now(timezone.utc).isoformat()
+
+        def provider(mint):
+            return MarketPrice(
+                mint=mint, price=Decimal("4"), currency="USD",
+                source="test-provider", observed_at=observed_at,
+                liquidity_usd=Decimal("5000"), liquidity_source="test-provider",
+                liquidity_observed_at=observed_at,
+            )
+
+        outcomes = execute_pending_paper_orders(WALLET, simulator, provider)
+        self.assertEqual(outcomes[0]["status"], "FILLED")
+        self.assertEqual(simulator.report()["orders"][0]["status"], "FILLED")
+
+    def test_buy_sized_to_entire_virtual_balance_reserves_fee_and_slippage(self):
+        simulator = PaperSimulator()
+        simulator.add_virtual_balance("USD", "10")
+        queued = queue_paper_orders(
+            WALLET, [candidate_result()], simulator,
+            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "10", "max_buy_usd": 10},
+        )
+        self.assertEqual(len(queued), 1)
+        observed_at = datetime.now(timezone.utc).isoformat()
+
+        def provider(mint):
+            return MarketPrice(
+                mint=mint, price=Decimal("4"), currency="USD",
+                source="test-provider", observed_at=observed_at,
+                liquidity_usd=Decimal("5000"), liquidity_source="test-provider",
+                liquidity_observed_at=observed_at,
+            )
+
+        outcomes = execute_pending_paper_orders(WALLET, simulator, provider)
+        self.assertEqual(outcomes[0]["status"], "FILLED")
+        report = simulator.report()
+        self.assertEqual(report["orders"][0]["status"], "FILLED")
+        self.assertGreaterEqual(Decimal(report["balances"]["USD"]), Decimal("0"))
+
+    def test_large_paper_order_requires_liquidity_relative_to_order_size(self):
+        simulator = PaperSimulator()
+        simulator.add_virtual_balance("USD", "5000")
+        queued = queue_paper_orders(
+            WALLET, [candidate_result()], simulator,
+            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "1000", "max_buy_usd": 1000},
+        )
+        self.assertEqual(len(queued), 1)
+        observed_at = datetime.now(timezone.utc).isoformat()
+
+        def provider(mint):
+            return MarketPrice(
+                mint=mint, price=Decimal("4"), currency="USD",
+                source="test-provider", observed_at=observed_at,
+                liquidity_usd=Decimal("5000"), liquidity_source="test-provider",
+                liquidity_observed_at=observed_at,
+            )
+
+        outcomes = execute_pending_paper_orders(WALLET, simulator, provider)
+        self.assertEqual(outcomes[0]["status"], "WAITING_FOR_MARKET_DATA")
+        order = simulator.report()["orders"][0]
+        self.assertIn("below the configured USD minimum", order["reason"])
+        self.assertEqual(order["status"], "CREATED")
 
     def test_unknown_quote_mint_queues_mirror_order_awaiting_verified_usd_price(self):
         result = candidate_result()

@@ -232,7 +232,7 @@ class PaperSimulator:
 
     def execute_order(self, order_id, market_price, *, now, max_price_age_seconds=60,
                       slippage_bps=50, fee_bps=10, network_cost=0, rpc_ok=True,
-                      min_liquidity_usd=10000, max_liquidity_age_seconds=60,
+                      min_liquidity_usd=1000, max_liquidity_age_seconds=60,
                       require_liquidity=True):
         order = self.orders.get(order_id)
         if order is None:
@@ -262,7 +262,12 @@ class PaperSimulator:
             if liquidity_age > max_liquidity_age_seconds:
                 return self._wait(order, "Liquidity data is stale; retrying without a fill.")
             if market_price.liquidity_usd < minimum_liquidity:
-                return self._wait(order, "Liquidity is below the configured USD minimum; retrying without a fill.")
+                return self._wait(
+                    order,
+                    "Pool liquidity $" + format(market_price.liquidity_usd, "f")
+                    + " is below the configured USD minimum of $" + format(minimum_liquidity, "f")
+                    + "; waiting for a deeper pool before paper execution.",
+                )
         for name, value in (("slippage_bps",slippage_bps),("fee_bps",fee_bps)):
             if not isinstance(value,int) or isinstance(value,bool) or not 0 <= value <= 10000:
                 raise ValueError(f"{name} must be an integer from 0 to 10000.")

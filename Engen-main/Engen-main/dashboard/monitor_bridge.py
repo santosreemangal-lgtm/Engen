@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation
 
 from engine.signature_store import SignatureStore
 from engine.transaction_monitor import monitor_wallet
-from engine.paper_copy_runner import (\n    queue_paper_orders, execute_pending_paper_orders, get_paper_simulator,\n    PAPER_SIMULATOR_LOCK,\n)
+from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders, get_paper_simulator, PAPER_SIMULATOR_LOCK
 from engine.profile_store import LABELS
 from engine.solana_validation import is_valid_transaction_signature
 

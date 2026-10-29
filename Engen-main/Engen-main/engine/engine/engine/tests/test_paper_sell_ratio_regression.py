@@ -64,8 +64,9 @@ class PaperSellRatioRegressionTests(unittest.TestCase):
             WALLET, [sell_signal("sig-half", 10, 5)], simulator
         )
         self.assertEqual(len(queued), 1)
+        order = next(iter(simulator.orders.values()))
         self.assertEqual(
-            Decimal(queued[0]["source_sell_fraction"]), Decimal("0.5")
+            Decimal(order["details"]["source_sell_fraction"]), Decimal("0.5")
         )
 
         outcomes = execute_pending_paper_orders(
@@ -84,8 +85,9 @@ class PaperSellRatioRegressionTests(unittest.TestCase):
             WALLET, [sell_signal("sig-quarter", 20, 5)], simulator
         )
         self.assertEqual(len(queued), 1)
+        order = next(iter(simulator.orders.values()))
         self.assertEqual(
-            Decimal(queued[0]["source_sell_fraction"]), Decimal("0.25")
+            Decimal(order["details"]["source_sell_fraction"]), Decimal("0.25")
         )
         outcomes = execute_pending_paper_orders(
             WALLET, simulator, price_provider=fresh_market_price

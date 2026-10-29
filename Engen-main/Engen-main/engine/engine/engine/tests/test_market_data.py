@@ -40,6 +40,8 @@ def pair(*, chain="solana", base=TOKEN, quote=USDC, price_usd="2.5",
 
 class MarketDataTests(unittest.TestCase):
     def setUp(self):
+        market_data.clear_market_price_cache()
+        self.addCleanup(market_data.clear_market_price_cache)
         self.valid_address = patch(
             "engine.market_data.is_valid_solana_address", return_value=True
         )
@@ -57,6 +59,15 @@ class MarketDataTests(unittest.TestCase):
         self.assertEqual(result.mint, TOKEN)
         self.assertEqual(result.price, Decimal("2.5"))
         self.assertEqual(result.liquidity_usd, Decimal("5000"))
+
+    def test_successful_price_snapshot_is_cached_for_repeated_requests(self):
+        raw = json.dumps([pair(price_usd="2.5")]).encode("utf-8")
+        with patch("engine.market_data.urlopen", return_value=FakeResponse(raw)) as mocked:
+            first = market_data.fetch_market_price(TOKEN)
+            second = market_data.fetch_market_price(TOKEN)
+        self.assertIsNotNone(first)
+        self.assertIs(first, second)
+        mocked.assert_called_once()
 
     def test_highest_liquidity_pool_is_selected(self):
         result = self.call_with_payload([

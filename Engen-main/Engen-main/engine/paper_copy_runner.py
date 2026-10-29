@@ -12,7 +12,6 @@ from decimal import Decimal
 
 from engine.paper_simulator import PaperSimulator
 from engine.market_data import fetch_market_price
-from engine.transaction_analysis import QUOTE_TOKEN_MINTS
 from engine.transaction_analysis import WRAPPED_SOL_MINT
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -191,7 +190,6 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
         if (
             not isinstance(asset_mints, list) or len(asset_mints) != 1
             or not isinstance(quote_mints, list) or len(quote_mints) != 1
-            or quote_mints[0] not in QUOTE_TOKEN_MINTS
             or not isinstance(changes, list)
         ):
             continue

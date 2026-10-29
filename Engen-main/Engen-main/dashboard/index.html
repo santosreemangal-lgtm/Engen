@@ -77,10 +77,12 @@ footer.hint{padding:10px 4px;line-height:1.7}
 @media(max-width:760px){.wallet-layout{grid-template-columns:1fr}.wallet-top-actions{width:100%}.wallet-top-actions button{flex:1}}
 @media(max-width:520px){.wallet-top-actions{display:grid;grid-template-columns:1fr 1fr}.wallet-top-actions .status{grid-column:1/-1}.wallet-section-card{padding:14px}.wallet-top-actions button{width:100%;white-space:normal}}
 .amount-input-wrap{display:flex;align-items:center;gap:8px}.amount-input-wrap input{flex:1;min-width:0}.amount-suffix{min-width:54px;text-align:center;padding:11px 12px;font-weight:800;border:1px solid var(--line);border-radius:10px;background:#17243a;color:#cbd6eb}.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.virtual-balance-editor{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:16px;margin:16px 0 18px;border:1px solid #30415f;border-radius:15px;background:linear-gradient(145deg,#111e31,#0c1525)}.virtual-balance-editor h3{margin:0;font-size:15px}.virtual-balance-editor form{align-items:stretch}.virtual-balance-editor input{flex:1;min-width:0}.virtual-balance-editor .message{margin-top:0}.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.history-subpanel{min-width:0;padding:16px;border:1px solid #2a3a55;border-radius:14px;background:linear-gradient(145deg,#111c2d,#0c1422)}.history-subpanel h3{margin:0 0 5px}.history-subpanel .history-list{margin-top:12px}.history-subpanel a{color:#aebeff;font-size:13px;overflow-wrap:anywhere}.history-subpanel .history-item{min-width:0}@media(max-width:760px){.history-grid{grid-template-columns:1fr}}
-/* History stays inside compact, independently scrollable panels. */
-.history-subpanel{max-height:480px;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
-.history-subpanel h3{position:sticky;top:-1px;z-index:2;padding:4px 0 9px;background:#111c2d}
-.paper-history-table-wrap{max-height:400px;overflow:auto;overscroll-behavior:contain;border:1px solid #2a3a55;border-radius:10px}
+/* History panels stay compact; their content scrolls inside the box. */
+.history-subpanel{max-height:480px;min-height:0;display:flex;flex-direction:column;overflow:hidden;scrollbar-gutter:stable}
+.history-subpanel h3{position:sticky;top:0;z-index:2;flex-shrink:0;padding:4px 0 9px;background:#111c2d}
+.history-subpanel>.hint{flex-shrink:0}
+.history-subpanel .history-list{min-height:0;flex:1;overflow:auto;overscroll-behavior:contain;padding-right:3px}
+.paper-history-table-wrap{overflow:visible;border:1px solid #2a3a55;border-radius:10px}
 .paper-history-table{width:100%;min-width:700px;border-collapse:separate;border-spacing:0;font-size:12px;text-align:left}
 .paper-history-table th,.paper-history-table td{padding:10px 12px;border-bottom:1px solid #25344b;white-space:nowrap}
 .paper-history-table th{position:sticky;top:0;z-index:1;background:#17243a;color:#cbd6eb;font-weight:700}

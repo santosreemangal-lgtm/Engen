@@ -64,6 +64,31 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
             or (wallet_address is not None and details.get("source_wallet") != wallet_address)
         ):
             continue
+        if order.get("side") == "SELL":
+            fraction_raw = details.get("source_sell_fraction")
+            try:
+                sell_fraction = Decimal(str(fraction_raw))
+            except Exception:
+                sell_fraction = Decimal("0")
+            owned_quantity = Decimal(str(simulator.balances.get(order.get("asset_mint"), "0")))
+            if not sell_fraction.is_finite() or sell_fraction <= 0 or sell_fraction > 1:
+                outcomes.append({
+                    "order_id": order.get("order_id"),
+                    "signal_id": order.get("signal_id"),
+                    "status": "WAITING_FOR_POSITION",
+                    "reason": "Source sell fraction is unavailable or invalid; no paper sell was executed.",
+                })
+                continue
+            if owned_quantity <= 0:
+                outcomes.append({
+                    "order_id": order.get("order_id"),
+                    "signal_id": order.get("signal_id"),
+                    "status": "WAITING_FOR_POSITION",
+                    "reason": "No copied token position is currently held; sell remains queued.",
+                })
+                continue
+            order["quantity"] = str(owned_quantity * sell_fraction)
+            simulator._persist(order)
         try:
             market_price = price_provider(order.get("asset_mint"))
         except Exception:
@@ -248,18 +273,12 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
             })
             if source_before is None or not source_before.is_finite() or source_before <= 0 or source_quantity > source_before:
                 continue
-            balances = getattr(simulator, "balances", {})
-            owned_quantity = balances.get(asset_mint) if isinstance(balances, dict) else None
-            if owned_quantity is None:
-                # Do not invent a paper position for a sell.
-                continue
-            owned_quantity = Decimal(str(owned_quantity))
-            if owned_quantity <= 0:
-                continue
             sell_fraction = source_quantity / source_before
-            order_quantity = min(owned_quantity, owned_quantity * sell_fraction)
-            if order_quantity <= 0:
+            if sell_fraction <= 0 or sell_fraction > 1:
                 continue
+            # Resolve quantity at execution time, after earlier queued BUYs have had
+            # a chance to fill. This prevents same-scan BUY→SELL signals from being lost.
+            order_quantity = Decimal("1")
 
         signal_id = f"wallet-copy:{wallet_address}:{signature}"
         created_at = datetime.now(timezone.utc).isoformat()

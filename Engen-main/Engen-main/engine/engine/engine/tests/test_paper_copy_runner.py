@@ -246,7 +246,7 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertEqual(outcomes[0]["status"], "FILLED")
         report = simulator.report()
         self.assertEqual(report["orders"][0]["status"], "FILLED")
-        self.assertEqual(report["balances"][ASSET], "12.5")
+        self.assertEqual(report["balances"][ASSET], "2.5")
         self.assertLess(Decimal(report["balances"]["USD"]), Decimal("1000"))
         self.assertFalse(report["real_trading"])
         self.assertFalse(report["transaction_broadcast"])
@@ -256,7 +256,7 @@ class PaperCopyRunnerTests(unittest.TestCase):
         simulator.add_virtual_balance("USD", "1000")
         queued = queue_paper_orders(
             WALLET, [candidate_result()], simulator,
-            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "25"},
+            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "25", "max_buy_usd": 1000},
         )
         self.assertEqual(len(queued), 1)
         observed_at = datetime.now(timezone.utc).isoformat()

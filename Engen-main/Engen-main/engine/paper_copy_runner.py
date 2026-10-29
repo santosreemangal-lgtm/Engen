@@ -157,14 +157,44 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                         source_quote = Decimal(str(details.get("source_quote_amount", "0")))
                     except Exception:
                         source_quote = Decimal("0")
-                    if details.get("source_quote_mint") in stable_quote_mints and source_quote > 0:
+                    source_quote_mint = details.get("source_quote_mint")
+                    if source_quote_mint in stable_quote_mints and source_quote > 0:
                         target = source_quote
+                    elif source_quote_mint == WRAPPED_SOL_MINT and source_quote > 0:
+                        # Pump.fun/Solana swaps commonly use SOL as the quote.
+                        # Convert the source SOL amount using a fresh public SOL/USD
+                        # snapshot, then apply the normal user cap and cash limits.
+                        try:
+                            sol_price = price_provider(WRAPPED_SOL_MINT)
+                            price_value = Decimal(str(sol_price.price)) if sol_price is not None else Decimal("0")
+                            if (
+                                sol_price is not None
+                                and sol_price.mint == WRAPPED_SOL_MINT
+                                and str(sol_price.currency).upper() == "USD"
+                                and price_value.is_finite() and price_value > 0
+                                and sol_price.is_fresh(max_age_seconds=60, now=now)
+                            ):
+                                target = source_quote * price_value
+                        except Exception:
+                            target = None
             if target is None or not target.is_finite() or target <= 0:
+                waiting_for_price = (
+                    details.get("sizing_mode") == "MIRROR_AMOUNT"
+                    and details.get("source_quote_mint") == WRAPPED_SOL_MINT
+                )
+                if waiting_for_price:
+                    details["execution_state"] = "AWAITING_VERIFIED_MARKET_DATA"
+                    order["details"] = details
+                    simulator._persist(order)
                 outcomes.append({
                     "order_id": order.get("order_id"),
                     "signal_id": order.get("signal_id"),
-                    "status": "WAITING_FOR_VIRTUAL_BALANCE",
-                    "reason": "Paper BUY sizing is unavailable; check the saved copy settings and virtual balance.",
+                    "status": "WAITING_FOR_MARKET_DATA" if waiting_for_price else "WAITING_FOR_VIRTUAL_BALANCE",
+                    "reason": (
+                        "A fresh public SOL/USD price is required to size this mirrored paper BUY."
+                        if waiting_for_price else
+                        "Paper BUY sizing is unavailable; check the saved copy settings and virtual balance."
+                    ),
                 })
                 continue
             if max_buy is not None and max_buy.is_finite() and max_buy > 0:
@@ -375,14 +405,18 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
             elif sizing_mode == "FIXED_USD":
                 target_notional_usd = sizing_value
             else:
-                # Only USDC/USDT notionals are safely interpretable as USD here.
+                # Stablecoin notionals are already USD. For SOL-quoted swaps,
+                # defer conversion until execution can verify a fresh SOL/USD price.
                 stable_quote_mints = {
                     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
                     "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
                 }
-                if quote_mint not in stable_quote_mints:
+                if quote_mint in stable_quote_mints:
+                    target_notional_usd = abs(quote_amount)
+                elif quote_mint == WRAPPED_SOL_MINT:
+                    target_notional_usd = None
+                else:
                     continue
-                target_notional_usd = abs(quote_amount)
             if target_notional_usd is not None:
                 if max_buy_usd is not None:
                     target_notional_usd = min(target_notional_usd, max_buy_usd)
@@ -434,7 +468,7 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
                 "source_classification": signal["classification"],
                 "execution_state": (
                     "AWAITING_VIRTUAL_BALANCE"
-                    if side == "BUY" and target_notional_usd is None
+                    if side == "BUY" and (virtual_usd is None or virtual_usd <= 0)
                     else "AWAITING_VERIFIED_MARKET_DATA"
                 ),
                 "real_trading": False,

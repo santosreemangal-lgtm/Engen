@@ -23,6 +23,20 @@ class PaperSimulatorInitialBalanceTests(unittest.TestCase):
             self.assertEqual(reopened.balances["USD"], Decimal("1250.50"))
             self.assertEqual(reopened.report()["initial_balance"], "1250.50")
 
+    def test_updated_order_quantity_survives_database_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "paper.db"
+            simulator = PaperSimulator(db_path=database)
+            order = simulator.create_order(
+                "quantity-persistence", "BUY", "TokenMintExample", "1", "USD",
+                created_at="2026-10-30T00:00:00+00:00",
+            )
+            order["quantity"] = "2.5"
+            simulator._persist(order)
+
+            reopened = PaperSimulator(db_path=database)
+            self.assertEqual(reopened.orders[order["order_id"]]["quantity"], "2.5")
+
     def test_initial_balance_cannot_be_changed_after_initial_setup(self):
         with tempfile.TemporaryDirectory() as directory:
             simulator = PaperSimulator(db_path=Path(directory) / "paper.db")

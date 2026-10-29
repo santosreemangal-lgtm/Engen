@@ -77,6 +77,42 @@ footer.hint{padding:10px 4px;line-height:1.7}
 @media(max-width:760px){.wallet-layout{grid-template-columns:1fr}.wallet-top-actions{width:100%}.wallet-top-actions button{flex:1}}
 @media(max-width:520px){.wallet-top-actions{display:grid;grid-template-columns:1fr 1fr}.wallet-top-actions .status{grid-column:1/-1}.wallet-section-card{padding:14px}.wallet-top-actions button{width:100%;white-space:normal}}
 .amount-input-wrap{display:flex;align-items:center;gap:8px}.amount-input-wrap input{flex:1;min-width:0}.amount-suffix{min-width:54px;text-align:center;padding:11px 12px;font-weight:800;border:1px solid var(--line);border-radius:10px;background:#17243a;color:#cbd6eb}.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.virtual-balance-editor{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:16px;margin:16px 0 18px;border:1px solid #30415f;border-radius:15px;background:linear-gradient(145deg,#111e31,#0c1525)}.virtual-balance-editor h3{margin:0;font-size:15px}.virtual-balance-editor form{align-items:stretch}.virtual-balance-editor input{flex:1;min-width:0}.virtual-balance-editor .message{margin-top:0}.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.history-subpanel{min-width:0;padding:16px;border:1px solid #2a3a55;border-radius:14px;background:linear-gradient(145deg,#111c2d,#0c1422)}.history-subpanel h3{margin:0 0 5px}.history-subpanel .history-list{margin-top:12px}.history-subpanel a{color:#aebeff;font-size:13px;overflow-wrap:anywhere}.history-subpanel .history-item{min-width:0}@media(max-width:760px){.history-grid{grid-template-columns:1fr}}</style>
+<style>
+.history-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:14px 0 12px}
+.history-tabs,.history-filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.history-tab{border:1px solid #2b3b56;background:#101b2d;color:#aebbd0;border-radius:9px;padding:10px 14px;font-weight:700;cursor:pointer}
+.history-tab.active{background:#203c5c;border-color:#5d91d1;color:#f0f6ff}
+.history-filters select,.history-filters input{min-width:120px;max-width:210px;background:#0d1727;color:#e7eefb;border:1px solid #2b3b56;border-radius:8px;padding:9px 10px;font:inherit}
+.history-filters input{width:180px}
+.history-filters button,.history-pagination button{background:#1a2a41;color:#e7eefb;border:1px solid #30445f;border-radius:8px;padding:9px 12px;font-weight:650;cursor:pointer}
+.history-filters button:hover,.history-pagination button:hover:not(:disabled){border-color:#79a7e6;background:#213853}
+.history-pagination button:disabled{opacity:.4;cursor:not-allowed}
+.history-overview{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0 12px}
+.history-overview>div{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.history-overview strong{font-size:19px;color:#eef5ff;font-variant-numeric:tabular-nums}
+.history-overview span,.history-overview small{color:#9aabc3;font-size:12px}
+.history-overview p{margin:0}
+.history-table-wrap{width:100%;overflow-x:auto;border:1px solid #26364e;border-radius:11px;background:#0b1422}
+.history-table{width:100%;min-width:790px;border-collapse:separate;border-spacing:0;text-align:left}
+.history-table th{position:sticky;top:0;background:#142138;color:#9fb2cd;text-transform:uppercase;letter-spacing:.055em;font-size:10px;font-weight:750;padding:12px 13px;border-bottom:1px solid #2b3b56;white-space:nowrap}
+.history-table td{padding:12px 13px;border-bottom:1px solid #1c2b40;color:#dce6f5;font-size:12px;vertical-align:middle;max-width:260px}
+.history-table tr:last-child td{border-bottom:0}
+.history-table tbody tr:hover{background:#111f33}
+.history-main{display:block;color:#e9f1ff;font-weight:700;overflow-wrap:anywhere}
+.history-sub{display:block;margin-top:4px;color:#8094b1;font-size:10px;overflow-wrap:anywhere}
+.history-pill{display:inline-flex;align-items:center;max-width:150px;padding:5px 8px;border:1px solid #33465f;border-radius:7px;background:#15253a;color:#b8c9e2;font-size:10px;font-weight:800;white-space:nowrap}
+.history-pill.buy,.history-pill.filled,.history-pill.confirmed{background:#102e2b;border-color:#246a58;color:#72dfb7}
+.history-pill.sell{background:#332126;border-color:#78404a;color:#f3a0a8}
+.history-pill.failed,.history-pill.rejected{background:#321d26;border-color:#71404a;color:#f0a0ab}
+.history-pill.pending,.history-pill.created,.history-pill.waiting{background:#302b1e;border-color:#6e5e34;color:#e9ca81}
+.history-link{color:#88b9ff;text-decoration:none;font-weight:700;white-space:nowrap}
+.history-link:hover{text-decoration:underline}
+.history-empty{text-align:center!important;color:#8294ad!important;padding:26px 16px!important}
+.history-pagination{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:12px}
+.history-pagination span{font-size:11px;color:#9aaec8;font-variant-numeric:tabular-nums}
+#observed-history-panel,#paper-history-panel{min-width:0}
+@media(max-width:760px){.history-toolbar{align-items:stretch}.history-tabs{width:100%}.history-tab{flex:1}.history-filters{display:grid;grid-template-columns:1fr 1fr;width:100%}.history-filters select,.history-filters input{max-width:none;min-width:0;width:100%;box-sizing:border-box}.history-filters input{grid-column:1 / -1}.history-filters button{width:100%}.history-table th,.history-table td{padding:10px}.history-overview{align-items:flex-start}}
+</style>
 </head>
 <body><main>
 <header><div class="brand">Paper trading · Read-only monitoring</div><h1>Solana Copy Engine</h1><p class="subtitle">A simple dashboard for tracked wallets and paper-copy settings.</p></header>
@@ -141,11 +177,36 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </section>
 
 <section class="panel"><div class="panel-head"><h2>History</h2></div>
-<details id="history-details" class="field" open><summary>Choose history to inspect</summary>
-<div class="history-grid">
-<section class="history-subpanel"><h3>Observed On-chain Transactions</h3><p class="hint">Actual transaction signatures observed from the selected public source wallets. These are not simulated trades.</p><div id="transaction-history-list" class="history-list"><p class="empty">Select a profile to load observed transactions.</p></div><p id="transaction-history-message" class="message" role="status"></p></section>
-<section class="history-subpanel"><h3>Simulated Paper Trades</h3><p class="hint">Paper orders created by the copy engine. No signing or blockchain transaction is sent.</p><div id="paper-trade-history-list" class="history-list"><p class="empty">Select a profile to load paper trades.</p></div><p id="paper-trade-history-message" class="message" role="status"></p></section>
-</div></details>
+<details id="history-details" class="field" open><summary>Trade History</summary>
+<div class="history-toolbar">
+ <div class="history-tabs" role="tablist" aria-label="History type">
+  <button id="observed-history-tab" class="history-tab active" type="button" role="tab" aria-selected="true">Wallet Activity</button>
+  <button id="paper-history-tab" class="history-tab" type="button" role="tab" aria-selected="false">Paper Trades</button>
+ </div>
+ <div class="history-filters">
+  <select id="history-classification" aria-label="Filter by trade type">
+   <option value="">All activity</option><option value="BUY_CANDIDATE">Buys</option><option value="SELL_CANDIDATE">Sells</option><option value="FAILED_TRANSACTION">Failed</option><option value="TRANSFER">Transfers</option><option value="LIQUIDITY_OPERATION">Liquidity</option><option value="UNKNOWN">Unknown</option>
+  </select>
+  <select id="history-status" aria-label="Filter by status">
+   <option value="">All statuses</option><option value="confirmed">Confirmed</option><option value="observed">Observed</option><option value="failed">Failed</option><option value="pending">Pending</option><option value="unknown">Unknown</option>
+  </select>
+  <input id="history-token-filter" type="text" placeholder="Token mint address" aria-label="Filter by token mint address" autocomplete="off">
+  <button id="history-apply-filters" type="button">Apply</button>
+  <button id="history-refresh" class="history-refresh" type="button" title="Refresh history">Refresh</button>
+ </div>
+</div>
+<section id="observed-history-panel" class="history-subpanel" role="tabpanel" aria-labelledby="observed-history-tab">
+ <div class="history-overview"><div><strong id="observed-history-total">—</strong><span>matched wallet transactions</span></div><p class="hint">Public on-chain activity from monitored wallets. These rows are not simulated trades.</p></div>
+ <div class="history-table-wrap"><table class="history-table"><thead><tr><th>Time</th><th>Type</th><th>Token mint</th><th>Amount</th><th>Source wallet</th><th>Chain status</th><th>Explorer</th></tr></thead><tbody id="transaction-history-table"><tr><td colspan="7" class="history-empty">Select a profile to load wallet activity.</td></tr></tbody></table></div>
+ <div class="history-pagination"><button id="transaction-history-prev" type="button" disabled>Previous</button><span id="transaction-history-page">Page 1</span><button id="transaction-history-next" type="button" disabled>Next</button></div>
+ <p id="transaction-history-message" class="message" role="status"></p>
+</section>
+<section id="paper-history-panel" class="history-subpanel hidden" role="tabpanel" aria-labelledby="paper-history-tab">
+ <div class="history-overview"><div><strong id="paper-trade-total">—</strong><span>stored paper orders</span><small id="paper-fill-total">0 completed fills</small></div><p class="hint">Virtual simulation only. No wallet signing or blockchain transaction is performed.</p></div>
+ <div class="history-table-wrap"><table class="history-table"><thead><tr><th>Created</th><th>Side</th><th>Token mint</th><th>Quantity</th><th>Notional / price</th><th>Execution state</th><th>Source transaction</th></tr></thead><tbody id="paper-trade-history-table"><tr><td colspan="7" class="history-empty">Select a profile to load paper trades.</td></tr></tbody></table></div>
+ <p id="paper-trade-history-message" class="message" role="status"></p>
+</section>
+</details>
 </section>
 <details id="api-auth-details" class="api-auth-details"><summary>Optional API authentication</summary><div class="field"><label for="api-token">Dashboard API token</label><input id="api-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste bearer token (at least 32 characters)"><div class="row"><button id="save-api-token" type="button">Use Token</button><button id="clear-api-token" type="button" class="secondary">Clear Token</button></div><p id="api-auth-message" class="message" role="status">Only needed when DASHBOARD_AUTH_TOKEN is configured. The token is kept in this browser tab’s session storage.</p></div></details>
 <footer class="hint">Paper mode only. No private keys, signing, or live transactions. Portfolio prices and P&amp;L may remain unavailable when verified market prices are not available.</footer>

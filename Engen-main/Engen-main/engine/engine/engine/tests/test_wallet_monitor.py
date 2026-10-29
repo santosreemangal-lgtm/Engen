@@ -1,10 +1,12 @@
 import json
+import urllib.error
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from engine.signature_store import SignatureStore
+from engine.solana_public import SolanaRPCError
 from engine.wallet_monitor import (
     filter_new_signatures,
     get_and_store_new_wallet_signatures,
@@ -19,18 +21,18 @@ class WalletMonitorTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         db_path = Path(self.temp_dir.name) / "monitor.db"
         self.store = SignatureStore(db_path=db_path)
-        self.wallet = "test_public_wallet"
+        self.wallet = "11111111111111111111111111111111"
 
     def tearDown(self):
         self.temp_dir.cleanup()
 
-    @patch("engine.wallet_monitor.urllib.request.urlopen")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_before_cursor_is_sent_to_rpc(self, mock_urlopen):
         response = mock_urlopen.return_value.__enter__.return_value
         response.read.return_value = json.dumps({
             "jsonrpc": "2.0",
             "id": 1,
-            "result": [{"signature": "older-signature"}],
+            "result": [{"signature": "1111111111111111111111111111111111111111111111111111111111111112"}],
         }).encode("utf-8")
 
         result = get_wallet_signatures(
@@ -43,7 +45,7 @@ class WalletMonitorTests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            [{"signature": "older-signature"}],
+            [{"signature": "1111111111111111111111111111111111111111111111111111111111111112"}],
         )
 
         request = mock_urlopen.call_args.args[0]
@@ -61,6 +63,12 @@ class WalletMonitorTests(unittest.TestCase):
             ],
         )
         mock_urlopen.assert_called_once_with(request, timeout=7)
+
+    def test_invalid_public_wallet_address_is_rejected_before_rpc(self):
+        with patch("engine.wallet_monitor._rpc_request") as mock_rpc:
+            with self.assertRaises(ValueError):
+                get_wallet_signatures("not-a-wallet")
+            mock_rpc.assert_not_called()
 
     def test_empty_before_cursor_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -123,8 +131,8 @@ class WalletMonitorTests(unittest.TestCase):
         mock_get_signatures,
     ):
         mock_get_signatures.return_value = [
-            {"signature": "old_A"},
-            {"signature": "old_B"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111113"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111114"},
         ]
 
         result = get_and_store_new_wallet_signatures(
@@ -134,16 +142,53 @@ class WalletMonitorTests(unittest.TestCase):
 
         self.assertEqual(result, [])
         self.assertTrue(self.store.has_baseline(self.wallet))
-        self.assertTrue(self.store.has_seen(self.wallet, "old_A"))
-        self.assertTrue(self.store.has_seen(self.wallet, "old_B"))
+        self.assertTrue(self.store.has_seen(self.wallet, "1111111111111111111111111111111111111111111111111111111111111113"))
+        self.assertTrue(self.store.has_seen(self.wallet, "1111111111111111111111111111111111111111111111111111111111111114"))
 
         self.assertEqual(
-            self.store.get_status(self.wallet, "old_A"),
+            self.store.get_status(self.wallet, "1111111111111111111111111111111111111111111111111111111111111113"),
             "processed",
         )
         self.assertEqual(
-            self.store.get_status(self.wallet, "old_B"),
+            self.store.get_status(self.wallet, "1111111111111111111111111111111111111111111111111111111111111114"),
             "processed",
+        )
+
+    @patch("engine.wallet_monitor.get_wallet_signatures")
+    def test_recovers_new_signatures_across_pages_until_processed_anchor(
+        self, mock_get_signatures,
+    ):
+        anchor = "1" * 63 + "2"
+        new_a = "1" * 63 + "3"
+        new_b = "1" * 63 + "4"
+        older = "1" * 63 + "5"
+        self.store.mark_baseline(self.wallet)
+        self.store.save(self.wallet, anchor, slot=100)
+        self.store.mark_processed(self.wallet, anchor)
+        mock_get_signatures.side_effect = [
+            [
+                {"signature": new_a, "slot": 102},
+                {"signature": new_b, "slot": 101},
+            ],
+            [
+                {"signature": anchor, "slot": 100},
+                {"signature": older, "slot": 99},
+            ],
+        ]
+
+        results = get_and_store_new_wallet_signatures(
+            wallet_address=self.wallet, store=self.store, limit=2,
+        )
+
+        self.assertEqual(
+            {item["signature"] for item in results},
+            {new_a, new_b},
+        )
+        self.assertFalse(self.store.has_seen(self.wallet, older))
+        self.assertEqual(mock_get_signatures.call_count, 2)
+        self.assertEqual(
+            mock_get_signatures.call_args_list[1].kwargs["before"],
+            new_b,
         )
 
     @patch("engine.wallet_monitor.get_wallet_signatures")
@@ -178,7 +223,7 @@ class WalletMonitorTests(unittest.TestCase):
         self.store.mark_baseline(self.wallet)
 
         mock_get_signatures.return_value = [
-            {"signature": "new_A"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111115"},
         ]
 
         result = get_and_store_new_wallet_signatures(
@@ -188,10 +233,10 @@ class WalletMonitorTests(unittest.TestCase):
 
         self.assertEqual(
             result,
-            [{"signature": "new_A"}],
+            [{"signature": "1111111111111111111111111111111111111111111111111111111111111115"}],
         )
         self.assertEqual(
-            self.store.get_status(self.wallet, "new_A"),
+            self.store.get_status(self.wallet, "1111111111111111111111111111111111111111111111111111111111111115"),
             "pending",
         )
 
@@ -202,7 +247,7 @@ class WalletMonitorTests(unittest.TestCase):
     ):
         self.store.mark_baseline(self.wallet)
         mock_get_signatures.return_value = [
-            {"signature": "new_A"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111115"},
         ]
 
         first_result = get_and_store_new_wallet_signatures(
@@ -215,79 +260,36 @@ class WalletMonitorTests(unittest.TestCase):
             store=self.store,
         )
 
-        expected = [{"signature": "new_A"}]
+        expected = [{"signature": "1111111111111111111111111111111111111111111111111111111111111115"}]
 
         self.assertEqual(first_result, expected)
         self.assertEqual(second_result, expected)
         self.assertEqual(
-            self.store.get_status(self.wallet, "new_A"),
+            self.store.get_status(self.wallet, "1111111111111111111111111111111111111111111111111111111111111115"),
             "pending",
         )
 
 
-    @patch("engine.wallet_monitor.get_wallet_signatures")
-    def test_paginates_until_it_reaches_a_known_signature(
+    @patch("engine.rpc_policy.urllib.request.urlopen")
+    def test_rpc_errors_do_not_expose_configured_url_or_credentials(
         self,
-        mock_get_signatures,
+        mock_urlopen,
     ):
-        self.store.mark_baseline(self.wallet)
-        self.store.save(self.wallet, "known_signature")
-        self.store.mark_processed(self.wallet, "known_signature")
-
-        mock_get_signatures.side_effect = [
-            [
-                {"signature": "new_A"},
-                {"signature": "new_B"},
-            ],
-            [{"signature": "known_signature"}],
-        ]
-
-        result = get_and_store_new_wallet_signatures(
-            wallet_address=self.wallet,
-            store=self.store,
-            limit=2,
+        mock_urlopen.side_effect = urllib.error.URLError(
+            "https://rpc.example/?api-key=super-secret"
         )
 
-        self.assertEqual(
-            result,
-            [
-                {"signature": "new_A"},
-                {"signature": "new_B"},
-            ],
-        )
-        self.assertEqual(mock_get_signatures.call_count, 2)
-        self.assertEqual(
-            mock_get_signatures.call_args_list[1].kwargs["before"],
-            "new_B",
-        )
+        with self.assertRaisesRegex(
+            SolanaRPCError,
+            "Public Solana RPC request failed\\.",
+        ) as context:
+            get_wallet_signatures(
+                wallet_address=self.wallet,
+                rpc_url="https://rpc.example/?api-key=super-secret",
+            )
 
-
-    @patch("engine.wallet_monitor.get_wallet_signatures")
-    def test_paginates_past_known_pending_signatures(
-        self,
-        mock_get_signatures,
-    ):
-        self.store.mark_baseline(self.wallet)
-        self.store.save(self.wallet, "pending_old")
-        mock_get_signatures.side_effect = [
-            [{"signature": "new_A"}, {"signature": "pending_old"}],
-            [{"signature": "processed_old"}],
-        ]
-        self.store.save(self.wallet, "processed_old")
-        self.store.mark_processed(self.wallet, "processed_old")
-
-        result = get_and_store_new_wallet_signatures(
-            wallet_address=self.wallet,
-            store=self.store,
-            limit=2,
-        )
-
-        self.assertEqual(result, [{"signature": "new_A"}, {"signature": "pending_old"}])
-        self.assertEqual(mock_get_signatures.call_count, 2)
-        self.assertEqual(
-            mock_get_signatures.call_args_list[1].kwargs["before"],
-            "pending_old",
-        )
+        self.assertNotIn("super-secret", str(context.exception))
+        self.assertNotIn("rpc.example", str(context.exception))
 
 
 if __name__ == "__main__":

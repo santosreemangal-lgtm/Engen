@@ -77,7 +77,7 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertEqual(len(queued), 1)
         self.assertEqual(queued[0]["side"], "BUY")
         self.assertEqual(queued[0]["quantity"], "1")
-        self.assertEqual(queued[0]["target_notional_usd"], "50")
+        self.assertEqual(queued[0]["target_notional_usd"], "10")
         self.assertEqual(queued[0]["sizing_mode"], "SOURCE_PERCENT")
         self.assertEqual(queued[0]["sizing_value"], "5")
         self.assertEqual(queued[0]["source_quote_mint"], QUOTE)
@@ -96,7 +96,7 @@ class PaperCopyRunnerTests(unittest.TestCase):
         simulator = FakeSimulator()
         queued = queue_paper_orders(
             WALLET, [candidate_result()], simulator,
-            copy_settings={"sizing_mode": "SOURCE_PERCENT", "sizing_value": 20},
+            copy_settings={"sizing_mode": "SOURCE_PERCENT", "sizing_value": 20, "max_buy_usd": 1000},
         )
         self.assertEqual(len(queued), 1)
         self.assertEqual(queued[0]["quantity"], "1")
@@ -107,7 +107,7 @@ class PaperCopyRunnerTests(unittest.TestCase):
         simulator = FakeSimulator()
         queued = queue_paper_orders(
             WALLET, [candidate_result()], simulator,
-            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "25"},
+            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "25", "max_buy_usd": 1000},
         )
         self.assertEqual(len(queued), 1)
         self.assertEqual(queued[0]["sizing_mode"], "FIXED_USD")

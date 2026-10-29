@@ -218,7 +218,7 @@ def is_valid_solana_address(value):
 
 
 # Creating services does not start monitoring or make RPC requests.
-monitor_service = MonitorService(create_scan_function(), interval=30)
+monitor_service = MonitorService(create_scan_function(), interval=15)
 # Each saved profile gets its own in-memory monitor lifecycle. The saved source
 # wallet list remains profile-scoped in ProfileStore.
 profile_monitor_services = {}
@@ -551,31 +551,48 @@ def load_profile_paper_simulation_report(profile_id):
         token_values = []
         unrealized_values = []
         valuation_notes = []
+        balances_for_valuation = dict(base["balances"])
+        mints_for_valuation = [
+            mint for mint, amount in balances_for_valuation.items()
+            if mint != "USD" and Decimal(str(amount)) != 0
+        ]
+        # Snapshot cost basis under the simulator lock, then perform public
+        # network lookups outside that lock so price APIs cannot stall paper fills.
         with paper_simulator_lock:
             simulator = get_profile_paper_simulator(profile_id)
             ledger = simulator.pnl_ledger
-            for mint, amount in base["balances"].items():
-                quantity = Decimal(str(amount))
-                if mint == "USD" or quantity == 0:
-                    continue
-                market_price = fetch_market_price(mint)
-                if market_price is None or not market_price.is_fresh(max_age_seconds=60):
-                    token_values.append(None)
-                    unrealized_values.append(None)
-                    valuation_notes.append("price_unavailable_or_stale:" + mint)
-                    continue
-                token_values.append(quantity * market_price.price)
-                ledger_position = ledger.snapshot(mint)
-                if Decimal(ledger_position["quantity"]) != quantity:
-                    unrealized_values.append(None)
-                    valuation_notes.append("cost_basis_does_not_match_balance:" + mint)
-                    continue
-                pnl = ledger.unrealized_pnl(mint, market_price, max_age_seconds=60)
-                unrealized_values.append(
-                    Decimal(pnl["pnl"]) if pnl.get("status") == "calculated" else None
-                )
-                if pnl.get("status") != "calculated":
-                    valuation_notes.append(str(pnl.get("status")) + ":" + mint)
+            ledger_positions = {
+                mint: ledger.snapshot(mint) for mint in mints_for_valuation
+            }
+
+        if mints_for_valuation:
+            with ThreadPoolExecutor(max_workers=min(6, len(mints_for_valuation))) as pool:
+                prices = list(pool.map(fetch_market_price, mints_for_valuation))
+            prices_by_mint = dict(zip(mints_for_valuation, prices))
+        else:
+            prices_by_mint = {}
+
+        for mint in mints_for_valuation:
+            quantity = Decimal(str(balances_for_valuation[mint]))
+            market_price = prices_by_mint.get(mint)
+            if market_price is None or not market_price.is_fresh(max_age_seconds=60):
+                token_values.append(None)
+                unrealized_values.append(None)
+                valuation_notes.append("price_unavailable_or_stale:" + mint)
+                continue
+            token_values.append(quantity * market_price.price)
+            ledger_position = ledger_positions[mint]
+            if Decimal(ledger_position["quantity"]) != quantity:
+                unrealized_values.append(None)
+                valuation_notes.append("cost_basis_does_not_match_balance:" + mint)
+                continue
+            if not ledger_position.get("basis_complete") or ledger_position.get("cost_basis") is None:
+                unrealized_values.append(None)
+                valuation_notes.append("unknown_cost_basis:" + mint)
+                continue
+            unrealized_values.append(
+                quantity * market_price.price - Decimal(ledger_position["cost_basis"])
+            )
         cash_value = Decimal(str(base["available_balance"] or "0"))
         if all(value is not None for value in token_values):
             base["portfolio_value_usd"] = format(cash_value + sum(token_values, Decimal("0")), "f")
@@ -793,7 +810,7 @@ def get_profile_monitor_service(profile_id):
                 profile_id=canonical,
                 profile_store=ProfileStore(PROFILE_STORE_DB),
             ),
-            interval=30,
+            interval=15,
         )
     return profile_monitor_services[canonical]
 
@@ -806,7 +823,7 @@ def profile_monitor_report(profile_id):
         raise ValueError("Profile not found.")
     service = profile_monitor_services.get(canonical)
     status = service.status() if service is not None else {
-        "enabled": False, "interval_seconds": 30, "wallets": [],
+        "enabled": False, "interval_seconds": 15, "wallets": [],
     }
     return {"profile_id": canonical, "profile_status": profile["status"], "monitor": status}
 
@@ -1183,7 +1200,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     set_profile_monitor_persistence(profile_id, False)
                     service = profile_monitor_services.get(profile_id)
                     status = service.stop() if service is not None else {
-                        "enabled": False, "interval_seconds": 30, "wallets": [],
+                        "enabled": False, "interval_seconds": 15, "wallets": [],
                     }
                     self.send_json(200, {"profile_id": profile_id, "monitor": status})
                     return

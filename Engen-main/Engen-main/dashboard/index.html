@@ -736,11 +736,23 @@ function initApiAuthUi(){
 initApiAuthUi();
 loadWallets();
 loadRpcHealth();
+
+// Refresh portfolio valuation frequently without requiring a page reload.
+// A separate guard prevents overlapping slow requests from stacking up.
+let portfolioRefreshInProgress = false;
+setInterval(async()=> {
+  if(!backendReady || !selectedProfile || portfolioRefreshInProgress) return;
+  portfolioRefreshInProgress = true;
+  try { await loadPortfolioForProfile(); }
+  finally { portfolioRefreshInProgress = false; }
+},5000);
+
+// Monitoring status and on-chain history need less frequent refreshes.
 let refreshInProgress = false;
 setInterval(async()=> {
   if(!backendReady || refreshInProgress) return;
   refreshInProgress = true;
-  try { await Promise.all([loadMonitor(), loadPortfolioForProfile(), loadTransactionHistory()]); }
+  try { await Promise.all([loadMonitor(), loadTransactionHistory()]); }
   finally { refreshInProgress = false; }
 },15000);
 setInterval(loadRpcHealth,30000);

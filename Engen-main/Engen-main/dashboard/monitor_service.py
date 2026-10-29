@@ -10,16 +10,16 @@ from datetime import datetime, timezone
 class MonitorService:
     """Manage opt-in, read-only monitoring for saved wallet addresses."""
 
-    def __init__(self, scan_function, interval=30):
+    def __init__(self, scan_function, interval=15):
         if not callable(scan_function):
             raise ValueError("scan_function must be callable.")
 
         if (
             not isinstance(interval, int)
             or isinstance(interval, bool)
-            or interval < 30
+            or interval < 15
         ):
-            raise ValueError("Monitoring interval must be at least 30 seconds.")
+            raise ValueError("Monitoring interval must be at least 15 seconds.")
 
         self._scan_function = scan_function
         self._interval = interval

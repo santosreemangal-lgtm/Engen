@@ -21,9 +21,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run the complete offline unit suite
+      - name: Run the complete offline unit suite ten times
         working-directory: Engen-main/Engen-main
-        run: python -m unittest discover -s engine/engine/engine/tests -v
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run_number in {1..10}; do
+            echo "=== Full offline unit suite run ${run_number}/10 ==="
+            python -m unittest discover -s engine/engine/engine/tests -v
+          done
 
       - name: Run focused market-data and proportional-sell regressions ten times
         working-directory: Engen-main/Engen-main

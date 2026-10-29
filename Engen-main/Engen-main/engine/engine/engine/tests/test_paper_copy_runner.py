@@ -170,9 +170,35 @@ class PaperCopyRunnerTests(unittest.TestCase):
         )
         self.assertEqual(len(queued), 1)
         self.assertEqual(queued[0]["side"], "SELL")
-        self.assertEqual(Decimal(queued[0]["quantity"]), Decimal("2.5"))
+        self.assertEqual(Decimal(queued[0]["quantity"]), Decimal("1"))
+        order = next(iter(simulator.orders.values()))
+        self.assertEqual(Decimal(order["details"]["source_sell_fraction"]), Decimal("0.25"))
         self.assertEqual(queued[0]["sizing_mode"], "SOURCE_POSITION_REDUCTION")
         self.assertIsNone(queued[0]["target_notional_usd"])
+
+    def test_sell_execution_uses_fraction_of_current_paper_position(self):
+        simulator = PaperSimulator(initial_balances={"USD": "1000", ASSET: "10"})
+        queued = queue_paper_orders(
+            WALLET, [candidate_result(classification="SELL_CANDIDATE")], simulator,
+            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": 100, "max_buy_usd": 5},
+        )
+        self.assertEqual(len(queued), 1)
+        observed_at = datetime.now(timezone.utc).isoformat()
+
+        def provider(mint):
+            return MarketPrice(
+                mint=mint, price=Decimal("4"), currency="USD",
+                source="test-provider", observed_at=observed_at,
+                liquidity_usd=Decimal("20000"), liquidity_source="test-provider",
+                liquidity_observed_at=observed_at,
+            )
+
+        outcomes = execute_pending_paper_orders(WALLET, simulator, provider)
+        self.assertEqual(outcomes[0]["status"], "FILLED")
+        self.assertEqual(Decimal(simulator.report()["fills"][0]["quantity"]), Decimal("2.5"))
+        self.assertEqual(Decimal(simulator.report()["balances"][ASSET]), Decimal("7.5"))
+        self.assertFalse(simulator.report()["real_trading"])
+        self.assertFalse(simulator.report()["transaction_broadcast"])
 
     def test_sell_without_known_source_pre_balance_is_skipped(self):
         simulator = FakeSimulator()

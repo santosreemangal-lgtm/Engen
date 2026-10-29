@@ -107,6 +107,14 @@ footer.hint{padding:10px 4px;line-height:1.7}
 .history-pill.pending,.history-pill.created,.history-pill.waiting{background:#302b1e;border-color:#6e5e34;color:#e9ca81}
 .history-link{color:#88b9ff;text-decoration:none;font-weight:700;white-space:nowrap}
 .history-link:hover{text-decoration:underline}
+.history-token-cell{display:flex;align-items:center;gap:7px;min-width:150px;max-width:270px}
+.history-token-labels{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.history-token-primary{display:block;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e9f1ff;font-weight:800;font-size:12px}
+.history-token-secondary{display:block;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#8196b3;font-size:10px}
+.history-token-copy{flex:0 0 auto;padding:5px 7px;border:1px solid #334a66;border-radius:7px;background:#14243a;color:#9dc4ff;font-size:10px;line-height:1.1;font-weight:800;cursor:pointer}
+.history-token-copy:hover{background:#203a58;border-color:#6495d6;color:#fff}
+.history-token-copy.copied{background:#103029;border-color:#27705c;color:#77e0b8}
+.history-token-copy:focus-visible{outline:2px solid #8ab7ff;outline-offset:2px}
 .history-empty{text-align:center!important;color:#8294ad!important;padding:26px 16px!important}
 .history-pagination{display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:12px}
 .history-pagination span{font-size:11px;color:#9aaec8;font-variant-numeric:tabular-nums}
@@ -451,6 +459,91 @@ function historyShortAddress(value){
  if(!value)return "—";const text=String(value);
  return text.length>16?text.slice(0,7)+"…"+text.slice(-6):text;
 }
+const historyTokenMetadataCache=new Map();
+const historyTokenMetadataPending=new Set();
+let historyTokenMetadataQueue=Promise.resolve();
+function updateHistoryTokenCell(container){
+ const mint=container.dataset.tokenMint||"";
+ const primary=container.querySelector(".history-token-primary");
+ const secondary=container.querySelector(".history-token-secondary");
+ if(!primary||!secondary)return;
+ const meta=historyTokenMetadataCache.get(mint);
+ const display=meta&&(meta.symbol||meta.name)?(meta.symbol||meta.name):historyShortAddress(mint);
+ primary.textContent=display||"Token unavailable";
+ primary.title=meta?.name||mint||"Token unavailable";
+ if(meta?.symbol&&meta?.name&&meta.symbol.toLowerCase()!==meta.name.toLowerCase()){
+  secondary.textContent=meta.name;
+  secondary.classList.remove("hidden");
+ }else{
+  secondary.textContent="";
+  secondary.classList.add("hidden");
+ }
+}
+function refreshHistoryTokenCells(){
+ document.querySelectorAll(".history-token-cell").forEach(updateHistoryTokenCell);
+}
+function makeHistoryTokenCell(mint){
+ const cell=document.createElement("td");
+ if(!mint){cell.textContent="Token unavailable";return cell;}
+ const wrapper=document.createElement("div");wrapper.className="history-token-cell";wrapper.dataset.tokenMint=mint;
+ const labels=document.createElement("div");labels.className="history-token-labels";
+ const primary=document.createElement("span");primary.className="history-token-primary";primary.textContent=historyShortAddress(mint);primary.title=mint;
+ const secondary=document.createElement("span");secondary.className="history-token-secondary hidden";
+ labels.append(primary,secondary);
+ const copy=document.createElement("button");copy.type="button";copy.className="history-token-copy";copy.textContent="Copy";
+ copy.title="Copy full token mint address";copy.setAttribute("aria-label","Copy full token mint address");
+ copy.addEventListener("click",()=>copyHistoryTokenMint(mint,copy));
+ wrapper.append(labels,copy);cell.append(wrapper);updateHistoryTokenCell(wrapper);
+ return cell;
+}
+async function copyHistoryTokenMint(mint,button){
+ const original=button.textContent;
+ try{
+  if(navigator.clipboard&&typeof navigator.clipboard.writeText==="function"){
+   await navigator.clipboard.writeText(mint);
+  }else{
+   const field=document.createElement("textarea");field.value=mint;field.setAttribute("readonly","");
+   field.style.position="fixed";field.style.left="-9999px";field.style.top="0";
+   document.body.append(field);field.select();
+   const copied=document.execCommand("copy");field.remove();
+   if(!copied)throw new Error("Clipboard access is unavailable in this browser.");
+  }
+  button.textContent="Copied";button.classList.add("copied");
+  button.setAttribute("aria-label","Token mint address copied");
+  setTimeout(()=>{if(button.isConnected){button.textContent=original;button.classList.remove("copied");button.setAttribute("aria-label","Copy full token mint address");}},1400);
+ }catch(error){
+  button.textContent="Failed";
+  button.title="Could not copy automatically. Select the token row and copy the address manually.";
+  setTimeout(()=>{if(button.isConnected){button.textContent=original;button.title="Copy full token mint address";}},1600);
+ }
+}
+async function loadHistoryTokenMetadata(mints){
+ const needed=[...new Set((mints||[]).filter(m=>typeof m==="string"&&m.length>0))]
+  .filter(m=>!historyTokenMetadataCache.has(m)&&!historyTokenMetadataPending.has(m));
+ if(!needed.length)return historyTokenMetadataQueue;
+ needed.forEach(m=>historyTokenMetadataPending.add(m));
+ const task=async()=>{
+  try{
+   for(let offset=0;offset<needed.length;offset+=50){
+    const batch=needed.slice(offset,offset+50);
+    const response=await api("/api/token-metadata?mints="+encodeURIComponent(batch.join(",")));
+    for(const mint of batch){
+     const meta=response.tokens&&response.tokens[mint];
+     if(meta&&(meta.found===true||meta.status==="not_found")){
+      historyTokenMetadataCache.set(mint,meta);
+     }
+    }
+   }
+  }catch(error){
+   // Keep the short mint label and retry the public lookup on a later refresh.
+  }finally{
+   needed.forEach(m=>historyTokenMetadataPending.delete(m));
+   refreshHistoryTokenCells();
+  }
+ };
+ historyTokenMetadataQueue=historyTokenMetadataQueue.then(task,task);
+ return historyTokenMetadataQueue;
+}
 function historyLabelForClassification(value){
  const labels={BUY_CANDIDATE:"BUY",SELL_CANDIDATE:"SELL",FAILED_TRANSACTION:"FAILED",TRANSFER:"TRANSFER",LIQUIDITY_OPERATION:"LIQUIDITY_OPERATION",UNKNOWN:"UNKNOWN",RENT:"RENT"};
  return labels[value]||String(value||"UNKNOWN").replaceAll("_"," ");
@@ -498,8 +591,7 @@ async function loadTransactionHistory(){
    const row=document.createElement("tr");
    historyCell(row,historyDate(tx.observed_at));
    const typeCell=document.createElement("td");typeCell.append(historyPill(historyLabelForClassification(tx.classification),historyClassificationKind(tx.classification)));row.append(typeCell);
-   const tokenCell=document.createElement("td");const token=document.createElement("span");token.className="history-main";token.textContent=tx.token_mint||"Token unavailable";tokenCell.append(token);
-   if(tx.slot!==null&&tx.slot!==undefined){const slot=document.createElement("small");slot.className="history-sub";slot.textContent="Slot "+tx.slot;tokenCell.append(slot);}row.append(tokenCell);
+   row.append(makeHistoryTokenCell(tx.token_mint));
    historyCell(row,historyAmount(tx.amount));
    const walletCell=document.createElement("td");const wallet=document.createElement("span");wallet.className="history-main";wallet.textContent=historyShortAddress(tx.source_wallet_address);wallet.title=tx.source_wallet_address||"";walletCell.append(wallet);row.append(walletCell);
    const statusCell=document.createElement("td");const status=String(tx.status||"unknown").toLowerCase();statusCell.append(historyPill(status.toUpperCase(),["confirmed","failed","pending","observed"].includes(status)?status:""));row.append(statusCell);
@@ -508,6 +600,7 @@ async function loadTransactionHistory(){
    else actionCell.textContent="—";
    row.append(actionCell);tbody.append(row);
   });
+  void loadHistoryTokenMetadata(transactions.map(tx=>tx.token_mint));
   const total=Number(d.total||0),pages=Number(d.pages||0),page=Number(d.page||transactionHistoryPage);
   $("observed-history-total").textContent=total.toLocaleString();
   $("transaction-history-page").textContent=total?((page-1)*transactionHistoryPageSize+1)+"–"+Math.min(page*transactionHistoryPageSize,total)+" of "+total.toLocaleString()+" · Page "+page+"/"+Math.max(pages,1):"0 records";
@@ -541,8 +634,8 @@ async function loadPaperTradeHistory(reportOverride){
    const fill=fills.find(x=>x.order_id===order.order_id);
    historyCell(row,historyDate(fill?.created_at||order.created_at));
    const side=String(order.side||"ORDER").toUpperCase(),sideCell=document.createElement("td");sideCell.append(historyPill(side,side==="BUY"?"buy":side==="SELL"?"sell":""));row.append(sideCell);
-   const tokenCell=document.createElement("td");const token=document.createElement("span");token.className="history-main";token.textContent=order.asset_mint||"Token unavailable";token.title=order.asset_mint||"";tokenCell.append(token);
-   const sourceWallet=details.source_wallet;if(sourceWallet){const source=document.createElement("small");source.className="history-sub";source.textContent="Wallet "+historyShortAddress(sourceWallet);source.title=sourceWallet;tokenCell.append(source);}row.append(tokenCell);
+   row.append(makeHistoryTokenCell(order.asset_mint));
+   const sourceWallet=details.source_wallet;
    let quantity=fill?.quantity;
    if(!quantity){
     if(side==="SELL"&&details.source_sell_fraction)quantity="Source position × "+(Number(details.source_sell_fraction)*100).toFixed(2).replace(/\.00$/,"")+"%";
@@ -569,6 +662,7 @@ async function loadPaperTradeHistory(reportOverride){
    else sourceCell.textContent="—";
    row.append(sourceCell);tbody.append(row);
   });
+  void loadHistoryTokenMetadata(orders.map(order=>order.asset_mint));
   say("paper-trade-history-message",orders.length?"Showing the latest "+orders.length+" stored paper order(s); "+fills.length+" have simulated fills.":"Paper orders are shown only when the copy engine queues them. On-chain transaction rows are kept separate.");
  }catch(e){historySetEmpty(tbody,7,e.message||"Unable to load paper history.");say("paper-trade-history-message",e.message);}
 }

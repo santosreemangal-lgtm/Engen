@@ -125,7 +125,7 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
         raise ValueError("sizing_mode must be SOURCE_PERCENT, FIXED_USD, or MIRROR_AMOUNT")
     try:
         sizing_value = Decimal(str(settings.get("sizing_value", 5 if sizing_mode == "SOURCE_PERCENT" else 10)))
-        max_buy_usd = settings.get("max_buy_usd")
+        max_buy_usd = settings.get("max_buy_usd", "10")
         max_buy_usd = None if max_buy_usd in (None, "") else Decimal(str(max_buy_usd))
     except Exception as exc:
         raise ValueError("Sizing and maximum BUY values must be valid numbers.") from exc

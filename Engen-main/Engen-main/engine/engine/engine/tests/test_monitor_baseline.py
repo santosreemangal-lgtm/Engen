@@ -14,7 +14,7 @@ class MonitorBaselineTests(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "baseline.db"
         self.store = SignatureStore(db_path=self.db_path)
-        self.wallet = "test_public_wallet"
+        self.wallet = "11111111111111111111111111111111"
 
     def tearDown(self):
         self.temp_dir.cleanup()
@@ -24,8 +24,8 @@ class MonitorBaselineTests(unittest.TestCase):
         self, mock_get_signatures
     ):
         mock_get_signatures.return_value = [
-            {"signature": "old_A"},
-            {"signature": "old_B"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111112"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111113"},
         ]
 
         result = get_and_store_new_wallet_signatures(
@@ -34,8 +34,8 @@ class MonitorBaselineTests(unittest.TestCase):
         )
 
         self.assertEqual(result, [])
-        self.assertTrue(self.store.has_seen(self.wallet, "old_A"))
-        self.assertTrue(self.store.has_seen(self.wallet, "old_B"))
+        self.assertTrue(self.store.has_seen(self.wallet, "1111111111111111111111111111111111111111111111111111111111111112"))
+        self.assertTrue(self.store.has_seen(self.wallet, "1111111111111111111111111111111111111111111111111111111111111113"))
         self.assertTrue(self.store.has_baseline(self.wallet))
 
     @patch("engine.wallet_monitor.get_wallet_signatures")
@@ -43,7 +43,7 @@ class MonitorBaselineTests(unittest.TestCase):
         self, mock_get_signatures
     ):
         mock_get_signatures.return_value = [
-            {"signature": "old_A"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111112"},
         ]
 
         first_result = get_and_store_new_wallet_signatures(
@@ -64,7 +64,7 @@ class MonitorBaselineTests(unittest.TestCase):
         self, mock_get_signatures
     ):
         mock_get_signatures.return_value = [
-            {"signature": "old_A"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111112"},
         ]
 
         get_and_store_new_wallet_signatures(
@@ -73,8 +73,8 @@ class MonitorBaselineTests(unittest.TestCase):
         )
 
         mock_get_signatures.return_value = [
-            {"signature": "new_B"},
-            {"signature": "old_A"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111114"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111112"},
         ]
 
         result = get_and_store_new_wallet_signatures(
@@ -84,16 +84,16 @@ class MonitorBaselineTests(unittest.TestCase):
 
         self.assertEqual(
             [item["signature"] for item in result],
-            ["new_B"],
+            ["1111111111111111111111111111111111111111111111111111111111111114"],
         )
-        self.assertTrue(self.store.has_seen(self.wallet, "new_B"))
+        self.assertTrue(self.store.has_seen(self.wallet, "1111111111111111111111111111111111111111111111111111111111111114"))
 
     @patch("engine.wallet_monitor.get_wallet_signatures")
     def test_baseline_persists_after_store_reopens(
         self, mock_get_signatures
     ):
         mock_get_signatures.return_value = [
-            {"signature": "old_A"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111112"},
         ]
 
         get_and_store_new_wallet_signatures(
@@ -105,11 +105,9 @@ class MonitorBaselineTests(unittest.TestCase):
 
         self.assertTrue(reopened_store.has_baseline(self.wallet))
 
-        # RPC results are newest-first, so the unseen signature precedes
-        # the previously recorded baseline signature.
         mock_get_signatures.return_value = [
-            {"signature": "new_B"},
-            {"signature": "old_A"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111112"},
+            {"signature": "1111111111111111111111111111111111111111111111111111111111111114"},
         ]
 
         result = get_and_store_new_wallet_signatures(
@@ -119,7 +117,7 @@ class MonitorBaselineTests(unittest.TestCase):
 
         self.assertEqual(
             [item["signature"] for item in result],
-            ["new_B"],
+            ["1111111111111111111111111111111111111111111111111111111111111114"],
         )
 
 

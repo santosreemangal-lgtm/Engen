@@ -1,4 +1,5 @@
 
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -50,14 +51,41 @@ class SignatureStore:
                     ).fetchall()
                 }
 
-                if "status" not in columns:
-                    connection.execute(
-                        """
-                        ALTER TABLE seen_signatures
-                        ADD COLUMN status TEXT NOT NULL
-                        DEFAULT 'processed'
-                        """
+                migrations = {
+                    "status": "TEXT NOT NULL DEFAULT 'processed'",
+                    "attempts": "INTEGER NOT NULL DEFAULT 0",
+                    "slot": "INTEGER",
+                    "last_checked_at": "TEXT",
+                    "error_stage": "TEXT",
+                    "error_code": "TEXT",
+                    "error_message": "TEXT",
+                }
+                for column, definition in migrations.items():
+                    if column not in columns:
+                        connection.execute(
+                            "ALTER TABLE seen_signatures ADD COLUMN "
+                            + column + " " + definition
+                        )
+
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS wallet_positions (
+                        wallet_address TEXT PRIMARY KEY,
+                        slot INTEGER,
+                        signature TEXT,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                     )
+                """)
+
+                connection.execute("""
+                    CREATE TABLE IF NOT EXISTS transaction_records (
+                        wallet_address TEXT NOT NULL,
+                        signature TEXT NOT NULL,
+                        raw_transaction_json TEXT,
+                        processing_status TEXT NOT NULL,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (wallet_address, signature)
+                    )
+                """)
 
     @staticmethod
     def _validate_wallet(wallet_address):
@@ -130,19 +158,23 @@ class SignatureStore:
 
         return row[0] if row else None
 
-    def save(self, wallet_address, signature):
+    def save(self, wallet_address, signature, slot=None):
         self._validate_wallet(wallet_address)
         self._validate_signature(signature)
+        if slot is not None and (
+            not isinstance(slot, int) or isinstance(slot, bool) or slot < 0
+        ):
+            raise ValueError("Slot must be a non-negative integer.")
 
         with closing(self._connect()) as connection:
             with connection:
                 cursor = connection.execute(
                     """
                     INSERT OR IGNORE INTO seen_signatures
-                        (wallet_address, signature, status)
-                    VALUES (?, ?, 'pending')
+                        (wallet_address, signature, status, slot)
+                    VALUES (?, ?, 'pending', ?)
                     """,
-                    (wallet_address, signature),
+                    (wallet_address, signature, slot),
                 )
                 saved = cursor.rowcount == 1
 
@@ -166,14 +198,143 @@ class SignatureStore:
                 cursor = connection.execute(
                     """
                     UPDATE seen_signatures
-                    SET status = 'processed'
+                    SET status = 'processed',
+                        last_checked_at = CURRENT_TIMESTAMP,
+                        error_stage = NULL,
+                        error_code = NULL,
+                        error_message = NULL
                     WHERE wallet_address = ?
                       AND signature = ?
                     """,
                     (wallet_address, signature),
                 )
+                connection.execute(
+                    """UPDATE transaction_records
+                       SET processing_status = 'processed',
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE wallet_address = ? AND signature = ?""",
+                    (wallet_address, signature),
+                )
+                position = connection.execute(
+                    "SELECT slot FROM seen_signatures WHERE wallet_address = ? AND signature = ?",
+                    (wallet_address, signature),
+                ).fetchone()
+                if position and position[0] is not None:
+                    connection.execute(
+                        """INSERT INTO wallet_positions (wallet_address, slot, signature)
+                           VALUES (?, ?, ?)
+                           ON CONFLICT(wallet_address) DO UPDATE SET
+                             slot = CASE
+                               WHEN wallet_positions.slot IS NULL OR excluded.slot >= wallet_positions.slot
+                               THEN excluded.slot ELSE wallet_positions.slot END,
+                             signature = CASE
+                               WHEN wallet_positions.slot IS NULL OR excluded.slot >= wallet_positions.slot
+                               THEN excluded.signature ELSE wallet_positions.signature END,
+                             updated_at = CURRENT_TIMESTAMP""",
+                        (wallet_address, position[0], signature),
+                    )
 
         return cursor.rowcount == 1
+
+
+    def record_failure(
+        self, wallet_address, signature, stage, code, message,
+        max_attempts=5,
+    ):
+        """Record a bounded retry state; repeated failures need manual review."""
+        self._validate_wallet(wallet_address)
+        self._validate_signature(signature)
+        if not isinstance(max_attempts, int) or isinstance(max_attempts, bool) or max_attempts < 1:
+            raise ValueError("max_attempts must be a positive integer.")
+        allowed_stages = {"discovery", "rpc_fetch", "interpretation", "paper_simulation", "persistence"}
+        if stage not in allowed_stages:
+            raise ValueError("Invalid processing stage.")
+        safe_code = code if isinstance(code, str) and code else "processing_error"
+        safe_message = message if isinstance(message, str) else "Processing failed."
+        safe_message = safe_message[:300]
+        with closing(self._connect()) as connection:
+            with connection:
+                row = connection.execute(
+                    "SELECT attempts FROM seen_signatures WHERE wallet_address = ? AND signature = ?",
+                    (wallet_address, signature),
+                ).fetchone()
+                if row is None:
+                    connection.execute(
+                        "INSERT INTO seen_signatures (wallet_address, signature, status, attempts) VALUES (?, ?, 'pending', 0)",
+                        (wallet_address, signature),
+                    )
+                    attempts = 0
+                else:
+                    attempts = row[0]
+                attempts += 1
+                status = "needs_review" if attempts >= max_attempts else "pending"
+                connection.execute(
+                    """UPDATE seen_signatures
+                       SET status = ?, attempts = ?, last_checked_at = CURRENT_TIMESTAMP,
+                           error_stage = ?, error_code = ?, error_message = ?
+                       WHERE wallet_address = ? AND signature = ?""",
+                    (status, attempts, stage, safe_code, safe_message, wallet_address, signature),
+                )
+        return {"status": status, "attempts": attempts}
+
+    def save_transaction_record(
+        self, wallet_address, signature, raw_transaction=None,
+        processing_status="observed",
+    ):
+        """Idempotently preserve public transaction data for investigation."""
+        self._validate_wallet(wallet_address)
+        self._validate_signature(signature)
+        if processing_status not in {"observed", "incomplete", "failed", "processed", "needs_review"}:
+            raise ValueError("Invalid transaction processing status.")
+        raw_json = None if raw_transaction is None else json.dumps(
+            raw_transaction, sort_keys=True, separators=(",", ":"), default=str
+        )
+        with closing(self._connect()) as connection:
+            with connection:
+                connection.execute(
+                    """INSERT INTO transaction_records
+                       (wallet_address, signature, raw_transaction_json, processing_status)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(wallet_address, signature) DO UPDATE SET
+                         raw_transaction_json = COALESCE(excluded.raw_transaction_json,
+                                                         transaction_records.raw_transaction_json),
+                         processing_status = excluded.processing_status,
+                         updated_at = CURRENT_TIMESTAMP""",
+                    (wallet_address, signature, raw_json, processing_status),
+                )
+        return True
+
+    def get_transaction_record(self, wallet_address, signature):
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT raw_transaction_json, processing_status, updated_at
+                   FROM transaction_records
+                   WHERE wallet_address = ? AND signature = ?""",
+                (wallet_address, signature),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "raw_transaction": json.loads(row[0]) if row[0] is not None else None,
+            "status": row[1],
+            "updated_at": row[2],
+        }
+
+    def get_error_record(self, wallet_address, signature):
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT status, attempts, last_checked_at, error_stage,
+                          error_code, error_message
+                   FROM seen_signatures WHERE wallet_address = ? AND signature = ?""",
+                (wallet_address, signature),
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(zip(
+            ("status", "attempts", "last_checked_at", "error_stage",
+             "error_code", "error_message"),
+            row,
+        ))
 
     def get_pending_signatures(self, wallet_address, limit=1000):
         self._validate_wallet(wallet_address)
@@ -198,6 +359,18 @@ class SignatureStore:
             ).fetchall()
 
         return [row[0] for row in rows]
+
+
+    def get_position(self, wallet_address):
+        self._validate_wallet(wallet_address)
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT slot, signature, updated_at FROM wallet_positions WHERE wallet_address = ?",
+                (wallet_address,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {"slot": row[0], "signature": row[1], "updated_at": row[2]}
 
     def get_seen_signatures(self, wallet_address, limit=1000):
         if not isinstance(limit, int) or isinstance(limit, bool):

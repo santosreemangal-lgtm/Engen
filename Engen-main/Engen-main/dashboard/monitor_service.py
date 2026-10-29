@@ -2,13 +2,15 @@
 """Read-only monitoring service for saved public Solana wallets."""
 
 import threading
+
+from engine.solana_validation import is_valid_solana_address
 from datetime import datetime, timezone
 
 
 class MonitorService:
     """Manage opt-in, read-only monitoring for saved wallet addresses."""
 
-    def __init__(self, scan_function, interval=30, on_result=None):
+    def __init__(self, scan_function, interval=30):
         if not callable(scan_function):
             raise ValueError("scan_function must be callable.")
 
@@ -20,9 +22,6 @@ class MonitorService:
             raise ValueError("Monitoring interval must be at least 30 seconds.")
 
         self._scan_function = scan_function
-        if on_result is not None and not callable(on_result):
-            raise ValueError("on_result must be callable when provided.")
-        self._on_result = on_result
         self._interval = interval
         self._lock = threading.RLock()
         self._lifecycle_lock = threading.Lock()
@@ -36,9 +35,24 @@ class MonitorService:
         return {
             "state": "waiting",
             "last_scan": None,
+            "last_successful_check": None,
             "last_error": None,
             "latest_results": [],
         }
+
+    def _status_details(self, details):
+        """Report monitors as stale when their last successful check is old."""
+        snapshot = dict(details)
+        successful = snapshot.get("last_successful_check")
+        if successful:
+            try:
+                last_success = datetime.fromisoformat(successful)
+                age = (datetime.now(timezone.utc) - last_success).total_seconds()
+                if self._interval > 0 and age > self._interval * 2 and snapshot.get("state") != "error":
+                    snapshot["state"] = "stale"
+            except (TypeError, ValueError):
+                snapshot["state"] = "stale"
+        return snapshot
 
     def status(self):
         """Return a safe snapshot of monitoring state."""
@@ -49,7 +63,7 @@ class MonitorService:
                 "wallets": [
                     {
                         "address": address,
-                        **details,
+                        **self._status_details(details),
                     }
                     for address, details in self._wallets.items()
                 ],
@@ -67,12 +81,11 @@ class MonitorService:
                 continue
 
             address = address.strip()
+            if not is_valid_solana_address(address):
+                raise ValueError("A monitored wallet must be a valid Solana public address.")
 
             if address not in cleaned:
                 cleaned.append(address)
-
-        if not cleaned:
-            raise ValueError("At least one valid public wallet address is required.")
 
         # Serialize start/stop operations so two callers cannot create
         # overlapping monitor threads.
@@ -124,13 +137,37 @@ class MonitorService:
                 return self.status()
 
     def stop(self):
-        """Request a graceful stop."""
+        """Request a graceful stop without blocking the caller."""
         with self._lifecycle_lock:
             self._stop_event.set()
 
             with self._lock:
                 self._enabled = False
+                for details in self._wallets.values():
+                    if details.get("state") not in ("error", "stale"):
+                        details["state"] = "stopping"
                 return self.status()
+
+    def stop_and_wait(self, timeout=15):
+        """Request stop and wait a bounded time for the worker to exit."""
+        if (
+            not isinstance(timeout, (int, float))
+            or isinstance(timeout, bool)
+            or timeout <= 0
+        ):
+            raise ValueError("Shutdown timeout must be positive.")
+
+        self.stop()
+        with self._lock:
+            worker = self._thread
+
+        if worker is not None and worker is not threading.current_thread():
+            worker.join(timeout=timeout)
+
+        return {
+            **self.status(),
+            "worker_stopped": worker is None or not worker.is_alive(),
+        }
 
     def _run(self):
         """Poll saved addresses without signing or submitting transactions."""
@@ -155,39 +192,6 @@ class MonitorService:
                         if not isinstance(results, list):
                             results = []
 
-                        # Handle each newly observed transaction immediately
-                        # after scanning. Unavailable records remain pending
-                        # for retry; successful callback completion acknowledges
-                        # the signature so restarts do not duplicate paper trades.
-                        for result in results:
-                            if self._stop_event.is_set():
-                                break
-                            if not isinstance(result, dict):
-                                continue
-                            if result.get("available") is not True:
-                                continue
-                            try:
-                                # Never acknowledge a signature unless a
-                                # handler actually processed the result.
-                                if self._on_result is None:
-                                    continue
-                                self._on_result(address, result)
-                                marker = getattr(
-                                    self._scan_function,
-                                    "mark_processed",
-                                    None,
-                                )
-                                signature = result.get("signature")
-                                if (
-                                    callable(marker)
-                                    and isinstance(signature, str)
-                                    and signature.strip()
-                                ):
-                                    marker(address, signature)
-                            except Exception:
-                                # Leave the signature pending for a later retry.
-                                raise
-
                         with self._lock:
                             if address in self._wallets:
                                 self._wallets[address].update(
@@ -196,12 +200,15 @@ class MonitorService:
                                         "last_scan": datetime.now(
                                             timezone.utc
                                         ).isoformat(),
+                                        "last_successful_check": datetime.now(
+                                            timezone.utc
+                                        ).isoformat(),
                                         "last_error": None,
                                         "latest_results": results[:20],
                                     }
                                 )
 
-                    except Exception as error:
+                    except Exception:
                         with self._lock:
                             if address in self._wallets:
                                 self._wallets[address].update(
@@ -210,7 +217,7 @@ class MonitorService:
                                         "last_scan": datetime.now(
                                             timezone.utc
                                         ).isoformat(),
-                                        "last_error": str(error)[:300],
+                                        "last_error": "Monitoring scan failed; sensitive error details are hidden.",
                                     }
                                 )
 
@@ -221,6 +228,9 @@ class MonitorService:
                 # The lifecycle lock ensures a replacement worker cannot
                 # start until this worker has completely exited.
                 self._enabled = False
+                if self._stop_event.is_set():
+                    for details in self._wallets.values():
+                        details["state"] = "stopped"
 
 
 if __name__ == "__main__":

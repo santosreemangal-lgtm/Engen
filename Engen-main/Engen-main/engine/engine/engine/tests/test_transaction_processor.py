@@ -13,19 +13,28 @@ class TransactionProcessorTests(unittest.TestCase):
             "engine.transaction_processor.get_transaction",
             return_value=None,
         ):
-            result = process_transaction_signature("signature123")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
 
         self.assertFalse(result["available"])
-        self.assertEqual(result["signature"], "signature123")
+        self.assertEqual(result["signature"], "1111111111111111111111111111111111111111111111111111111111111112")
         self.assertIn("error", result)
 
-    def test_invalid_transaction_data_raises_rpc_error(self):
+    def test_missing_metadata_is_reported_not_fabricated(self):
         with mock.patch(
             "engine.transaction_processor.get_transaction",
-            return_value={"meta": None},
+            return_value={
+                "slot": 123,
+                "transaction": {"message": {"accountKeys": []}},
+                "meta": None,
+            },
         ):
-            with self.assertRaises(SolanaRPCError):
-                process_transaction_signature("signature123")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
+        self.assertFalse(result["available"])
+        self.assertFalse(result["metadata_complete"])
+        self.assertEqual(result["metadata_status"], "missing")
+        self.assertEqual(result["slot"], 123)
+        self.assertNotIn("status", result)
+        self.assertNotIn("token_balance_changes", result)
 
     def test_processes_failed_transaction(self):
         transaction = {
@@ -47,10 +56,10 @@ class TransactionProcessorTests(unittest.TestCase):
             "engine.transaction_processor.get_transaction",
             return_value=transaction,
         ):
-            result = process_transaction_signature("signature456")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
 
         self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["signature"], "signature456")
+        self.assertEqual(result["signature"], "1111111111111111111111111111111111111111111111111111111111111112")
         self.assertEqual(result["token_balance_changes"], [])
 
     def test_processes_successful_transaction(self):
@@ -73,7 +82,7 @@ class TransactionProcessorTests(unittest.TestCase):
             "engine.transaction_processor.get_transaction",
             return_value=transaction,
         ):
-            result = process_transaction_signature("signature123")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
 
         self.assertTrue(result["available"])
         self.assertEqual(result["status"], "success")
@@ -81,6 +90,8 @@ class TransactionProcessorTests(unittest.TestCase):
         self.assertEqual(result["fee"], 5000)
         self.assertEqual(result["account_count"], 2)
         self.assertEqual(result["token_balance_changes"], [])
+        self.assertFalse(result["metadata_complete"])
+        self.assertIn("preBalances", result["metadata_missing_fields"])
 
     def test_rejects_empty_signature(self):
         with self.assertRaises(ValueError):
@@ -102,16 +113,31 @@ class TransactionProcessorTests(unittest.TestCase):
             return_value=transaction,
         ) as mocked_get:
             process_transaction_signature(
-                "signature123",
+                "1111111111111111111111111111111111111111111111111111111111111112",
                 rpc_url="https://example.invalid",
                 timeout=3,
             )
 
         mocked_get.assert_called_once_with(
-            signature="signature123",
+            signature="1111111111111111111111111111111111111111111111111111111111111112",
             rpc_url="https://example.invalid",
             timeout=3,
         )
+
+    def test_incomplete_metadata_is_marked_explicitly(self):
+        transaction = {
+            "slot": 55,
+            "transaction": {"message": {"accountKeys": []}},
+            "meta": {"err": None, "fee": 100},
+        }
+        with mock.patch(
+            "engine.transaction_processor.get_transaction",
+            return_value=transaction,
+        ):
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
+        self.assertTrue(result["available"])
+        self.assertFalse(result["metadata_complete"])
+        self.assertIn("preTokenBalances", result["metadata_missing_fields"])
 
     def test_includes_token_balance_changes(self):
         transaction = {
@@ -147,7 +173,7 @@ class TransactionProcessorTests(unittest.TestCase):
             "engine.transaction_processor.get_transaction",
             return_value=transaction,
         ):
-            result = process_transaction_signature("signature789")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
 
         self.assertEqual(len(result["token_balance_changes"]), 1)
         change = result["token_balance_changes"][0]
@@ -181,7 +207,7 @@ class TransactionProcessorTests(unittest.TestCase):
             "engine.transaction_processor.get_transaction",
             return_value=transaction,
         ):
-            result = process_transaction_signature("native-sol-signature")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
 
         self.assertEqual(result["status"], "success")
         self.assertEqual(len(result["token_balance_changes"]), 1)
@@ -215,7 +241,7 @@ class TransactionProcessorTests(unittest.TestCase):
             "engine.transaction_processor.get_transaction",
             return_value=transaction,
         ):
-            result = process_transaction_signature("failed-native-sol-signature")
+            result = process_transaction_signature("1111111111111111111111111111111111111111111111111111111111111112")
 
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["token_balance_changes"], [])

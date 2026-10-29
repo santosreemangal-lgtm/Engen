@@ -1,116 +1,49 @@
-import argparse
+"""Stage 1 entry point: starts the app and runs a health check.
+
+It does NOT submit transactions, sign transactions, or place trades.
+Exit code 0 = healthy, 1 = a problem was found.
+"""
 import json
+import logging
 import sys
 import time
 
 from engine.config import ConfigError, load_config
 from engine.health import get_status, run_checks
 from engine.logger import setup_logging
-from engine.transaction_analysis import (
-    analyze_native_sol_balance_changes,
-    analyze_token_balance_changes,
-    analyze_transaction,
-    classify_token_balance_changes,
-)
 
 
-def run_mock_analysis_test():
-    print("=== Running Offline Transaction Analysis Mock Test ===")
-    wallet = "MOCK_WALLET_A"
-    token = "MOCK_TOKEN_XYZ_MINT"
-    wrapped_sol = "So11111111111111111111111111111111111111112"
-    transaction = {
-        "transaction": {
-            "message": {
-                "accountKeys": [wallet, token, wrapped_sol, "FEE_PAYER"],
-                "header": {
-                    "numRequiredSignatures": 1,
-                    "numReadonlySignedAccounts": 0,
-                    "numReadonlyUnsignedAccounts": 0,
-                },
-            }
-        },
-        "meta": {
-            "err": None,
-            "fee": 5000,
-            "slot": 250000000,
-            "preBalances": [1000000000, 0, 0, 0],
-            "postBalances": [990000000, 0, 0, 0],
-            "preTokenBalances": [
-                {
-                    "accountIndex": 1,
-                    "mint": token,
-                    "owner": wallet,
-                    "uiTokenAmount": {"amount": "10000000", "decimals": 6},
-                }
-            ],
-            "postTokenBalances": [
-                {
-                    "accountIndex": 1,
-                    "mint": token,
-                    "owner": wallet,
-                    "uiTokenAmount": {"amount": "22851247", "decimals": 6},
-                }
-            ],
-        },
-    }
-
-    try:
-        transaction_info = analyze_transaction(transaction)
-        token_changes = analyze_token_balance_changes(transaction["meta"])
-        sol_changes = analyze_native_sol_balance_changes(transaction)
-        classification = classify_token_balance_changes(token_changes, wallet)
-        if classification.get("classification") == "UNKNOWN":
-            classification = classify_token_balance_changes(
-                token_changes + sol_changes, wallet
-            )
-
-        report = {
-            "test_status": "SUCCESS",
-            "tx_status": transaction_info.get("status"),
-            "slot": transaction_info.get("slot"),
-            "wallet_monitored": wallet,
-            "classification_result": classification.get("classification"),
-            "classification_reason": classification.get("reason"),
-            "expected_classification": "BUY_CANDIDATE",
-            "matches_expected": classification.get("classification") == "BUY_CANDIDATE",
-        }
-        print(json.dumps(report, indent=4))
-        return 0 if report["matches_expected"] else 1
-    except Exception as error:
-        print(json.dumps({"test_status": "FAILED", "error": str(error)}, indent=4))
-        return 1
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mock-analysis-test", action="store_true")
-    # unittest discovery may pass its own flags (such as -v) in sys.argv.
-    parse_args = [] if argv is None and "unittest" in sys.modules else argv
-    args = parser.parse_args(parse_args)
-
-    if args.mock_analysis_test:
-        return run_mock_analysis_test()
-
+def main():
     started = time.perf_counter()
+
     try:
         config = load_config()
-    except ConfigError as error:
-        print(f"CONFIG ERROR: {error}")
+    except ConfigError as exc:
+        print("CONFIG ERROR:\\n%s" % exc)
         return 1
 
     setup_logging(config.log_level)
-    checks = run_checks(config)
-    status = get_status(config)
-    status["checks"] = [
-        {"name": item.name, "passed": item.passed, "detail": item.detail}
-        for item in checks
-    ]
-    passed = all(item.passed for item in checks)
-    status["status"] = "ok" if passed else "failed"
-    status["startup_ms"] = (time.perf_counter() - started) * 1000
-    print(json.dumps(status, indent=2))
-    return 0 if passed else 1
+    log = logging.getLogger("engine.main")
+
+    try:
+        log.info("Starting Solana Copy-Trading Engine (read-only)")
+        all_ok = True
+        for result in run_checks(config):
+            if result.passed:
+                log.info("PASS | %s (%s)", result.name, result.detail)
+            else:
+                log.error("FAIL | %s (%s)", result.name, result.detail)
+                all_ok = False
+
+        status = get_status(config)
+        status["startup_ms"] = round((time.perf_counter() - started) * 1000, 2)
+        status["status"] = "ok" if all_ok else "failed"
+        print(json.dumps(status, indent=2))
+        log.info("Health check %s", "passed" if all_ok else "FAILED")
+        return 0 if all_ok else 1
+    except Exception:
+        log.exception("Unexpected error during startup")
+        return 1
 
 
 if __name__ == "__main__":

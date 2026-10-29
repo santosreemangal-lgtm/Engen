@@ -1,5 +1,7 @@
 
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -22,6 +24,38 @@ class SignatureStoreTests(unittest.TestCase):
 
         self.assertTrue(saved)
         self.assertTrue(self.store.has_seen("wallet_A", "sig_123"))
+
+    def test_state_survives_a_full_python_process_restart(self):
+        db_path = Path(self.temp_dir.name) / "process_restart.db"
+        first_process = (
+            "from engine.signature_store import SignatureStore; "
+            "s=SignatureStore(db_path=r'" + str(db_path) + "'); "
+            "s.save('wallet_restart', 'sig_persisted'); "
+            "s.mark_processed('wallet_restart', 'sig_persisted')"
+        )
+        subprocess.run(
+            [sys.executable, "-c", first_process],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        # A separate interpreter simulates the application process restarting.
+        second_process = (
+            "from engine.signature_store import SignatureStore; "
+            "s=SignatureStore(db_path=r'" + str(db_path) + "'); "
+            "assert s.has_seen('wallet_restart', 'sig_persisted'); "
+            "assert s.get_status('wallet_restart', 'sig_persisted') == 'processed'; "
+            "assert s.save('wallet_restart', 'sig_persisted') is False; "
+            "print('restart-persistence-and-deduplication: PASS')"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", second_process],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertIn("restart-persistence-and-deduplication: PASS", result.stdout)
 
     def test_duplicate_signature_is_not_saved_twice(self):
         first_save = self.store.save("wallet_A", "sig_123")
@@ -87,6 +121,45 @@ class SignatureStoreTests(unittest.TestCase):
         pending = self.store.get_pending_signatures("wallet_A")
 
         self.assertEqual(pending, ["sig_pending"])
+
+    def test_failure_retries_are_bounded_and_reviewable(self):
+        self.store.save("wallet_A", "sig_fail")
+        for _ in range(4):
+            result = self.store.record_failure(
+                "wallet_A", "sig_fail", "rpc_fetch",
+                "temporary_rpc_error", "provider temporarily unavailable",
+            )
+            self.assertEqual(result["status"], "pending")
+        result = self.store.record_failure(
+            "wallet_A", "sig_fail", "rpc_fetch",
+            "temporary_rpc_error", "provider temporarily unavailable",
+        )
+        self.assertEqual(result, {"status": "needs_review", "attempts": 5})
+        self.assertEqual(self.store.get_pending_signatures("wallet_A"), [])
+        error = self.store.get_error_record("wallet_A", "sig_fail")
+        self.assertEqual(error["error_stage"], "rpc_fetch")
+        self.assertEqual(error["attempts"], 5)
+
+    def test_transaction_record_is_idempotent_and_preserves_public_payload(self):
+        payload = {"slot": 42, "meta": {"fee": 5000}}
+        self.store.save_transaction_record(
+            "wallet_A", "sig_public", payload, "observed"
+        )
+        self.store.save_transaction_record(
+            "wallet_A", "sig_public", None, "incomplete"
+        )
+        record = self.store.get_transaction_record("wallet_A", "sig_public")
+        self.assertEqual(record["raw_transaction"], payload)
+        self.assertEqual(record["status"], "incomplete")
+
+    def test_processed_slot_updates_wallet_position_monotonically(self):
+        self.store.save("wallet_A", "sig_newer", slot=200)
+        self.store.mark_processed("wallet_A", "sig_newer")
+        self.store.save("wallet_A", "sig_older", slot=190)
+        self.store.mark_processed("wallet_A", "sig_older")
+        position = self.store.get_position("wallet_A")
+        self.assertEqual(position["slot"], 200)
+        self.assertEqual(position["signature"], "sig_newer")
 
     def test_legacy_database_migration_marks_existing_signatures_processed(
         self,

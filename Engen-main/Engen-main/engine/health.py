@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from engine.safety import EMERGENCY_STOP
+
 REQUIRED_FILES = (
     "main.py",
     "engine/__init__.py",
@@ -27,6 +29,7 @@ def get_status(config):
         "stage": 1,
         "engine_mode": config.engine_mode,
         "live_trading_enabled": config.live_trading_enabled,
+        "emergency_stop_engaged": EMERGENCY_STOP.engaged,
         "python_version": platform.python_version(),
         "time_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
@@ -57,5 +60,10 @@ def run_checks(config, project_root=None):
             "Live trading is disabled",
             config.live_trading_enabled is False,
             str(config.live_trading_enabled),
+        ),
+        CheckResult(
+            "Emergency stop is engaged",
+            EMERGENCY_STOP.engaged is True,
+            str(EMERGENCY_STOP.engaged),
         ),
     ]

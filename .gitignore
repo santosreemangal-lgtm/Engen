@@ -1,25 +1,23 @@
-# Local configuration and secrets
+# Local environment and credentials
 .env
 .env.*
 !.env.example
-*.key
-*.pem
+**/*.key
+**/*.pem
+**/*.seed
+**/*.secret
 
-# Python bytecode and test/build artifacts
+# Python-generated files
 __pycache__/
 *.py[cod]
-.pytest_cache/
-.coverage
-htmlcov/
-.venv/
-venv/
-build/
-dist/
+*.pyo
 
-# Local runtime data
+# Local databases and logs
 *.db
 *.sqlite
 *.sqlite3
+*.log
 
-# Backup files are intentionally NOT ignored here: keep them visible for review
-# and compare them before deciding whether to archive or delete them.
+# Local dashboard state
+Engen-main/Engen-main/dashboard/wallets.json
+Engen-main/Engen-main/dashboard/wallets.tmp

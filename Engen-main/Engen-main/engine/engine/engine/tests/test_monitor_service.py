@@ -1,5 +1,6 @@
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 import unittest
 
 from dashboard.monitor_service import MonitorService
@@ -32,7 +33,7 @@ class MonitorServiceTests(unittest.TestCase):
         service._interval = 0
 
         try:
-            service.start(["test_public_wallet"])
+            service.start(["11111111111111111111111111111111"])
 
             self.assertTrue(
                 recovered.wait(timeout=3),
@@ -57,9 +58,10 @@ class MonitorServiceTests(unittest.TestCase):
 
             wallet = status["wallets"][0]
 
-            self.assertEqual(wallet["address"], "test_public_wallet")
+            self.assertEqual(wallet["address"], "11111111111111111111111111111111")
             self.assertEqual(wallet["state"], "connected")
             self.assertIsNone(wallet["last_error"])
+            self.assertIsNotNone(wallet["last_successful_check"])
             self.assertEqual(
                 wallet["latest_results"][0]["signature"],
                 "test_signature",
@@ -72,6 +74,40 @@ class MonitorServiceTests(unittest.TestCase):
             if worker is not None:
                 worker.join(timeout=3)
 
+    def test_wallet_failures_are_isolated_between_sources(self):
+        second_wallet_succeeded = threading.Event()
+        first = "11111111111111111111111111111111"
+        second = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+
+        def scan(address):
+            if address == first:
+                raise RuntimeError("temporary failure for first wallet")
+            second_wallet_succeeded.set()
+            return [{"signature": "public-result", "available": True}]
+
+        service = MonitorService(scan, interval=30)
+        try:
+            service.start([first, second])
+            self.assertTrue(second_wallet_succeeded.wait(timeout=3))
+            status = service.status()
+            states = {item["address"]: item["state"] for item in status["wallets"]}
+            self.assertEqual(states[first], "error")
+            self.assertEqual(states[second], "connected")
+        finally:
+            service.stop_and_wait(timeout=3)
+
+    def test_stale_monitor_is_reported_from_last_successful_check(self):
+        service = MonitorService(lambda address: [], interval=30)
+        old = (datetime.now(timezone.utc) - timedelta(seconds=90)).isoformat()
+        state = service._status_details({
+            "state": "connected",
+            "last_successful_check": old,
+            "last_error": None,
+            "latest_results": [],
+        })
+        self.assertEqual(state["state"], "stale")
+        service.stop()
+
     def test_scan_error_is_recorded(self):
         scan_started = threading.Event()
 
@@ -82,7 +118,7 @@ class MonitorServiceTests(unittest.TestCase):
         service = MonitorService(failing_scan, interval=30)
 
         try:
-            service.start(["test_public_wallet"])
+            service.start(["11111111111111111111111111111111"])
 
             self.assertTrue(
                 scan_started.wait(timeout=3),
@@ -102,7 +138,7 @@ class MonitorServiceTests(unittest.TestCase):
             self.assertEqual(wallet["state"], "error")
             self.assertEqual(
                 wallet["last_error"],
-                "temporary RPC failure",
+                "Monitoring scan failed; sensitive error details are hidden.",
             )
             self.assertIsNotNone(wallet["last_scan"])
 
@@ -112,6 +148,36 @@ class MonitorServiceTests(unittest.TestCase):
             if worker is not None:
                 worker.join(timeout=3)
 
+    def test_stop_and_wait_confirms_worker_exit(self):
+        scan_started = threading.Event()
+        release_scan = threading.Event()
+
+        def slow_scan(address):
+            scan_started.set()
+            release_scan.wait(timeout=2)
+            return []
+
+        service = MonitorService(slow_scan, interval=30)
+        service.start(["11111111111111111111111111111111"])
+        self.assertTrue(scan_started.wait(timeout=2))
+        release_scan.set()
+
+        result = service.stop_and_wait(timeout=2)
+        self.assertTrue(result["worker_stopped"])
+        self.assertFalse(result["enabled"])
+        self.assertEqual(result["wallets"][0]["state"], "stopped")
+
+    def test_stop_and_wait_rejects_invalid_timeout(self):
+        service = MonitorService(lambda address: [], interval=30)
+        for timeout in (0, -1, True, "1"):
+            with self.subTest(timeout=timeout):
+                with self.assertRaises(ValueError):
+                    service.stop_and_wait(timeout=timeout)
+        service.stop()
+        worker = service._thread
+        if worker is not None:
+            worker.join(timeout=2)
+
     def test_rejects_interval_below_30_seconds(self):
         with self.assertRaises(ValueError):
             MonitorService(lambda address: [], interval=29)
@@ -119,6 +185,14 @@ class MonitorServiceTests(unittest.TestCase):
     def test_rejects_non_callable_scan_function(self):
         with self.assertRaises(ValueError):
             MonitorService(None)
+
+    def test_rejects_invalid_solana_wallet_address(self):
+        service = MonitorService(lambda address: [], interval=30)
+        try:
+            with self.assertRaises(ValueError):
+                service.start(["not-a-solana-address"])
+        finally:
+            service.stop()
 
     def test_rejects_non_list_wallet_addresses(self):
         service = MonitorService(lambda address: [], interval=30)
@@ -169,7 +243,7 @@ class MonitorServiceTests(unittest.TestCase):
         previous_worker = None
 
         try:
-            service.start(["test_public_wallet"])
+            service.start(["11111111111111111111111111111111"])
 
             self.assertTrue(
                 first_scan_started.wait(timeout=3),
@@ -188,7 +262,7 @@ class MonitorServiceTests(unittest.TestCase):
             release_timer.daemon = True
             release_timer.start()
 
-            service.start(["test_public_wallet"])
+            service.start(["11111111111111111111111111111111"])
 
             self.assertIsNotNone(previous_worker)
             self.assertFalse(
@@ -216,79 +290,6 @@ class MonitorServiceTests(unittest.TestCase):
             if worker is not None:
                 worker.join(timeout=3)
 
-
-
-    def test_handles_available_result_and_acknowledges_signature(self):
-        handled = []
-        acknowledged = []
-        completed = threading.Event()
-
-        scan_count = 0
-
-        def fake_scan(address):
-            nonlocal scan_count
-            scan_count += 1
-            if scan_count == 1:
-                return [{"signature": "paper-signature", "available": True}]
-            return []
-
-        fake_scan.mark_processed = lambda address, signature: acknowledged.append(
-            (address, signature)
-        )
-
-        def on_result(address, result):
-            handled.append((address, result["signature"]))
-            completed.set()
-
-        service = MonitorService(fake_scan, interval=30, on_result=on_result)
-        service._interval = 0
-        try:
-            service.start(["public_wallet"])
-            self.assertTrue(completed.wait(timeout=3))
-            deadline = time.monotonic() + 3
-            while time.monotonic() < deadline and not acknowledged:
-                time.sleep(0.01)
-            self.assertEqual(handled, [("public_wallet", "paper-signature")])
-            self.assertEqual(acknowledged, [("public_wallet", "paper-signature")])
-        finally:
-            service.stop()
-            worker = service._thread
-            if worker is not None:
-                worker.join(timeout=3)
-
-
-    def test_rejects_empty_wallet_list(self):
-        service = MonitorService(lambda address: [], interval=30)
-        with self.assertRaises(ValueError):
-            service.start([])
-        self.assertFalse(service.status()["enabled"])
-
-
-    def test_does_not_acknowledge_without_result_handler(self):
-        acknowledged = []
-        scan_count = 0
-
-        def fake_scan(address):
-            nonlocal scan_count
-            scan_count += 1
-            if scan_count == 1:
-                return [{"signature": "pending-signature", "available": True}]
-            return []
-
-        fake_scan.mark_processed = lambda address, signature: acknowledged.append(
-            (address, signature)
-        )
-        service = MonitorService(fake_scan, interval=30)
-        service._interval = 0
-        try:
-            service.start(["public_wallet"])
-            time.sleep(0.05)
-            self.assertEqual(acknowledged, [])
-        finally:
-            service.stop()
-            worker = service._thread
-            if worker is not None:
-                worker.join(timeout=3)
 
 if __name__ == "__main__":
     unittest.main()

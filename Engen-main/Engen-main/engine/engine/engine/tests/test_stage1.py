@@ -66,6 +66,17 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaises(Exception):
             cfg.live_trading_enabled = True
 
+    def test_config_error_does_not_echo_untrusted_values(self):
+        secret_like_value = "do-not-print-this-value"
+        with self.assertRaises(ConfigError) as caught:
+            load_config({
+                "ENGINE_MODE": secret_like_value,
+                "LOG_LEVEL": "also-not-valid",
+                "LIVE_TRADING_ENABLED": "true",
+            })
+        self.assertNotIn(secret_like_value, str(caught.exception))
+        self.assertNotIn("also-not-valid", str(caught.exception))
+
 
 class HealthTests(unittest.TestCase):
     def test_status_fields(self):
@@ -73,6 +84,7 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(status["status"], "ok")
         self.assertEqual(status["stage"], 1)
         self.assertFalse(status["live_trading_enabled"])
+        self.assertTrue(status["emergency_stop_engaged"])
 
     def test_all_checks_pass_by_default(self):
         results = run_checks(load_config({}))
@@ -93,6 +105,7 @@ class LoggerTests(unittest.TestCase):
         self.assertNotIn("xyz789", redact("Token: xyz789"))
         self.assertNotIn("hunter2", redact("password = hunter2"))
         self.assertEqual(redact("normal message"), "normal message")
+        self.assertNotIn("TOPSECRET", redact('GET /api?token=TOPSECRET HTTP/1.1'))
 
     def test_setup_is_repeatable_without_duplicate_handlers(self):
         setup_logging("INFO")

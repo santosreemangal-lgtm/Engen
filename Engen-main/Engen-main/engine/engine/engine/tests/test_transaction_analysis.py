@@ -1,6 +1,7 @@
 import unittest
 
 from engine.transaction_analysis import (
+    PUMP_FUN_PROGRAM_ID,
     WRAPPED_SOL_MINT,
     analyze_transaction,
     analyze_token_balance_changes,
@@ -53,6 +54,39 @@ class TransactionAnalysisTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["account_count"], 1)
         self.assertIsNotNone(result["error"])
+
+    def test_preserves_program_and_instruction_context(self):
+        transaction = {
+            "slot": 99,
+            "transaction": {
+                "message": {
+                    "accountKeys": ["wallet_A", "TOKEN_PROGRAM"],
+                    "instructions": [{
+                        "programIdIndex": 1,
+                        "parsed": {"type": "transfer"},
+                        "stackHeight": 1,
+                    }],
+                },
+            },
+            "meta": {
+                "err": None,
+                "fee": 5000,
+                "innerInstructions": [{
+                    "index": 0,
+                    "instructions": [{
+                        "programIdIndex": 1,
+                        "parsed": {"type": "checked_transfer"},
+                        "stackHeight": 2,
+                    }],
+                }],
+            },
+        }
+        result = analyze_transaction(transaction)
+        self.assertEqual(result["program_ids"], ["TOKEN_PROGRAM"])
+        self.assertEqual(result["instructions"][0]["program_id"], "TOKEN_PROGRAM")
+        self.assertEqual(result["instructions"][0]["parsed_type"], "transfer")
+        self.assertEqual(result["instructions"][1]["source"], "inner")
+        self.assertEqual(result["instructions"][1]["parsed_type"], "checked_transfer")
 
     def test_missing_metadata_returns_unavailable(self):
         result = analyze_transaction({"slot": 123})
@@ -190,6 +224,79 @@ class TransactionAnalysisTests(unittest.TestCase):
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes[0]["pre_amount"], "0")
         self.assertEqual(changes[0]["delta_amount"], "250")
+
+    def test_multiple_token_accounts_for_one_wallet_are_preserved(self):
+        meta = {
+            "preTokenBalances": [
+                {"accountIndex": 1, "mint": "TOKEN_A", "owner": "WALLET_A",
+                 "uiTokenAmount": {"amount": "100", "decimals": 0}},
+                {"accountIndex": 2, "mint": "TOKEN_A", "owner": "WALLET_A",
+                 "uiTokenAmount": {"amount": "50", "decimals": 0}},
+            ],
+            "postTokenBalances": [
+                {"accountIndex": 1, "mint": "TOKEN_A", "owner": "WALLET_A",
+                 "uiTokenAmount": {"amount": "125", "decimals": 0}},
+                {"accountIndex": 2, "mint": "TOKEN_A", "owner": "WALLET_A",
+                 "uiTokenAmount": {"amount": "60", "decimals": 0}},
+            ],
+        }
+        changes = analyze_token_balance_changes(meta)
+        self.assertEqual(len(changes), 2)
+        self.assertEqual(
+            sorted(change["delta_amount"] for change in changes),
+            ["10", "25"],
+        )
+        signal = classify_token_balance_changes(
+            changes + [{
+                "owner": "WALLET_A",
+                "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                "delta_amount": "-100",
+            }],
+            "WALLET_A",
+        )
+        self.assertEqual(signal["classification"], "BUY_CANDIDATE")
+
+    def test_balance_delta_reconciles_one_sided_missing_owner(self):
+        wallet = "WALLET_A"
+        meta = {
+            "preTokenBalances": [{
+                "accountIndex": 9,
+                "mint": "TOKEN_A",
+                "uiTokenAmount": {"amount": "100", "decimals": 2},
+            }],
+            "postTokenBalances": [{
+                "accountIndex": 9,
+                "mint": "TOKEN_A",
+                "owner": wallet,
+                "uiTokenAmount": {"amount": "175", "decimals": 2},
+            }],
+        }
+
+        changes = analyze_token_balance_changes(meta)
+
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0]["owner"], wallet)
+        self.assertEqual(changes[0]["delta_amount"], "75")
+        self.assertEqual(changes[0]["pre_amount"], "100")
+        self.assertEqual(changes[0]["post_amount"], "175")
+
+    def test_balance_delta_is_ignored_when_owner_changes(self):
+        meta = {
+            "preTokenBalances": [{
+                "accountIndex": 9,
+                "mint": "TOKEN_A",
+                "owner": "WALLET_A",
+                "uiTokenAmount": {"amount": "100", "decimals": 2},
+            }],
+            "postTokenBalances": [{
+                "accountIndex": 9,
+                "mint": "TOKEN_A",
+                "owner": "WALLET_B",
+                "uiTokenAmount": {"amount": "175", "decimals": 2},
+            }],
+        }
+
+        self.assertEqual(analyze_token_balance_changes(meta), [])
 
     def test_closed_token_account_balance(self):
         meta = {
@@ -514,6 +621,242 @@ class TransactionAnalysisTests(unittest.TestCase):
         self.assertEqual(result["asset_mints"], [])
         self.assertEqual(result["quote_mints"], [])
 
+
+    def test_classification_records_evidence_and_confidence(self):
+        from engine.transaction_analysis import classify_transaction
+        wallet = "WALLET_A"
+        changes = [
+            {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "2500", "decimals": 3},
+            {"owner": wallet, "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+             "delta_amount": "-1000000", "decimals": 6},
+        ]
+        result = classify_transaction(None, wallet, changes)
+        self.assertEqual(result["classification"], "BUY_CANDIDATE")
+        self.assertEqual(result["confidence"], "medium")
+        self.assertEqual(result["evidence"]["wallet_balance_changes"][0]["raw_delta_amount"], "2500")
+        self.assertIn("limitations", result["evidence"])
+
+    def test_failed_transaction_is_not_a_buy_or_sell(self):
+        from engine.transaction_analysis import classify_transaction
+        result = classify_transaction(
+            {"meta": {"err": {"InstructionError": [0, "Custom"]}, "fee": 5000}},
+            "WALLET_A",
+            [{"owner": "WALLET_A", "mint": "TOKEN_A", "delta_amount": "100"}],
+        )
+        self.assertEqual(result["classification"], "FAILED_TRANSACTION")
+        self.assertEqual(result["confidence"], "high")
+        self.assertFalse(result["evidence"]["balance_changes_used"])
+
+    def test_token_receipt_alone_remains_unknown(self):
+        wallet = "WALLET_A"
+        result = classify_token_balance_changes(
+            [{"owner": wallet, "mint": "TOKEN_A", "delta_amount": "100", "decimals": 2}],
+            wallet,
+        )
+        self.assertEqual(result["classification"], "UNKNOWN")
+
+    def test_sol_decrease_without_asset_movement_is_not_a_sell(self):
+        wallet = "WALLET_A"
+        result = classify_token_balance_changes(
+            [{"owner": wallet, "mint": WRAPPED_SOL_MINT, "delta_amount": "-5000",
+              "decimals": 9, "source": "native_sol", "fee_adjusted": True}],
+            wallet,
+        )
+        self.assertEqual(result["classification"], "UNKNOWN")
+
+    def test_mismatched_decimals_do_not_create_a_delta(self):
+        meta = {
+            "preTokenBalances": [{
+                "accountIndex": 1, "mint": "TOKEN_A", "owner": "WALLET_A",
+                "uiTokenAmount": {"amount": "100", "decimals": 2},
+            }],
+            "postTokenBalances": [{
+                "accountIndex": 1, "mint": "TOKEN_A", "owner": "WALLET_A",
+                "uiTokenAmount": {"amount": "1000", "decimals": 3},
+            }],
+        }
+        self.assertEqual(analyze_token_balance_changes(meta), [])
+
+    def test_classification_keeps_raw_units_and_does_not_infer_market_value(self):
+        from engine.transaction_analysis import classify_transaction
+        wallet = "WALLET_A"
+        changes = [
+            {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "123456789",
+             "decimals": 8, "pre_amount": "0", "post_amount": "123456789"},
+            {"owner": wallet, "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+             "delta_amount": "-2500000", "decimals": 6},
+        ]
+        result = classify_transaction(None, wallet, changes)
+        evidence = result["evidence"]["wallet_balance_changes"]
+        self.assertEqual(evidence[0]["raw_delta_amount"], "123456789")
+        self.assertEqual(evidence[0]["decimals"], 8)
+        self.assertNotIn("market_value", evidence[0])
+
+    def test_multiple_asset_mints_with_mixed_directions_remain_unknown(self):
+        wallet = "WALLET_A"
+        result = classify_token_balance_changes(
+            [
+                {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "100"},
+                {"owner": wallet, "mint": "TOKEN_B", "delta_amount": "-100"},
+                {"owner": wallet, "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                 "delta_amount": "-50"},
+            ],
+            wallet,
+        )
+        self.assertEqual(result["classification"], "UNKNOWN")
+
+
+    def test_rent_or_transfer_like_native_sol_movement_is_not_auto_swap(self):
+        from engine.transaction_analysis import classify_transaction
+        wallet = "WALLET_A"
+        transaction = {
+            "transaction": {
+                "message": {
+                    "accountKeys": [wallet, "TOKEN_PROGRAM"],
+                    "instructions": [{
+                        "program": "system",
+                        "programId": "11111111111111111111111111111111",
+                        "parsed": {"type": "createAccount"},
+                    }],
+                }
+            },
+            "meta": {"err": None, "fee": 5000},
+        }
+        changes = [
+            {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "100",
+             "decimals": 2},
+            {"owner": wallet, "mint": WRAPPED_SOL_MINT, "delta_amount": "-1000000",
+             "decimals": 9, "source": "native_sol", "fee_adjusted": True},
+        ]
+        result = classify_transaction(transaction, wallet, changes)
+        self.assertEqual(result["classification"], "UNKNOWN")
+        self.assertIn("transfer", result["reason"])
+
+
+    def _pumpfun_v2_transaction(self, instruction_name):
+        return {
+            "transaction": {
+                "message": {
+                    "accountKeys": ["WALLET_A", PUMP_FUN_PROGRAM_ID],
+                    "instructions": [{
+                        "programId": PUMP_FUN_PROGRAM_ID,
+                        "accounts": [
+                            "GLOBAL",
+                            "TOKEN_A",
+                            "UNLISTED_QUOTE_MINT",
+                            "TOKEN_PROGRAM",
+                        ],
+                    }],
+                },
+            },
+            "meta": {
+                "err": None,
+                "fee": 5000,
+                "logMessages": [
+                    f"Program {PUMP_FUN_PROGRAM_ID} invoke [1]",
+                    f"Program log: Instruction: {instruction_name}",
+                    f"Program {PUMP_FUN_PROGRAM_ID} success",
+                ],
+            },
+        }
+
+    def test_pumpfun_v2_classifies_unlisted_quote_mint_buy(self):
+        from engine.transaction_analysis import classify_transaction
+
+        wallet = "WALLET_A"
+        transaction = self._pumpfun_v2_transaction("BuyV2")
+        changes = [
+            {
+                "owner": wallet,
+                "mint": "TOKEN_A",
+                "delta_amount": "13975216850689",
+                "decimals": 6,
+            },
+            {
+                "owner": wallet,
+                "mint": "UNLISTED_QUOTE_MINT",
+                "delta_amount": "-1098516683",
+                "decimals": 9,
+            },
+            {
+                "owner": wallet,
+                "mint": WRAPPED_SOL_MINT,
+                "delta_amount": "-60111",
+                "decimals": 9,
+                "source": "native_sol",
+            },
+        ]
+
+        result = classify_transaction(transaction, wallet, changes)
+
+        self.assertEqual(result["classification"], "BUY_CANDIDATE")
+        self.assertEqual(result["asset_mints"], ["TOKEN_A"])
+        self.assertEqual(result["quote_mints"], ["UNLISTED_QUOTE_MINT"])
+        self.assertEqual(
+            result["evidence"]["pumpfun_instruction_action"],
+            "BUY",
+        )
+        self.assertEqual(result["evidence"]["pumpfun_base_mint"], "TOKEN_A")
+        self.assertEqual(
+            result["evidence"]["pumpfun_quote_mint"],
+            "UNLISTED_QUOTE_MINT",
+        )
+
+    def test_pumpfun_v2_classifies_unlisted_quote_mint_sell(self):
+        from engine.transaction_analysis import classify_transaction
+
+        wallet = "WALLET_A"
+        transaction = self._pumpfun_v2_transaction("SellV2")
+        changes = [
+            {
+                "owner": wallet,
+                "mint": "TOKEN_A",
+                "delta_amount": "-2500",
+                "decimals": 6,
+            },
+            {
+                "owner": wallet,
+                "mint": "UNLISTED_QUOTE_MINT",
+                "delta_amount": "900",
+                "decimals": 9,
+            },
+        ]
+
+        result = classify_transaction(transaction, wallet, changes)
+
+        self.assertEqual(result["classification"], "SELL_CANDIDATE")
+        self.assertEqual(result["asset_mints"], ["TOKEN_A"])
+        self.assertEqual(result["quote_mints"], ["UNLISTED_QUOTE_MINT"])
+        self.assertEqual(
+            result["evidence"]["pumpfun_instruction_action"],
+            "SELL",
+        )
+
+    def test_pumpfun_v2_instruction_with_opposite_balance_direction_stays_unknown(self):
+        from engine.transaction_analysis import classify_transaction
+
+        wallet = "WALLET_A"
+        transaction = self._pumpfun_v2_transaction("BuyV2")
+        changes = [
+            {
+                "owner": wallet,
+                "mint": "TOKEN_A",
+                "delta_amount": "-2500",
+                "decimals": 6,
+            },
+            {
+                "owner": wallet,
+                "mint": "UNLISTED_QUOTE_MINT",
+                "delta_amount": "900",
+                "decimals": 9,
+            },
+        ]
+
+        result = classify_transaction(transaction, wallet, changes)
+
+        self.assertEqual(result["classification"], "UNKNOWN")
+        self.assertEqual(result["asset_mints"], [])
+        self.assertEqual(result["quote_mints"], [])
 
 if __name__ == "__main__":
     unittest.main()

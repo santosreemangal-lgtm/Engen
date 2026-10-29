@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b1020">
+<title>Solana Copy Engine</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1020;--panel:#131c30;--card:#19243a;--line:#2a3853;--text:#edf2ff;--muted:#9aa9c2;--blue:#829cff;--green:#4dd6a2;--red:#ff8798}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#172746,var(--bg) 60%);color:var(--text);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+main{width:min(1050px,calc(100% - 32px));margin:40px auto 64px}.brand{font-size:12px;font-weight:800;letter-spacing:2px;color:var(--blue);text-transform:uppercase}h1{font-size:clamp(28px,5vw,42px);letter-spacing:-1.2px;margin:8px 0 4px}.subtitle{color:var(--muted);margin:0 0 28px}.panel{padding:22px;margin:16px 0;background:rgba(19,28,48,.94);border:1px solid var(--line);border-radius:18px;box-shadow:0 12px 32px #0002}.panel-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}h2{font-size:18px;margin:0}h3{font-size:15px;margin:18px 0 10px}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.metric{background:linear-gradient(145deg,#1c2942,#141e32);border:1px solid var(--line);border-radius:14px;padding:16px;min-width:0}.metric:nth-child(1){border-top:2px solid var(--blue)}.metric:nth-child(2){border-top:2px solid var(--green)}.metric:nth-child(3){border-top:2px solid #b39aff}.metric:nth-child(4){border-top:2px solid #f0bd73}.label{color:var(--muted);font-size:12px}.value{font-size:clamp(20px,3vw,28px);font-weight:750;margin:6px 0 0;overflow-wrap:anywhere}.row{display:flex;gap:10px;align-items:center}.stack{display:grid;gap:8px}input,select{width:100%;min-width:0;padding:12px 13px;color:var(--text);background:#0b1324;border:1px solid var(--line);border-radius:10px;font:inherit}label{display:block;color:#cbd6eb;font-size:13px;margin:0 0 7px}button{border:0;border-radius:10px;padding:12px 16px;background:var(--blue);color:#10182b;font:inherit;font-weight:750;cursor:pointer;white-space:nowrap}button:hover:not(:disabled){filter:brightness(1.08)}button:disabled{opacity:.5;cursor:not-allowed}.secondary{background:#26344d;color:var(--text)}.danger{background:#3b202d;color:#ffd5dc}.field{margin:14px 0}.hint,.message{font-size:13px;color:var(--muted);margin:8px 0 0}.message{min-height:20px}.wallet{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}.wallet:last-child{border-bottom:0}.address{font:12px/1.6 ui-monospace,monospace;overflow-wrap:anywhere}.wallet-actions{display:flex;gap:8px;flex-wrap:wrap}.choice-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.choice-row.two{grid-template-columns:repeat(2,minmax(0,1fr))}.choice{display:flex;gap:8px;align-items:center;padding:12px;border:1px solid var(--line);background:#0d1628;border-radius:10px;cursor:pointer}.choice input{width:auto;margin:0;accent-color:var(--blue)}.confirm{width:100%;margin-top:14px}.status{display:inline-flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}.dot{width:8px;height:8px;border-radius:50%;background:#f0bd73}.dot.on{background:var(--green)}.history-list{display:grid;gap:10px;margin-top:14px}.history-item{padding:14px;border:1px solid var(--line);border-radius:12px;background:#101a2d;overflow-wrap:anywhere}.hidden{display:none!important}.empty{color:var(--muted);font-size:13px;padding:10px 0}details summary{cursor:pointer;color:#c9d7ff;font-weight:700} @media(max-width:760px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.panel{padding:17px}}@media(max-width:520px){main{width:calc(100% - 22px);margin-top:24px}.grid{grid-template-columns:1fr 1fr}.row{align-items:stretch;flex-direction:column}.row button{width:100%}.choice-row{grid-template-columns:1fr}.choice-row.two{grid-template-columns:1fr}.wallet{align-items:flex-start;flex-direction:column}.panel-head{align-items:flex-start;flex-direction:column}}
+
+/* Visual refinement: premium dark dashboard, clearer hierarchy, and responsive controls */
+body{background:radial-gradient(ellipse at 8% -12%,#253a66 0,transparent 48%),radial-gradient(ellipse at 100% 0%,#183b42 0,transparent 42%),#080d18}
+main{width:min(980px,calc(100% - 36px));margin:46px auto 68px}
+header{padding:0 4px 8px}
+.brand{display:inline-flex;padding:7px 12px;border:1px solid #35496e;border-radius:999px;background:#17243a;color:#b9c8ff;letter-spacing:1.35px}
+h1{font-size:clamp(34px,5.5vw,50px);line-height:1.08;letter-spacing:-1.7px;margin:16px 0 8px;background:linear-gradient(100deg,#fff 12%,#bdcaff 58%,#86e6d0);-webkit-background-clip:text;background-clip:text;color:transparent}
+.subtitle{max-width:600px;font-size:15px;line-height:1.7;margin-bottom:28px}
+.panel{position:relative;overflow:hidden;padding:24px;margin:18px 0;background:linear-gradient(145deg,rgba(20,31,52,.97),rgba(12,19,33,.98));border:1px solid #293953;border-radius:20px;box-shadow:0 18px 48px #0003}
+.panel:before{content:"";position:absolute;inset:0 0 auto;height:1px;background:linear-gradient(90deg,transparent,#a9bbff66,transparent);pointer-events:none}
+.panel-head{margin-bottom:20px}
+h2{font-size:18px;letter-spacing:-.25px;display:flex;align-items:center;gap:10px}
+h2:before{content:"";display:inline-block;width:4px;height:19px;border-radius:8px;background:linear-gradient(#9aafff,#62d9c3)}
+.grid{gap:13px}
+.metric{min-height:112px;padding:18px;border-radius:16px;background:linear-gradient(150deg,#1c2a43,#121b2d);border:1px solid #2c3b55;transition:transform .18s,border-color .18s}
+.metric:hover{transform:translateY(-2px);border-color:#51658a}
+.metric:nth-child(1){border-top:2px solid #8da7ff}.metric:nth-child(2){border-top:2px solid #55d8b0}.metric:nth-child(3){border-top:2px solid #b8a0ff}.metric:nth-child(4){border-top:2px solid #f2c078}
+.label{font-size:12px;letter-spacing:.25px}
+.value{font-size:clamp(22px,3vw,30px);letter-spacing:-.7px;margin-top:12px}
+.field{margin:18px 0}
+input,select{min-height:46px;background:#0a1220;border-color:#2a3a55;border-radius:12px;transition:border-color .15s,box-shadow .15s}
+input:focus,select:focus{outline:none;border-color:#8da7ff;box-shadow:0 0 0 3px #829cff22}
+button{min-height:44px;padding:12px 18px;border-radius:12px;background:linear-gradient(135deg,#a6b6ff,#7f96ee);box-shadow:0 5px 16px #7189e522;transition:transform .15s,filter .15s}
+button:hover:not(:disabled){filter:brightness(1.08);transform:translateY(-1px)}
+button:active:not(:disabled){transform:translateY(0)}
+.secondary{background:#253550;color:#eaf0ff;box-shadow:none;border:1px solid #354865}
+.danger{background:#3b202d;color:#ffd5dc;box-shadow:none;border:1px solid #5a3342}
+.choice-row{gap:10px}
+.choice{min-height:52px;padding:14px;border-radius:13px;background:#0c1526;border-color:#2a3a55;transition:background .15s,border-color .15s}
+.choice:has(input:checked){background:linear-gradient(120deg,#263657,#1a2b42);border-color:#829cff;box-shadow:inset 0 0 0 1px #829cff35}
+.choice input{accent-color:#9bb0ff}
+.choice:hover{border-color:#6177a0}
+.confirm{margin-top:14px;background:linear-gradient(100deg,#8ea8ff,#72d9c7);color:#0b1625;letter-spacing:.1px}
+.wallet{padding:15px 0}
+.wallet-actions{align-items:center}
+.history-item{background:linear-gradient(145deg,#121e32,#0e1727);border-color:#2c3d58}
+details summary{padding:12px 0}
+.status{padding:6px 10px;border:1px solid #2d3c56;border-radius:999px;background:#101a2b}.status-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.api-auth-details{margin:12px 4px;padding:10px 12px;border:1px solid #293953;border-radius:12px;background:#0d1727}.api-auth-details summary{padding:5px 0}.api-auth-details .field{margin-bottom:0}.api-auth-details input{margin:8px 0}.api-auth-details .row{flex-wrap:wrap}.api-auth-details .row button{flex:1}
+.message{line-height:1.6}
+footer.hint{padding:10px 4px;line-height:1.7}
+@media(max-width:760px){main{margin-top:30px}.panel{padding:19px}.metric{padding:15px;min-height:102px}}
+@media(max-width:520px){main{width:calc(100% - 22px);margin-top:22px}.panel{padding:16px;border-radius:16px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.metric{padding:13px}.value{font-size:21px}.row{gap:8px}.choice-row{grid-template-columns:1fr}.choice-row.two{grid-template-columns:1fr}.panel-head{gap:10px}}
+
+.profile-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:12px 0 18px}.profile-card{min-width:0;text-align:left;white-space:normal;background:linear-gradient(145deg,#17243a,#101a2b);border:1px solid #30415f;color:var(--text);box-shadow:none;padding:16px;border-radius:15px}.profile-card[aria-pressed="true"]{border-color:#8da7ff;box-shadow:inset 0 0 0 1px #829cff55;background:linear-gradient(145deg,#26385a,#15243a)}.profile-card .card-name{font-weight:800;font-size:15px;display:block;overflow-wrap:anywhere}.profile-card .card-address{display:block;color:var(--muted);font:11px/1.6 ui-monospace,monospace;overflow-wrap:anywhere;margin-top:8px}.profile-card .card-meta{display:flex;justify-content:space-between;gap:8px;margin-top:12px;color:#b9c8df;font-size:12px}.profile-detail{border:1px solid var(--line);border-radius:14px;padding:16px;background:#0d1728;margin:14px 0}.profile-detail .panel-head{margin-bottom:8px}@media(max-width:760px){.profile-cards{grid-template-columns:1fr}}
+.wallet-workspace-head{align-items:flex-start}
+.wallet-top-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.wallet-layout{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:14px;align-items:start}
+.wallet-section-card{min-width:0;border:1px solid #2a3a55;border-radius:16px;background:linear-gradient(145deg,#101a2b,#0c1422);padding:18px}
+.wallet-section-card h3{margin:0;font-size:15px}
+.wallet-section-card .panel-head{margin-bottom:12px}
+.wallet-section-card .field{margin:14px 0}
+.wallet-add-form{margin:12px 0 18px}
+.wallet-add-form label{margin-bottom:8px}
+.wallet-add-form .row{align-items:stretch}
+.profile-cards{grid-template-columns:1fr;gap:8px;margin:12px 0}
+.profile-card{padding:13px;border-radius:12px}
+.profile-card .card-address{font-family:inherit;font-size:12px}
+.profile-detail{padding:14px;margin-top:12px}
+#profile-form .row{align-items:stretch}
+#profile-form .row input{flex:1}
+#wallet-list{display:grid;grid-template-columns:1fr;gap:8px}
+#wallet-list .wallet{align-items:flex-start;border:1px solid #263852;background:#0d1727;border-radius:12px;padding:12px;display:grid;grid-template-columns:minmax(0,1fr);gap:9px}
+#wallet-list .address{font-size:11px;line-height:1.7;overflow-wrap:anywhere}
+#wallet-list .wallet-actions button{font-size:12px;padding:9px 11px;min-height:36px}
+.wallet-section-card .message{overflow-wrap:anywhere}
+@media(max-width:760px){.wallet-layout{grid-template-columns:1fr}.wallet-top-actions{width:100%}.wallet-top-actions button{flex:1}}
+@media(max-width:520px){.wallet-top-actions{display:grid;grid-template-columns:1fr 1fr}.wallet-top-actions .status{grid-column:1/-1}.wallet-section-card{padding:14px}.wallet-top-actions button{width:100%;white-space:normal}}
+.amount-input-wrap{display:flex;align-items:center;gap:8px}.amount-input-wrap input{flex:1;min-width:0}.amount-suffix{min-width:54px;text-align:center;padding:11px 12px;font-weight:800;border:1px solid var(--line);border-radius:10px;background:#17243a;color:#cbd6eb}.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.virtual-balance-editor{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:16px;margin:16px 0 18px;border:1px solid #30415f;border-radius:15px;background:linear-gradient(145deg,#111e31,#0c1525)}.virtual-balance-editor h3{margin:0;font-size:15px}.virtual-balance-editor form{align-items:stretch}.virtual-balance-editor input{flex:1;min-width:0}.virtual-balance-editor .message{margin-top:0}.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.history-subpanel{min-width:0;padding:16px;border:1px solid #2a3a55;border-radius:14px;background:linear-gradient(145deg,#111c2d,#0c1422)}.history-subpanel h3{margin:0 0 5px}.history-subpanel .history-list{margin-top:12px}.history-subpanel a{color:#aebeff;font-size:13px;overflow-wrap:anywhere}.history-subpanel .history-item{min-width:0}@media(max-width:760px){.history-grid{grid-template-columns:1fr}}</style>
+</head>
+<body><main>
+<header><div class="brand">Paper trading · Read-only monitoring</div><h1>Solana Copy Engine</h1><p class="subtitle">A simple dashboard for tracked wallets and paper-copy settings.</p></header>
+
+<section class="panel"><div class="panel-head"><h2>Portfolio</h2><div class="status-group"><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span><span id="rpc-health-status" class="status" title="Read-only public Solana RPC health"><span id="rpc-health-dot" class="dot"></span><span id="rpc-health-state">RPC checking…</span></span></div></div>
+<div class="virtual-balance-editor">
+<div><h3>Virtual USD Balance</h3><p class="hint">Set or change your paper cash balance. This is simulated money only; no wallet is funded.</p></div>
+<form id="virtual-balance-form" class="row"><label class="sr-only" for="virtual-balance-value">Virtual USD balance</label><input id="virtual-balance-value" type="number" min="0.01" max="1000000000" step="0.01" placeholder="Enter amount in $" required disabled><button id="save-virtual-balance" type="submit" disabled>Confirm Balance</button></form>
+<p id="virtual-balance-message" class="message" role="status">Select a paper profile to set its virtual balance.</p>
+</div>
+<div class="grid">
+<div class="metric"><div class="label">Portfolio Value</div><p id="total-value" class="value">$—</p></div>
+<div class="metric"><div class="label">Available USD</div><p id="available" class="value">$—</p></div>
+<div class="metric"><div class="label">Realized P&amp;L</div><p id="realized" class="value">$—</p></div>
+<div class="metric"><div class="label">Unrealized P&amp;L</div><p id="unrealized" class="value">$—</p></div>
+</div>
+<p id="portfolio-message" class="message" role="status">Portfolio amounts are from the selected profile’s paper simulator. Token holdings require verified prices before total value can be calculated.</p>
+</section>
+
+<section class="panel wallet-workspace">
+<div class="panel-head wallet-workspace-head">
+<div><h2>Wallet Workspace</h2><p class="hint">Paper trading requires no personal destination wallet. Add public Solana wallets to watch; monitoring is read-only.</p></div>
+<div class="wallet-top-actions"><span id="wallet-count" class="status">0 saved</span><button id="start-monitoring" type="button" disabled>Start Monitoring</button><button id="stop-monitoring" type="button" class="danger" disabled>Stop Monitoring</button></div>
+</div>
+<p id="monitor-state" class="status">Select or create a paper profile</p><p id="monitor-message" class="message" role="status">Monitoring starts only after you explicitly press Start Monitoring. No signing or live trades occur.</p>
+<div class="wallet-layout">
+<section class="wallet-section-card">
+<div class="panel-head"><div><h3>Paper Profile</h3><p class="hint">A profile groups source wallets and copy settings. No personal wallet address is needed.</p></div><button id="create-profile" type="button" class="secondary">＋ Create Profile</button></div>
+<div id="profile-cards" class="profile-cards" aria-live="polite"></div><div id="profile-card-message" class="message" role="status"></div>
+<select id="profile-select" class="hidden" aria-label="Selected paper profile"><option value="">No profile selected</option></select>
+<form id="profile-form" class="hidden field"><label for="profile-name">Profile name</label><div class="row"><input id="profile-name" maxlength="80" placeholder="e.g. Paper Test 1" required><button type="submit">Create Profile</button></div><button id="cancel-create-profile" type="button" class="secondary">Cancel</button><p class="hint">This creates a paper-trading profile, not a blockchain wallet.</p></form>
+<div id="selected-profile-detail" class="profile-detail">
+<div class="panel-head"><div><h3 id="detail-profile-title">Choose a paper profile</h3><p id="detail-profile-subtitle" class="hint">Create or select a profile to manage source wallets.</p></div><span id="detail-profile-status" class="status">No selection</span></div>
+
+<div class="field"><button id="activate-profile" class="secondary" type="button" disabled>Activate Profile</button><p class="hint">Activation does not start monitoring. Start Monitoring remains a separate, manual action.</p></div>
+</div>
+</section>
+<section class="wallet-section-card">
+<div class="panel-head"><div><h3>Public Source Wallets</h3><p class="hint">Add a real Solana public address to follow its on-chain activity. Never enter a seed phrase or private key.</p></div></div>
+<form id="wallet-form" class="wallet-add-form"><label for="wallet-address">Solana public address</label><div class="row"><input id="wallet-address" autocomplete="off" spellcheck="false" placeholder="Paste public wallet address" aria-label="Source public wallet address" required><button id="add-wallet" type="submit">Add Wallet</button></div></form>
+<div class="field"><label for="wallet-search">Search saved source wallets</label><input id="wallet-search" placeholder="Filter by wallet address…" autocomplete="off" spellcheck="false"></div>
+<div class="field"><div class="panel-head"><h3>Saved Addresses</h3><span class="hint">Read-only</span></div><div id="wallet-list"><p class="empty">Loading public wallets…</p></div></div>
+<p id="wallet-message" class="message" role="status"></p>
+</section>
+</div>
+</section>
+
+<section class="panel"><h2>Copy Settings</h2>
+<div class="field"><label>Copy Direction</label><div class="choice-row">
+<label class="choice"><input type="radio" name="direction" value="BUY"> Buy only</label>
+<label class="choice"><input type="radio" name="direction" value="SELL"> Sell only</label>
+<label class="choice"><input type="radio" name="direction" value="BOTH" checked> Buy and sell</label>
+</div></div>
+<div class="field"><label>BUY Sizing Mode</label><div class="choice-row">
+<label class="choice"><input type="radio" name="sizing" value="SOURCE_PERCENT" checked> Fixed percentage of virtual balance</label>
+<label class="choice"><input type="radio" name="sizing" value="FIXED_USD"> Fixed amount (USD)</label>
+<label class="choice"><input type="radio" name="sizing" value="MIRROR_AMOUNT"> Mirror Buy &amp; Sell Amount</label>
+</div><p class="hint">BUY sizing is selected here. SELLs follow the source position reduction and never exceed the held paper-token balance.</p></div>
+<div class="field" id="amount-field"><label id="amount-label" for="amount-value">Fixed percentage of virtual balance</label><div class="amount-input-wrap"><input id="amount-value" type="number" min="0.01" max="99.99" step="any" value="5" required><span id="amount-suffix" class="amount-suffix">%</span></div><p class="hint" id="amount-hint">Percentage of your virtual USD balance. Settings apply only after confirmation.</p></div>
+<div class="field"><label for="max-buy-amount">Maximum Buy Amount (USD) — applies to every tracked trader</label><div class="amount-input-wrap"><input id="max-buy-amount" type="number" min="0.01" max="1000000" step="0.01" value="10" required><span class="amount-suffix">$ max</span></div><p class="hint">No minimum BUY amount. Every BUY is capped at this USD amount, regardless of the selected sizing mode.</p></div>
+<button id="confirm-settings" class="confirm" type="button">Confirm Settings</button><p id="settings-message" class="message" role="status"></p>
+</section>
+
+<section class="panel"><div class="panel-head"><h2>History</h2></div>
+<details id="history-details" class="field" open><summary>Choose history to inspect</summary>
+<div class="history-grid">
+<section class="history-subpanel"><h3>Observed On-chain Transactions</h3><p class="hint">Actual transaction signatures observed from the selected public source wallets. These are not simulated trades.</p><div id="transaction-history-list" class="history-list"><p class="empty">Select a profile to load observed transactions.</p></div><p id="transaction-history-message" class="message" role="status"></p></section>
+<section class="history-subpanel"><h3>Simulated Paper Trades</h3><p class="hint">Paper orders created by the copy engine. No signing or blockchain transaction is sent.</p><div id="paper-trade-history-list" class="history-list"><p class="empty">Select a profile to load paper trades.</p></div><p id="paper-trade-history-message" class="message" role="status"></p></section>
+</div></details>
+</section>
+<details id="api-auth-details" class="api-auth-details"><summary>Optional API authentication</summary><div class="field"><label for="api-token">Dashboard API token</label><input id="api-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste bearer token (at least 32 characters)"><div class="row"><button id="save-api-token" type="button">Use Token</button><button id="clear-api-token" type="button" class="secondary">Clear Token</button></div><p id="api-auth-message" class="message" role="status">Only needed when DASHBOARD_AUTH_TOKEN is configured. The token is kept in this browser tab’s session storage.</p></div></details>
+<footer class="hint">Paper mode only. No private keys, signing, or live transactions. Portfolio prices and P&amp;L may remain unavailable when verified market prices are not available.</footer>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, balanceInputDirty = false, balanceSaveInProgress = false;
+const headers = {"Content-Type":"application/json"};
+function apiRequestHeaders(extra={}) {
+  let token = "";
+  try { token = sessionStorage.getItem("dashboard-api-token") || ""; } catch {}
+  return {...headers, ...(token ? {Authorization:"Bearer "+token} : {}), ...(extra || {})};
+}
+async function api(path, options={}) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(path,{...options,signal:controller.signal,headers:apiRequestHeaders(options.headers)});
+    let data;
+    try { data=await response.json(); } catch { throw new Error("Backend returned an invalid response."); }
+    if(!response.ok) throw new Error(data.error || "Request failed ("+response.status+").");
+    return data;
+  } catch (error) {
+    if (error && error.name === "AbortError") throw new Error("Request timed out after 12 seconds. Check that the dashboard backend is running.");
+    if (error instanceof Error && (error.message === "Backend returned an invalid response." || error.message.startsWith("Request failed ("))) throw error;
+    throw new Error("Could not reach the dashboard backend. Check that it is running.");
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+function money(value){if(value===null||value===undefined||value==="")return "$—";const n=Number(value);return Number.isFinite(n)?"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"$—";}
+function say(id,text){$(id).textContent=text;}
+function post(path,payload){return api(path,{method:"POST",body:JSON.stringify(payload)});}
+async function loadPortfolio(){
+ try{
+  const data=await api("/api/paper-simulation"), r=data.report||data;
+  const initial=r.initial_balance;
+  $("total-value").textContent=money(r.portfolio_value_usd ?? (r.available_balance!==undefined && r.open_positions_value_usd!==undefined ? Number(r.available_balance)+Number(r.open_positions_value_usd) : null));
+  $("available").textContent=money(r.available_balance_usd ?? r.available_balance);
+  $("realized").textContent=money(r.realized_pnl_usd ?? r.realized_pnl);
+  $("unrealized").textContent=money(r.unrealized_pnl_usd ?? r.unrealized_pnl);
+  say("portfolio-message",r.database_available===false?"Paper ledger is not initialized yet.":"Values not provided by the ledger or verified price data remain unavailable.");
+ }catch(e){say("portfolio-message",e.message);}
+}
+function renderWallets(){
+ const list=$("wallet-list");list.replaceChildren();const q=$("wallet-search").value.trim().toLowerCase();const visible=wallets.filter(a=>a.toLowerCase().includes(q));
+ if(!visible.length){const p=document.createElement("p");p.className="empty";p.textContent=wallets.length?"No saved source address matches that search.":"No saved source wallets yet. Add a public address above.";list.append(p);}
+ visible.forEach(address=>{
+  const row=document.createElement("div");row.className="wallet";
+  const code=document.createElement("div");code.className="address";code.textContent=address;
+  const actions=document.createElement("div");actions.className="wallet-actions";
+  const assigned=selected()?.source_wallets||[];const isAssigned=assigned.includes(address);
+  const assign=document.createElement("button");assign.className="secondary";assign.textContent=isAssigned?"Assigned":"Assign to profile";assign.disabled=!selectedProfile||isAssigned;
+  assign.addEventListener("click",async()=>{try{await post("/api/profiles",{action:"associate-source-wallet",profile_id:selectedProfile,wallet_address:address});say("wallet-message","Public source wallet assigned to this paper profile.");await loadProfiles();renderWallets();}catch(e){say("wallet-message",e.message);}});
+  const remove=document.createElement("button");remove.className="danger";remove.textContent=isAssigned?"Unassign":"Remove saved";remove.addEventListener("click",async()=>{try{if(isAssigned&&selectedProfile){await post("/api/profiles",{action:"disassociate-source-wallet",profile_id:selectedProfile,wallet_address:address});say("wallet-message","Public source wallet unassigned from this profile; it remains saved for other profiles.");await loadProfiles();}else{await post("/api/wallets",{action:"remove",address});say("wallet-message","Saved source wallet removed from the global saved list.");await loadWallets();}}catch(e){say("wallet-message",e.message);}});
+  actions.append(assign,remove);row.append(code,actions);list.append(row);
+ });
+}
+async function loadWallets(){
+ try{
+  const d=await api("/api/wallets");wallets=Array.isArray(d.wallets)?d.wallets:[];backendReady=true;
+  $("engine-dot").classList.add("on");say("engine-state","Backend connected");
+  $("wallet-count").textContent=wallets.length+" saved";
+  renderWallets();
+  await loadProfiles();
+ }catch(e){backendReady=false;$("engine-dot").classList.remove("on");say("engine-state","Backend unavailable");say("wallet-message",e.message);if(/authentication required/i.test(e.message)){$("api-auth-details").open=true;say("api-auth-message","The backend requires a bearer token. Enter it above and click Use Token.");}}
+}
+async function loadRpcHealth(){
+ try{
+  const report=await api("/api/rpc-health");
+  const healthy=report.available===true;
+  $("rpc-health-dot").classList.toggle("on",healthy);
+  $("rpc-health-state").textContent=healthy?"RPC healthy":"RPC "+String(report.status||"unavailable").replaceAll("_"," ");
+  $("rpc-health-status").title=report.checked_at?"Last checked: "+report.checked_at:(healthy?"RPC health check succeeded":"RPC health check unavailable");
+ }catch(e){
+  $("rpc-health-dot").classList.remove("on");
+  $("rpc-health-state").textContent=/authentication required/i.test(e.message)?"RPC auth required":"RPC check failed";
+  $("rpc-health-status").title=e.message;
+ }
+}
+async function loadMonitor(){
+ const p=selected();
+ if(!selectedProfile||!p){currentMonitor=false;say("monitor-state","Select a profile");say("monitor-message","Choose a paper profile and add at least one public source wallet.");$("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;return;}
+ const eligible=String(p.status||"").toLowerCase()==="active"&&Array.isArray(p.source_wallets)&&p.source_wallets.length>0;
+ try{
+  const d=await api("/api/profile-monitor?profile_id="+encodeURIComponent(selectedProfile));const report=d.monitor||d.report||d;
+  currentMonitor=Boolean(report.enabled);
+  $("monitor-state").textContent=currentMonitor?"Monitoring enabled":"Monitoring stopped";
+  $("start-monitoring").disabled=currentMonitor||!eligible;$("stop-monitoring").disabled=!currentMonitor;
+  const observed=Array.isArray(report.wallets)?report.wallets:[];
+  const failed=observed.find(x=>x.state==="error");
+  const connected=observed.filter(x=>x.state==="connected");
+  const historyFailed=observed.some(x=>(x.latest_results||[]).some(tx=>tx.profile_history_status==="save_failed"));
+  const queueFailed=observed.some(x=>(x.latest_results||[]).some(tx=>tx.paper_copy_error));
+  if(historyFailed){say("monitor-message","Read-only scanning is active, but transaction-history storage failed for at least one observation. The history may be incomplete.");}
+  else if(queueFailed){say("monitor-message","Read-only scanning is active, but a paper-order queue step failed. No real transaction was sent; check the paper-trade history and server logs.");}
+  else if(failed){say("monitor-message","Monitoring is enabled, but a source-wallet scan failed. "+(failed.last_error||"Check the configured RPC connection."));}
+  else if(connected.length){const newest=connected.map(x=>x.last_successful_check).filter(Boolean).sort().at(-1);say("monitor-message","Read-only scan completed for "+connected.length+" wallet(s). Last successful check: "+(newest?new Date(newest).toLocaleString():"time unavailable")+". Paper-order outcomes are shown in Paper Trade History.");}
+  else if(currentMonitor){say("monitor-message","Monitoring is enabled. Waiting for the first read-only RPC scan to finish.");}
+  else if(!eligible){say("monitor-message",String(p.status||"").toLowerCase()!=="active"?"Activate this paper profile before starting monitoring.":"Add at least one public source wallet to this profile first.");}
+  else{say("monitor-message","Ready. Start Monitoring will check the selected public source wallets only.");}
+ }catch(e){currentMonitor=false;say("monitor-state","Status unavailable");$("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;say("monitor-message","Could not verify monitor status: "+e.message);}
+}
+async function loadProfiles(){
+ try{
+  const d=await api("/api/profiles");profiles=Array.isArray(d.profiles)?d.profiles:[];
+  const sel=$("profile-select");sel.replaceChildren();const blank=document.createElement("option");blank.value="";blank.textContent=profiles.length?"Select profile":"No profile yet";sel.append(blank);
+  profiles.forEach(p=>{const o=document.createElement("option");o.value=p.profile_id;o.textContent=p.name+(p.destination_public_address?" · "+p.destination_public_address.slice(0,6)+"…":"");sel.append(o);});
+  if(selectedProfile&&profiles.some(p=>p.profile_id===selectedProfile))sel.value=selectedProfile;else{selectedProfile=profiles[0]?.profile_id||"";sel.value=selectedProfile;}
+   renderProfileCards();
+  renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();renderWallets();if($("history-details").open)await loadHistory();
+ }catch(e){say("wallet-message","Profiles unavailable: "+e.message);}
+}
+function renderProfileCards(){const host=$("profile-cards");host.replaceChildren();if(!profiles.length){const p=document.createElement("p");p.className="empty";p.textContent="No paper profile yet. Create one to organize the public wallets you want to monitor.";host.append(p);}profiles.forEach(p=>{const card=document.createElement("button");card.type="button";card.className="profile-card";card.setAttribute("aria-pressed",String(p.profile_id===selectedProfile));const name=document.createElement("span");name.className="card-name";name.textContent=p.name||"Paper profile";const address=document.createElement("span");address.className="card-address";address.textContent="Paper-only · no personal wallet required";const meta=document.createElement("span");meta.className="card-meta";const state=document.createElement("span");state.textContent=(p.status||"disabled").toUpperCase();const count=document.createElement("span");count.textContent=(p.source_wallets||[]).length+" source wallet(s)";meta.append(state,count);card.append(name,address,meta);card.addEventListener("click",async()=>{if(balanceInputDirty&&selectedProfile!==p.profile_id&&!confirm("Discard the unsaved virtual balance change before switching profiles?"))return;balanceInputDirty=false;selectedProfile=p.profile_id;$("profile-select").value=selectedProfile;await loadProfiles();if($("history-details").open)await loadHistory();});host.append(card);});$("create-profile").disabled=profiles.length>=3;$("create-profile").title=profiles.length>=3?"Maximum of 3 paper profiles reached":"";const p=selected();$("detail-profile-title").textContent=p?p.name:"Select a paper profile";$("detail-profile-subtitle").textContent=p?(p.source_wallets||[]).length+" public source wallet(s) assigned":"Create a profile to group source wallets.";$("detail-profile-status").textContent=p?(p.status||"disabled").toUpperCase():"No selection";$("selected-profile-detail").classList.toggle("hidden",!p);$("activate-profile").disabled=!p||String(p.status||"").toLowerCase()==="active";}
+function selected(){return profiles.find(p=>p.profile_id===selectedProfile);}
+function settingsOf(p){return p?.settings?.paper_trading||p?.settings?.settings?.paper_trading||{};}
+function renderDirectionFromProfile(){
+ const s=settingsOf(selected());
+ const direction=s.copy_side||"BOTH", sizing=s.sizing_mode||"SOURCE_PERCENT", amount=Number(s.sizing_value??5);
+ document.querySelectorAll('input[name="direction"]').forEach(x=>x.checked=x.value===direction);
+ document.querySelectorAll('input[name="sizing"]').forEach(x=>x.checked=x.value===sizing);
+ $("amount-value").value=String(amount);$("max-buy-amount").value=String(s.max_buy_usd??10);updateAmountLabel();
+}
+async function loadPortfolioForProfile(){
+ const input=$("virtual-balance-value"),save=$("save-virtual-balance");
+ if(!selectedProfile){
+  balanceInputDirty=false;input.value="";input.disabled=true;save.disabled=true;
+  $("total-value").textContent=money(null);$("available").textContent=money(null);
+  $("realized").textContent=money(null);$("unrealized").textContent=money(null);
+  say("virtual-balance-message","Select a paper profile to set its virtual balance.");
+  say("portfolio-message","Select a paper profile to view its portfolio.");
+  await loadPaperTradeHistory(null);return;
+ }
+ const preserveDraft=balanceInputDirty;
+ if(!preserveDraft){input.disabled=true;save.disabled=true;}
+ try{
+  const path="/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile);
+  let d=await api(path),r=d.report||d;
+  if(r.database_available===false&&!r.error){
+   await post("/api/paper-simulation",{action:"initialize-profile-ledger",profile_id:selectedProfile});
+   d=await api(path);r=d.report||d;
+  }
+  const balance=r.available_balance_usd??r.available_balance??r.balances?.USD??null;
+  if(!balanceInputDirty)input.value=balance===null||balance===undefined?"":String(balance);
+  input.disabled=false;save.disabled=!selectedProfile||!balanceInputDirty||balanceSaveInProgress;
+  $("total-value").textContent=money(r.portfolio_value_usd);
+  $("available").textContent=money(balance);
+  $("realized").textContent=money(r.realized_pnl_usd);
+  $("unrealized").textContent=money(r.unrealized_pnl_usd);
+  if(r.error){say("portfolio-message",r.error);}
+  else if(balance===null||balance===undefined){say("portfolio-message","No virtual USD balance is set for this profile yet. Enter an amount above and confirm it.");}
+  else if(r.portfolio_value_usd===null||r.portfolio_value_usd===undefined){say("portfolio-message","Available cash is shown in USD. Portfolio value is unavailable while token holdings lack a verified fresh market price.");}
+  else{say("portfolio-message","Portfolio value currently reflects virtual USD cash; token holdings are included only when reliably valued.");}
+  await loadPaperTradeHistory(r);
+ }catch(e){
+  if(!balanceInputDirty){input.disabled=false;save.disabled=!selectedProfile||balanceSaveInProgress;}
+  say("portfolio-message",e.message);say("virtual-balance-message","Could not load this profile's virtual balance.");
+  await loadPaperTradeHistory(null);
+ }
+}
+function updateAmountLabel(){
+ const mode=document.querySelector('input[name="sizing"]:checked')?.value||"SOURCE_PERCENT";
+ const mirror=mode==="MIRROR_AMOUNT",percent=mode==="SOURCE_PERCENT";
+ $("amount-field").classList.toggle("hidden",mirror);$("amount-value").required=!mirror;
+ $("amount-value").min="0.01";$("amount-value").max=percent?"99.99":"1000000";
+ $("amount-label").textContent=percent?"Fixed percentage of virtual balance":"Fixed BUY amount";
+ $("amount-suffix").textContent=percent?"%":"$";
+ $("amount-hint").textContent=percent?"Enter a percentage of your virtual USD balance, greater than 0 and below 100.":"Enter the USD amount to use for each BUY.";
+}
+document.querySelectorAll('input[name="sizing"]').forEach(x=>x.addEventListener("change",updateAmountLabel));
+$("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const address=$("wallet-address").value.trim();if(!selectedProfile){say("wallet-message","Create or select a paper profile before adding a public source wallet.");return;}try{await post("/api/wallets",{action:"add",address});await post("/api/profiles",{action:"associate-source-wallet",profile_id:selectedProfile,wallet_address:address});$("wallet-address").value="";say("wallet-message","Public source wallet saved and associated with the selected paper profile.");await loadWallets();}catch(err){say("wallet-message","Source wallet was not fully added: "+err.message+" Refresh the wallet list and verify the association.");await loadProfiles();}});
+$("create-profile").addEventListener("click",()=>{if(profiles.length>=3){say("profile-card-message","You can create up to 3 paper profiles.");return;} $("profile-form").classList.toggle("hidden");});$("cancel-create-profile").addEventListener("click",()=>$("profile-form").classList.add("hidden"));
+$("profile-form").addEventListener("submit",async e=>{e.preventDefault();if(profiles.length>=3){say("wallet-message","Maximum of 3 paper profiles reached.");return;}try{const d=await post("/api/profiles",{action:"create",name:$("profile-name").value.trim(),destination_public_address:null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"SOURCE_PERCENT",sizing_value:"5"}}});selectedProfile=d.profile.profile_id;$("profile-name").value="";$("profile-form").classList.add("hidden");say("wallet-message","Paper profile created. Activate it, then start read-only monitoring when ready.");await loadProfiles();$("profile-select").value=selectedProfile;}catch(err){say("wallet-message",err.message);}});
+$("profile-select").addEventListener("change",async()=>{selectedProfile=$("profile-select").value;renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();if($("history-details").open)loadHistory();renderWallets();});
+$("virtual-balance-value").addEventListener("input",()=>{
+ balanceInputDirty=true;
+ say("virtual-balance-message","Unsaved change. Press Confirm Balance to save this amount.");
+ $("save-virtual-balance").disabled=!selectedProfile||balanceSaveInProgress;
+});
+$("virtual-balance-form").addEventListener("submit",async e=>{
+ e.preventDefault();
+ if(balanceSaveInProgress)return;
+ if(!selectedProfile){say("virtual-balance-message","Select a paper profile first.");return;}
+ const raw=$("virtual-balance-value").value.trim(),amount=Number(raw);
+ if(!raw||!Number.isFinite(amount)||amount<=0||amount>1000000000){say("virtual-balance-message","Enter an amount greater than $0 and no more than $1,000,000,000.");return;}
+ const button=$("save-virtual-balance");balanceSaveInProgress=true;button.disabled=true;
+ try{
+  await post("/api/paper-simulation",{action:"set-profile-initial-balance",profile_id:selectedProfile,amount:String(amount)});
+  balanceInputDirty=false;
+  await loadPortfolioForProfile();
+  say("virtual-balance-message","Virtual USD balance saved for this profile. Paper-trade history is preserved; no real funds were moved.");
+ }catch(err){say("virtual-balance-message","Balance was not saved: "+err.message);}
+ finally{
+  balanceSaveInProgress=false;
+  $("virtual-balance-value").disabled=!selectedProfile;
+  button.disabled=!selectedProfile||!balanceInputDirty;
+ }
+});
+$("confirm-settings").addEventListener("click",async()=>{
+ if(!selectedProfile){say("settings-message","Create or select a profile before confirming settings.");return;}
+ const direction=document.querySelector('input[name="direction"]:checked').value,mode=document.querySelector('input[name="sizing"]:checked').value,amount=Number($("amount-value").value),maxBuy=Number($("max-buy-amount").value);
+ if((mode!=="MIRROR_AMOUNT"&&(!Number.isFinite(amount)||amount<=0||(mode==="SOURCE_PERCENT"&&amount>=100)||amount>1000000))||!Number.isFinite(maxBuy)||maxBuy<=0||maxBuy>1000000){say("settings-message","Enter a valid BUY sizing value and a maximum BUY amount greater than $0 and no more than 1,000,000.");return;}
+ const p=selected(),s={...(p.settings||{}),paper_trading:{...settingsOf(p),copy_side:direction,sizing_mode:mode,sizing_value:String(mode==="MIRROR_AMOUNT"?10:amount),max_buy_usd:String(maxBuy)}};
+ $("confirm-settings").disabled=true;
+ try{await post("/api/profiles",{action:"settings",profile_id:selectedProfile,settings:s});say("settings-message","Settings confirmed and saved. They are not applied before confirmation.");await loadProfiles();}
+ catch(err){say("settings-message","Settings were not saved: "+err.message);}
+ finally{$("confirm-settings").disabled=false;}
+});
+$("start-monitoring").addEventListener("click",async()=>{const p=selected();if(!p){say("monitor-message","Select a profile first.");return;}if(String(p.status||"").toLowerCase()!=="active"){say("monitor-message","Activate this profile before starting monitoring.");return;}if(!Array.isArray(p.source_wallets)||!p.source_wallets.length){say("monitor-message","Add at least one source wallet to this profile first.");return;}if(!confirm("Start read-only monitoring for this profile's selected source wallets only? No signing or real trades will occur."))return;try{await post("/api/profile-monitor",{action:"start",profile_id:selectedProfile});say("monitor-message","Monitoring enabled; checking the first read-only scan status.");await loadMonitor();}catch(e){say("monitor-message",e.message);}});
+$("stop-monitoring").addEventListener("click",async()=>{if(!selectedProfile){say("monitor-message","Select a profile first.");return;}try{await post("/api/profile-monitor",{action:"stop",profile_id:selectedProfile});say("monitor-message","Stop requested for this profile.");await loadMonitor();}catch(e){say("monitor-message",e.message);}});
+$("wallet-search").addEventListener("input",()=>renderWallets());
+$("activate-profile").addEventListener("click",async()=>{if(!selectedProfile){say("wallet-message","Create or select a profile first.");return;}try{await post("/api/profiles",{action:"update",profile_id:selectedProfile,status:"active"});say("wallet-message","Paper profile activated. Monitoring remains stopped until you start it.");await loadProfiles();await loadMonitor();}catch(e){say("wallet-message",e.message);}});
+function appendHistoryField(card,label,value){const p=document.createElement("p");p.className="hint";p.textContent=label+": "+(value===null||value===undefined||value===""?"unavailable":String(value));card.append(p);}
+async function loadTransactionHistory(){
+ const list=$("transaction-history-list");list.replaceChildren();
+ if(!selectedProfile){const p=document.createElement("p");p.className="empty";p.textContent="Select a profile to view observed transactions.";list.append(p);say("transaction-history-message","");return;}
+ try{
+  const d=await api("/api/profile-transactions?profile_id="+encodeURIComponent(selectedProfile)+"&page=1&page_size=25");
+  if(d.database_available===false){const p=document.createElement("p");p.className="empty";p.textContent="Transaction history storage is not available yet.";list.append(p);say("transaction-history-message","History storage unavailable.");return;}
+  if(!d.transactions?.length){const p=document.createElement("p");p.className="empty";p.textContent="No observed on-chain transactions stored for this profile yet. Start read-only monitoring to collect source-wallet activity.";list.append(p);}
+  (d.transactions||[]).forEach(tx=>{
+   const item=document.createElement("article");item.className="history-item";
+   const title=document.createElement("strong");title.textContent=(tx.classification||"UNKNOWN").replaceAll("_"," ")+" · "+(tx.status||"unknown");item.append(title);
+   const evidence=tx.evidence&&typeof tx.evidence==="object"?tx.evidence:{};
+   appendHistoryField(item,"Metadata status",evidence.metadata_status);
+   appendHistoryField(item,"Classification reason",evidence.classification_reason||evidence.classification_note);
+   appendHistoryField(item,"Monitored wallet signer",evidence.monitored_wallet_is_signer===true?"Confirmed":evidence.monitored_wallet_is_signer===false?"Not confirmed":"Not recorded");
+   appendHistoryField(item,"Classification confidence",evidence.confidence);
+   appendHistoryField(item,"Confirmation status",evidence.confirmation_status);
+   appendHistoryField(item,"Source wallet",tx.source_wallet_address);appendHistoryField(item,"Token mint",tx.token_mint);appendHistoryField(item,"Amount",tx.amount);appendHistoryField(item,"Observed at",tx.observed_at);appendHistoryField(item,"Slot",tx.slot);
+   if(tx.signature){const line=document.createElement("p");line.className="hint";line.textContent="Signature: "+tx.signature;item.append(line);const link=document.createElement("a");link.href="https://solscan.io/tx/"+encodeURIComponent(tx.signature);link.target="_blank";link.rel="noopener noreferrer";link.textContent="Open transaction explorer";item.append(link);}
+   list.append(item);
+  });
+  say("transaction-history-message","Showing "+(d.transactions||[]).length+" of "+(d.total??0)+" observed transaction(s). This list is on-chain metadata, not paper trades.");
+ }catch(e){say("transaction-history-message",e.message);}
+}
+async function loadPaperTradeHistory(reportOverride){
+ const list=$("paper-trade-history-list");list.replaceChildren();
+ if(!selectedProfile){const p=document.createElement("p");p.className="empty";p.textContent="Select a profile to view simulated paper trades.";list.append(p);say("paper-trade-history-message","");return;}
+ try{
+  let r=reportOverride;
+  if(!r){const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile));r=d.report||d;}
+  if(r.error){const p=document.createElement("p");p.className="empty";p.textContent="Paper trade history unavailable: "+r.error;list.append(p);say("paper-trade-history-message",r.error);return;}
+  const orders=Array.isArray(r.orders)?r.orders.slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||""))):[];
+  const fills=Array.isArray(r.fills)?r.fills:[];
+  if(!orders.length){const p=document.createElement("p");p.className="empty";p.textContent="No simulated paper orders yet. Observed transactions will appear in the separate transaction list; a paper order is shown here only when the engine actually queues one.";list.append(p);}
+  orders.forEach(order=>{
+   const item=document.createElement("article");item.className="history-item";const title=document.createElement("strong");title.textContent=(order.side||"ORDER")+" · "+(order.status||"unknown");item.append(title);
+   const details=order.details&&typeof order.details==="object"?order.details:{};
+   appendHistoryField(item,"Asset",order.asset_mint);appendHistoryField(item,"Paper quantity",order.quantity);appendHistoryField(item,"Quote currency",order.quote_mint);appendHistoryField(item,"Quote amount",order.quote_amount===null||order.quote_amount===undefined?null:String(order.quote_amount)+(order.quote_mint?" "+order.quote_mint:""));appendHistoryField(item,"Source wallet",details.source_wallet);appendHistoryField(item,"Sizing mode",details.sizing_mode==="SOURCE_PERCENT"?String(details.sizing_value??"")+"%":details.sizing_mode==="FIXED_USD"?"$"+String(details.target_notional_usd??details.sizing_value??""):details.sizing_mode);appendHistoryField(item,"Created at",order.created_at);appendHistoryField(item,"Status reason",order.reason);
+   const fill=fills.find(x=>x.order_id===order.order_id);
+   if(fill){appendHistoryField(item,"Execution price",fill.execution_price);appendHistoryField(item,"Gross quote",fill.gross_quote+(fill.currency?" "+fill.currency:""));appendHistoryField(item,"Fee",fill.fee+(fill.currency?" "+fill.currency:""));appendHistoryField(item,"Price source",fill.price_source);}
+   if(order.signal_id){appendHistoryField(item,"Paper signal ID",order.signal_id);}
+   const note=document.createElement("p");note.className="hint";note.textContent="SIMULATED ONLY · No real transaction was signed or broadcast.";item.append(note);list.append(item);
+  });
+  say("paper-trade-history-message","Showing "+orders.length+" stored simulated paper order(s). This history is separate from observed on-chain transactions.");
+ }catch(e){say("paper-trade-history-message",e.message);}
+}
+async function loadHistory(){await Promise.all([loadTransactionHistory(),loadPaperTradeHistory(null)]);}
+$("history-details").addEventListener("toggle",()=>{if($("history-details").open)loadHistory();});
+function initApiAuthUi(){
+ const input=$("api-token");
+ try { input.value=sessionStorage.getItem("dashboard-api-token")||""; } catch {}
+ $("save-api-token").addEventListener("click",async()=>{
+  const token=input.value.trim();
+  if(token&&token.length<32){say("api-auth-message","Dashboard API tokens must contain at least 32 characters.");return;}
+  try { if(token)sessionStorage.setItem("dashboard-api-token",token);else sessionStorage.removeItem("dashboard-api-token"); }
+  catch { say("api-auth-message","This browser tab cannot store a session token. Check browser privacy settings.");return; }
+  say("api-auth-message",token?"Token stored in this tab; checking backend…":"Token cleared; checking default/local access…");
+  await loadWallets();await loadRpcHealth();
+ });
+ $("clear-api-token").addEventListener("click",async()=>{
+  try { sessionStorage.removeItem("dashboard-api-token"); } catch {}
+  input.value="";say("api-auth-message","Token cleared from this tab.");
+  await loadWallets();await loadRpcHealth();
+ });
+}
+initApiAuthUi();
+loadWallets();
+loadRpcHealth();
+let refreshInProgress = false;
+setInterval(async()=> {
+  if(!backendReady || refreshInProgress) return;
+  refreshInProgress = true;
+  try { await Promise.all([loadMonitor(), loadPortfolioForProfile(), loadTransactionHistory()]); }
+  finally { refreshInProgress = false; }
+},15000);
+setInterval(loadRpcHealth,30000);
+</script></body></html>

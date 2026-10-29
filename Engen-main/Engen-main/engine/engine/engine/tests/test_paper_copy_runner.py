@@ -115,6 +115,88 @@ class PaperCopyRunnerTests(unittest.TestCase):
         order = next(iter(simulator.orders.values()))
         self.assertEqual(order["details"]["target_notional_usd"], "25")
 
+    def test_aggregates_multiple_asset_accounts_for_one_swap(self):
+        result = candidate_result()
+        result["token_balance_changes"][0] = {
+            "owner": WALLET, "mint": ASSET, "decimals": 6,
+            "delta_amount": "1250000", "pre_amount": "0", "post_amount": "1250000",
+        }
+        result["token_balance_changes"].append({
+            "owner": WALLET, "mint": ASSET, "decimals": 6,
+            "delta_amount": "1250000", "pre_amount": "0", "post_amount": "1250000",
+        })
+
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(WALLET, [result], simulator)
+
+        self.assertEqual(len(queued), 1)
+        order = next(iter(simulator.orders.values()))
+        self.assertEqual(order["details"]["source_asset_quantity"], "2.5")
+        self.assertEqual(order["details"]["source_asset_pre_amount"], "0")
+        self.assertEqual(order["details"]["source_asset_post_amount"], "2500000")
+
+    def test_sell_fraction_aggregates_pre_balance_across_asset_accounts(self):
+        result = candidate_result(classification="SELL_CANDIDATE")
+        result["token_balance_changes"][0] = {
+            "owner": WALLET, "mint": ASSET, "decimals": 6,
+            "delta_amount": "-1500000", "pre_amount": "6000000", "post_amount": "4500000",
+        }
+        result["token_balance_changes"].append({
+            "owner": WALLET, "mint": ASSET, "decimals": 6,
+            "delta_amount": "-1000000", "pre_amount": "4000000", "post_amount": "3000000",
+        })
+
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(WALLET, [result], simulator)
+
+        self.assertEqual(len(queued), 1)
+        order = next(iter(simulator.orders.values()))
+        self.assertEqual(Decimal(order["details"]["source_sell_fraction"]), Decimal("0.25"))
+        self.assertEqual(order["details"]["source_asset_pre_amount"], "10000000")
+        self.assertEqual(order["details"]["source_asset_post_amount"], "7500000")
+
+    def test_wrapped_sol_quote_prefers_direction_matching_token_delta_without_double_counting(self):
+        from engine.paper_copy_runner import WRAPPED_SOL_MINT
+
+        result = candidate_result()
+        result["trade_signal"]["quote_mints"] = [WRAPPED_SOL_MINT]
+        result["token_balance_changes"][1] = {
+            "owner": WALLET, "mint": WRAPPED_SOL_MINT, "decimals": 9,
+            "delta_amount": "-500000000",
+        }
+        result["token_balance_changes"].append({
+            "owner": WALLET, "mint": WRAPPED_SOL_MINT, "decimals": 9,
+            "delta_amount": "-1000000000", "source": "native_sol",
+        })
+
+        queued = queue_paper_orders(WALLET, [result], FakeSimulator())
+
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["source_quote_mint"], WRAPPED_SOL_MINT)
+        self.assertEqual(queued[0]["target_notional_usd"], "10")
+        order = next(iter(FakeSimulator().orders.values()), None)
+        self.assertIsNone(order)
+
+    def test_wrapped_sol_quote_falls_back_to_native_sol_when_token_delta_is_absent(self):
+        from engine.paper_copy_runner import WRAPPED_SOL_MINT
+
+        result = candidate_result()
+        result["trade_signal"]["quote_mints"] = [WRAPPED_SOL_MINT]
+        result["token_balance_changes"] = [
+            result["token_balance_changes"][0],
+            {
+                "owner": WALLET, "mint": WRAPPED_SOL_MINT, "decimals": 9,
+                "delta_amount": "-1000000000", "source": "native_sol",
+            },
+        ]
+
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(WALLET, [result], simulator)
+
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(queued[0]["source_quote_mint"], WRAPPED_SOL_MINT)
+        self.assertEqual(next(iter(simulator.orders.values()))["details"]["source_quote_amount"], "1")
+
     def test_invalid_sizing_settings_are_rejected(self):
         with self.assertRaises(ValueError):
             queue_paper_orders(

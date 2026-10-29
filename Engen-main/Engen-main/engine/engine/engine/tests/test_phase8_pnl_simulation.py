@@ -160,11 +160,12 @@ class PaperSimulatorTests(unittest.TestCase):
         self.assertEqual(order["status"], "CREATED")
         self.assertEqual(simulator.fills, [])
 
-    def test_missing_price_rejects_without_fabricated_fill(self):
+    def test_missing_price_waits_without_fabricated_fill(self):
         simulator = self.make_simulator()
         order = self.create(simulator)
         result = simulator.execute_order(order["order_id"], None, now=NOW)
-        self.assertEqual(result["status"], "REJECTED")
+        self.assertEqual(result["status"], "WAITING_FOR_MARKET_DATA")
+        self.assertEqual(order["status"], "CREATED")
         self.assertEqual(simulator.fills, [])
 
     def test_duplicate_signal_cannot_create_duplicate_order_or_fill(self):

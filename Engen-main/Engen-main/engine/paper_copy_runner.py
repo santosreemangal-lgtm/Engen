@@ -386,6 +386,8 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
             "sizing_value": str(sizing_value) if side == "BUY" else None,
             "target_notional_usd": str(target_notional_usd) if target_notional_usd is not None else None,
             "source_quote_mint": quote_mint, "status": order.get("status"),
-            "execution_state": "AWAITING_VERIFIED_MARKET_DATA",
+            "execution_state": (order.get("details") or {}).get(
+                "execution_state", "AWAITING_VERIFIED_MARKET_DATA"
+            ),
         })
     return queued

@@ -27,6 +27,12 @@ PAPER_SIMULATOR_LOCK = threading.RLock()
 # with the simulated notional so larger orders still require deeper markets.
 MIN_PAPER_LIQUIDITY_USD = Decimal("1000")
 PAPER_LIQUIDITY_NOTIONAL_MULTIPLE = Decimal("20")
+PAPER_SLIPPAGE_BPS = 50
+PAPER_FEE_BPS = 10
+PAPER_EXECUTION_COST_MULTIPLIER = (
+    Decimal(10000 + PAPER_SLIPPAGE_BPS) / Decimal(10000)
+    * Decimal(10000 + PAPER_FEE_BPS) / Decimal(10000)
+)
 
 
 def _save_order_reason(simulator, order, reason, execution_state=None):
@@ -220,7 +226,11 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                 continue
             if max_buy is not None and max_buy.is_finite() and max_buy > 0:
                 target = min(target, max_buy)
-            target = min(target, virtual_cash)
+            # Reserve for the exact slippage and fee applied by execute_order;
+            # otherwise a BUY sized to the full virtual cash can be rejected
+            # after the simulator adds its execution costs.
+            maximum_affordable_notional = virtual_cash / PAPER_EXECUTION_COST_MULTIPLIER
+            target = min(target, maximum_affordable_notional)
             if target <= 0:
                 reason = "The virtual USD balance is too small for this paper BUY."
                 _save_order_reason(simulator, order, reason, "AWAITING_VIRTUAL_BALANCE")
@@ -302,8 +312,8 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                 market_price,
                 now=execution_now,
                 max_price_age_seconds=60,
-                slippage_bps=50,
-                fee_bps=10,
+                slippage_bps=PAPER_SLIPPAGE_BPS,
+                fee_bps=PAPER_FEE_BPS,
                 min_liquidity_usd=required_liquidity,
                 max_liquidity_age_seconds=60,
                 require_liquidity=True,

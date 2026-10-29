@@ -62,6 +62,8 @@ class MonitorServiceTests(unittest.TestCase):
             self.assertEqual(wallet["state"], "connected")
             self.assertIsNone(wallet["last_error"])
             self.assertIsNotNone(wallet["last_successful_check"])
+            self.assertIsInstance(wallet["last_scan_duration_ms"], float)
+            self.assertGreaterEqual(wallet["last_scan_duration_ms"], 0.0)
             self.assertEqual(
                 wallet["latest_results"][0]["signature"],
                 "test_signature",
@@ -141,6 +143,8 @@ class MonitorServiceTests(unittest.TestCase):
                 "Monitoring scan failed; sensitive error details are hidden.",
             )
             self.assertIsNotNone(wallet["last_scan"])
+            self.assertIsInstance(wallet["last_scan_duration_ms"], float)
+            self.assertGreaterEqual(wallet["last_scan_duration_ms"], 0.0)
 
         finally:
             service.stop()

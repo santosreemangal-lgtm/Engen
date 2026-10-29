@@ -2,6 +2,7 @@
 """Read-only monitoring service for saved public Solana wallets."""
 
 import threading
+import time
 
 from engine.solana_validation import is_valid_solana_address
 from datetime import datetime, timezone
@@ -35,6 +36,7 @@ class MonitorService:
         return {
             "state": "waiting",
             "last_scan": None,
+            "last_scan_duration_ms": None,
             "last_successful_check": None,
             "last_error": None,
             "latest_results": [],
@@ -186,6 +188,7 @@ class MonitorService:
 
                         self._wallets[address]["state"] = "scanning"
 
+                    scan_started_ns = time.perf_counter_ns()
                     try:
                         results = self._scan_function(address)
 
@@ -200,6 +203,7 @@ class MonitorService:
                                         "last_scan": datetime.now(
                                             timezone.utc
                                         ).isoformat(),
+                                        "last_scan_duration_ms": round((time.perf_counter_ns() - scan_started_ns) / 1_000_000, 3),
                                         "last_successful_check": datetime.now(
                                             timezone.utc
                                         ).isoformat(),
@@ -217,6 +221,7 @@ class MonitorService:
                                         "last_scan": datetime.now(
                                             timezone.utc
                                         ).isoformat(),
+                                        "last_scan_duration_ms": round((time.perf_counter_ns() - scan_started_ns) / 1_000_000, 3),
                                         "last_error": "Monitoring scan failed; sensitive error details are hidden.",
                                     }
                                 )

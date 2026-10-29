@@ -193,7 +193,7 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                     "signal_id": order.get("signal_id"),
                     "status": "WAITING_FOR_MARKET_DATA" if waiting_for_price else "WAITING_FOR_VIRTUAL_BALANCE",
                     "reason": (
-                        "A fresh public SOL/USD price is required to size this mirrored paper BUY."
+                        "A fresh public USD price for the source quote asset is required to size this mirrored paper BUY."
                         if waiting_for_price else
                         "Paper BUY sizing is unavailable; check the saved copy settings and virtual balance."
                     ),

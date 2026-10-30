@@ -62,6 +62,16 @@ jobs:
             python -m unittest engine.engine.engine.tests.test_latency -v
           done
 
+      - name: Run isolated latency API integration tests ten times
+        working-directory: Engen-main/Engen-main
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run_number in {1..10}; do
+            echo "=== Latency API integration run ${run_number}/10 ==="
+            python -m unittest engine.engine.engine.tests.test_latency_integration -v
+          done
+
       - name: Run SQLite atomicity and recovery regressions ten times
         working-directory: Engen-main/Engen-main
         shell: bash

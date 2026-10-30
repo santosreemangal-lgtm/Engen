@@ -457,6 +457,7 @@ $("virtual-balance-form").addEventListener("submit",async e=>{
   await post("/api/paper-simulation",{action:"set-profile-initial-balance",profile_id:selectedProfile,amount:String(amount)});
   balanceInputDirty=false;
   await loadPortfolioForProfile();
+  await loadMonitor();
   say("virtual-balance-message","New paper session started with the confirmed virtual USD balance. Previous paper trades remain in History as archived records; monitoring is stopped. No real funds were moved.");
  }catch(err){say("virtual-balance-message","Balance was not saved: "+err.message);}
  finally{

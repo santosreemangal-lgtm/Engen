@@ -493,9 +493,9 @@ function apiRequestHeaders(extra={}) {
   try { token = sessionStorage.getItem("dashboard-api-token") || ""; } catch {}
   return {...headers, ...(token ? {Authorization:"Bearer "+token} : {}), ...(extra || {})};
 }
-async function api(path, options={}) {
+async function api(path, options={}, timeoutMs=12000) {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(path,{...options,signal:controller.signal,headers:apiRequestHeaders(options.headers)});
     let data;
@@ -503,7 +503,7 @@ async function api(path, options={}) {
     if(!response.ok) throw new Error(data.error || "Request failed ("+response.status+").");
     return data;
   } catch (error) {
-    if (error && error.name === "AbortError") throw new Error("Request timed out after 12 seconds. Check that the dashboard backend is running.");
+    if (error && error.name === "AbortError") throw new Error("Request timed out after "+Math.ceil(timeoutMs/1000)+" seconds. Check that the dashboard backend is running.");
     if (error instanceof Error && (error.message === "Backend returned an invalid response." || error.message.startsWith("Request failed ("))) throw error;
     throw new Error("Could not reach the dashboard backend. Check that it is running.");
   } finally {
@@ -549,7 +549,7 @@ function money(value){
  return (n<0?"-":"")+"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 }
 function say(id,text){$(id).textContent=text;}
-function post(path,payload){return api(path,{method:"POST",body:JSON.stringify(payload)});}
+function post(path,payload,timeoutMs=12000){return api(path,{method:"POST",body:JSON.stringify(payload)},timeoutMs);}
 function numericValue(value){
  if(value===null||value===undefined||value==="")return null;
  const number=Number(value);return Number.isFinite(number)?number:null;
@@ -823,9 +823,16 @@ $("virtual-balance-form").addEventListener("submit",async e=>{
  if(!confirm("Start a fresh paper session with "+formatPaperUsd(amount,false)+"? This will stop monitoring and clear this profile's paper positions, orders, fills, paper-trade history and P&L. Saved wallets, profile settings and public wallet activity history will remain. No real funds or blockchain transactions are involved."))return;
  const button=$("save-virtual-balance");balanceSaveInProgress=true;button.disabled=true;
  try{
-  await post("/api/paper-simulation",{
+  const saved=await post("/api/paper-simulation",{
    action:"reset-profile-session",profile_id:selectedProfile,amount:String(amount),confirmed:true
-  });
+  },30000);
+  const report=saved?.report;
+  const confirmedBalance=numericValue(report?.available_balance_usd??report?.available_balance??report?.balances?.USD);
+  const confirmedInitial=numericValue(report?.initial_balance);
+  if(report?.database_available!==true||confirmedBalance===null||confirmedInitial===null||
+     Math.abs(confirmedBalance-amount)>0.000001||Math.abs(confirmedInitial-amount)>0.000001){
+   throw new Error("The server did not verify the requested balance. Refresh the profile and check its paper ledger before retrying.");
+  }
   balanceInputDirty=false;
   await Promise.all([loadPortfolioForProfile(),loadMonitor()]);
   say("virtual-balance-message","Fresh paper session started with "+formatPaperUsd(amount,false)+". Initial Deposit is updated and monitoring is OFF.");

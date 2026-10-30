@@ -67,10 +67,32 @@ _TOKEN_METADATA_EMPTY_TTL_SECONDS = 180
 _TOKEN_METADATA_ERROR_TTL_SECONDS = 30
 _TOKEN_METADATA_CACHE = {}
 _TOKEN_METADATA_LOCK = threading.RLock()
+_TOKEN_IMAGE_ALLOWED_HOSTS = {"dd.dexscreener.com", "cdn.dexscreener.com"}
+
+
+def _safe_public_token_image_url(value):
+    """Accept only HTTPS token images served by DEX Screener's own image hosts."""
+    if not isinstance(value, str) or not value.strip() or len(value) > 2048:
+        return None
+    try:
+        parsed = urlparse(value.strip())
+        port = parsed.port
+    except ValueError:
+        return None
+    if (
+        parsed.scheme.lower() != "https"
+        or parsed.hostname not in _TOKEN_IMAGE_ALLOWED_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+        or not parsed.path.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))
+    ):
+        return None
+    return value.strip()
 
 
 def _fetch_public_token_metadata(mint):
-    """Fetch verified public name/symbol metadata for one Solana mint."""
+    """Fetch public token names, symbols, and DEX Screener-hosted logos for one mint."""
     validate_public_address(mint, "token mint")
     request = Request(
         TOKEN_METADATA_URL + mint,
@@ -85,19 +107,19 @@ def _fetch_public_token_metadata(mint):
             raw = response.read(1_000_001)
             if len(raw) > 1_000_000:
                 return {
-                    "mint": mint, "name": None, "symbol": None,
+                    "mint": mint, "name": None, "symbol": None, "icon_url": None,
                     "found": False, "status": "unavailable",
                 }
             payload = json.loads(raw.decode("utf-8"))
     except (HTTPError, URLError, TimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError):
         return {
-            "mint": mint, "name": None, "symbol": None,
+            "mint": mint, "name": None, "symbol": None, "icon_url": None,
             "found": False, "status": "unavailable",
         }
 
     if not isinstance(payload, list):
         return {
-            "mint": mint, "name": None, "symbol": None,
+            "mint": mint, "name": None, "symbol": None, "icon_url": None,
             "found": False, "status": "unavailable",
         }
 
@@ -129,18 +151,27 @@ def _fetch_public_token_metadata(mint):
         symbol = token.get("symbol")
         name = name.strip()[:80] if isinstance(name, str) and name.strip() else None
         symbol = symbol.strip()[:32] if isinstance(symbol, str) and symbol.strip() else None
-        if name or symbol:
-            candidates.append((liquidity_usd, name, symbol))
+        pair_info = pair.get("info")
+        raw_image = pair_info.get("imageUrl") if isinstance(pair_info, dict) else None
+        # DEX Screener pair imageUrl describes the base token, not the quote token.
+        icon_url = _safe_public_token_image_url(raw_image) if token is base else None
+        if name or symbol or icon_url:
+            candidates.append((liquidity_usd, name, symbol, icon_url))
 
     if not candidates:
         return {
-            "mint": mint, "name": None, "symbol": None,
+            "mint": mint, "name": None, "symbol": None, "icon_url": None,
             "found": False, "status": "not_found",
         }
-    _, name, symbol = max(candidates, key=lambda item: item[0])
+
+    named_candidates = [item for item in candidates if item[1] or item[2]]
+    image_candidates = [item for item in candidates if item[3]]
+    selected = max(named_candidates or candidates, key=lambda item: item[0])
+    icon_url = max(image_candidates, key=lambda item: item[0])[3] if image_candidates else None
+    _, name, symbol, _ = selected
     return {
-        "mint": mint, "name": name, "symbol": symbol,
-        "found": True, "status": "ok",
+        "mint": mint, "name": name, "symbol": symbol, "icon_url": icon_url,
+        "found": bool(name or symbol or icon_url), "status": "ok",
     }
 
 

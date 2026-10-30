@@ -150,6 +150,7 @@ class DashboardProfileApiTests(unittest.TestCase):
                 "symbol": "TST",
             },
             "liquidity": {"usd": 25000},
+            "info": {"imageUrl": "https://dd.dexscreener.com/ds-data/tokens/solana/" + TOKEN_MINT + ".png"},
         }]
         with patch.object(
             dashboard_server,
@@ -162,8 +163,52 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertTrue(metadata["found"])
         self.assertEqual(metadata["symbol"], "SOL")
         self.assertEqual(metadata["name"], "Wrapped Solana")
+        self.assertEqual(
+            metadata["icon_url"],
+            "https://dd.dexscreener.com/ds-data/tokens/solana/" + TOKEN_MINT + ".png",
+        )
         self.assertEqual(metadata["status"], "ok")
         mocked_urlopen.assert_called_once()
+
+    def test_public_token_metadata_ignores_untrusted_image_hosts(self):
+        dashboard_server._TOKEN_METADATA_CACHE.pop(TOKEN_MINT, None)
+        pair_payload = [{
+            "chainId": "solana",
+            "baseToken": {
+                "address": TOKEN_MINT,
+                "name": "Wrapped Solana",
+                "symbol": "SOL",
+            },
+            "liquidity": {"usd": 25000},
+            "info": {"imageUrl": "https://example-attacker.invalid/token.png"},
+        }]
+        with patch.object(
+            dashboard_server,
+            "urlopen",
+            return_value=io.BytesIO(json.dumps(pair_payload).encode("utf-8")),
+        ):
+            report = dashboard_server.load_public_token_metadata([TOKEN_MINT])
+
+        metadata = report["tokens"][TOKEN_MINT]
+        self.assertTrue(metadata["found"])
+        self.assertIsNone(metadata["icon_url"])
+
+    def test_safe_token_image_url_requires_https_and_approved_host(self):
+        self.assertEqual(
+            dashboard_server._safe_public_token_image_url(
+                "https://dd.dexscreener.com/ds-data/tokens/solana/" + TOKEN_MINT + ".png"
+            ),
+            "https://dd.dexscreener.com/ds-data/tokens/solana/" + TOKEN_MINT + ".png",
+        )
+        self.assertIsNone(
+            dashboard_server._safe_public_token_image_url("http://dd.dexscreener.com/token.png")
+        )
+        self.assertIsNone(
+            dashboard_server._safe_public_token_image_url("https://example.com/token.png")
+        )
+        self.assertIsNone(
+            dashboard_server._safe_public_token_image_url("https://dd.dexscreener.com.evil.test/token.png")
+        )
 
     def test_public_token_metadata_rejects_invalid_mint_addresses(self):
         with self.assertRaises(ValueError):

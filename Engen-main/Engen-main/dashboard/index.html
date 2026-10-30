@@ -281,6 +281,14 @@ footer.hint{padding:10px 4px;line-height:1.7}
  .history-token-icon{width:23px;height:23px;flex-basis:23px}
  .history-filters select,.history-filters input{font-size:11px}
 }
+
+/* Real token logo; initials remain visible when a logo is missing or fails to load. */
+.history-token-icon,.paper-token-icon{position:relative;overflow:hidden}
+.token-logo-image{position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:cover;border-radius:inherit}
+.token-logo-image[hidden]{display:none}
+.token-logo-fallback{position:relative;z-index:1;display:grid;width:100%;height:100%;place-items:center;line-height:1;border-radius:inherit}
+.token-logo-fallback[hidden]{display:none}
+.history-token-icon.has-image,.paper-token-icon.has-image{background:transparent;border-color:#34465d}
 </style>
 </head>
 <body><main>
@@ -666,12 +674,43 @@ function historyShortAddress(value){
 const historyTokenMetadataCache=new Map();
 const historyTokenMetadataPending=new Set();
 let historyTokenMetadataQueue=Promise.resolve();
+function safeDexScreenerTokenImageUrl(value){
+ if(typeof value!=="string"||!value.trim()||value.length>2048)return "";
+ try{
+  const url=new URL(value);
+  const allowedHosts=["dd.dexscreener.com","cdn.dexscreener.com"];
+  if(url.protocol!=="https:"||!allowedHosts.includes(url.hostname.toLowerCase())||
+     url.username||url.password||(url.port&&url.port!=="443")||
+     !/\.(png|jpe?g|webp)$/i.test(url.pathname))return "";
+  return url.href;
+ }catch{return "";}
+}
+function setTokenLogo(icon,image,fallback,meta,mint,label){
+ const imageUrl=safeDexScreenerTokenImageUrl(meta&&meta.icon_url);
+ if(!imageUrl){
+  image.hidden=true;image.removeAttribute("src");delete image.dataset.imageUrl;
+  fallback.hidden=false;icon.classList.remove("has-image");return;
+ }
+ image.alt=(label||"Token")+" logo";
+ if(image.dataset.imageUrl===imageUrl){
+  if(image.complete&&image.naturalWidth>0){image.hidden=false;fallback.hidden=true;icon.classList.add("has-image");}
+  return;
+ }
+ image.dataset.imageUrl=imageUrl;
+ image.loading="lazy";image.decoding="async";image.referrerPolicy="no-referrer";
+ image.hidden=true;fallback.hidden=false;icon.classList.remove("has-image");
+ image.onload=()=>{image.hidden=false;fallback.hidden=true;icon.classList.add("has-image");};
+ image.onerror=()=>{image.hidden=true;fallback.hidden=false;icon.classList.remove("has-image");};
+ image.src=imageUrl;
+}
 function updateHistoryTokenCell(container){
  const mint=container.dataset.tokenMint||"";
  const primary=container.querySelector(".history-token-primary");
  const secondary=container.querySelector(".history-token-secondary");
  const icon=container.querySelector(".history-token-icon");
- if(!primary||!secondary||!icon)return;
+ const image=container.querySelector(".token-logo-image");
+ const fallback=container.querySelector(".token-logo-fallback");
+ if(!primary||!secondary||!icon||!image||!fallback)return;
  const meta=historyTokenMetadataCache.get(mint);
  const name=meta&&typeof meta.name==="string"?meta.name.trim():"";
  const symbol=meta&&typeof meta.symbol==="string"?meta.symbol.trim():"";
@@ -681,7 +720,8 @@ function updateHistoryTokenCell(container){
  primary.title=name&&symbol?name+" · "+symbol:display;
  secondary.textContent=name&&symbol?name:historyShortAddress(mint);
  const initials=(symbol||name||"T").replace(/[^a-z0-9]/gi,"").slice(0,2).toUpperCase()||"T";
- icon.textContent=initials;
+ fallback.textContent=initials;
+ setTokenLogo(icon,image,fallback,meta,mint,symbol||name);
  let hue=0;for(const character of mint)hue=(hue*31+character.charCodeAt(0))%360;
  icon.style.setProperty("--token-hue",String(hue));
 }
@@ -693,12 +733,15 @@ function updatePaperTokenCell(container){
  const primary=container.querySelector(".paper-token-primary");
  const secondary=container.querySelector(".paper-token-secondary");
  const icon=container.querySelector(".paper-token-icon");
- if(!primary||!secondary||!icon)return;
+ const image=container.querySelector(".token-logo-image");
+ const fallback=container.querySelector(".token-logo-fallback");
+ if(!primary||!secondary||!icon||!image||!fallback)return;
  primary.textContent=symbol||name||"Token unavailable";
  primary.title=name&&symbol?name+" · "+symbol:(name||symbol||"Token metadata unavailable");
  secondary.textContent=name&&symbol?name:historyShortAddress(mint);
  const initials=(symbol||name||"T").replace(/[^a-z0-9]/gi,"").slice(0,2).toUpperCase()||"T";
- icon.textContent=initials;
+ fallback.textContent=initials;
+ setTokenLogo(icon,image,fallback,meta,mint,symbol||name);
  let hue=0;for(const character of mint)hue=(hue*31+character.charCodeAt(0))%360;
  icon.style.setProperty("--token-hue",String(hue));
 }
@@ -710,7 +753,10 @@ function makeHistoryTokenCell(mint){
  const cell=document.createElement("td");
  if(!mint){cell.textContent="Token unavailable";return cell;}
  const wrapper=document.createElement("div");wrapper.className="history-token-cell";wrapper.dataset.tokenMint=mint;
- const icon=document.createElement("span");icon.className="history-token-icon";icon.textContent="T";
+ const icon=document.createElement("span");icon.className="history-token-icon";
+ const image=document.createElement("img");image.className="token-logo-image";image.alt="";image.hidden=true;
+ const fallback=document.createElement("span");fallback.className="token-logo-fallback";fallback.textContent="T";
+ icon.append(image,fallback);
  const labels=document.createElement("div");labels.className="history-token-labels";
  const primary=document.createElement("span");primary.className="history-token-primary";primary.textContent="Token unavailable";
  const secondary=document.createElement("span");secondary.className="history-token-secondary";secondary.textContent=historyShortAddress(mint);
@@ -725,7 +771,10 @@ function makePaperTokenCell(mint){
  const cell=document.createElement("td");
  if(!mint){cell.textContent="Token unavailable";return cell;}
  const wrapper=document.createElement("div");wrapper.className="paper-token-cell";wrapper.dataset.tokenMint=mint;
- const icon=document.createElement("span");icon.className="paper-token-icon";icon.textContent="T";
+ const icon=document.createElement("span");icon.className="paper-token-icon";
+ const image=document.createElement("img");image.className="token-logo-image";image.alt="";image.hidden=true;
+ const fallback=document.createElement("span");fallback.className="token-logo-fallback";fallback.textContent="T";
+ icon.append(image,fallback);
  const labels=document.createElement("div");labels.className="paper-token-labels";
  const primary=document.createElement("span");primary.className="paper-token-primary";primary.textContent="Token unavailable";
  const secondary=document.createElement("span");secondary.className="paper-token-secondary";secondary.textContent=historyShortAddress(mint);

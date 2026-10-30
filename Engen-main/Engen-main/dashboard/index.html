@@ -92,7 +92,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 .history-overview strong{font-size:19px;color:#eef5ff;font-variant-numeric:tabular-nums}
 .history-overview span,.history-overview small{color:#9aabc3;font-size:12px}
 .history-overview p{margin:0}
-.history-table-wrap{width:100%;overflow-x:auto;border:1px solid #26364e;border-radius:11px;background:#0b1422}
+.history-table-wrap{width:100%;max-height:min(680px,68vh);overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;border:1px solid #26364e;border-radius:11px;background:#0b1422}
 .history-table{width:100%;min-width:790px;border-collapse:separate;border-spacing:0;text-align:left}
 .history-table th{position:sticky;top:0;background:#142138;color:#9fb2cd;text-transform:uppercase;letter-spacing:.055em;font-size:10px;font-weight:750;padding:12px 13px;border-bottom:1px solid #2b3b56;white-space:nowrap}
 .history-table td{padding:12px 13px;border-bottom:1px solid #1c2b40;color:#dce6f5;font-size:12px;vertical-align:middle;max-width:260px}
@@ -703,6 +703,7 @@ async function loadPaperTradeHistory(reportOverride){
    let state=String(order.status||"UNKNOWN").toUpperCase();
    if(fill)state="FILLED";
    else if(details.execution_state==="AWAITING_VIRTUAL_BALANCE")state="WAITING BALANCE";
+   else if(details.execution_state==="WAITING_FOR_LIQUIDITY")state="WAITING LIQUIDITY";
    else if(details.execution_state==="AWAITING_VERIFIED_MARKET_DATA"||details.execution_state==="WAITING_FOR_MARKET_DATA")state="WAITING PRICE";
    else if(details.execution_state==="WAITING_FOR_POSITION")state="WAITING POSITION";
    else if(details.execution_state==="EXECUTION_ERROR")state="EXECUTION ERROR";
@@ -716,7 +717,7 @@ async function loadPaperTradeHistory(reportOverride){
    row.append(sourceCell);tbody.append(row);
   });
   void loadHistoryTokenMetadata(orders.map(order=>order.asset_mint));
-  say("paper-trade-history-message",orders.length?"Showing the latest "+orders.length+" stored paper order(s); "+fills.length+" have simulated fills.":"Paper orders are shown only when the copy engine queues them. On-chain transaction rows are kept separate.");
+  say("paper-trade-history-message",orders.length?"Showing "+orders.length+" stored paper order(s); scroll inside the table to review them. "+fills.length+" have simulated fills. Only FILLED means a simulated execution completed.":"Paper orders are shown only when the copy engine queues them. On-chain transaction rows are kept separate.");
  }catch(e){historySetEmpty(tbody,7,e.message||"Unable to load paper history.");say("paper-trade-history-message",e.message);}
 }
 async function loadHistory(){await Promise.all([loadTransactionHistory(),loadPaperTradeHistory(null)]);}

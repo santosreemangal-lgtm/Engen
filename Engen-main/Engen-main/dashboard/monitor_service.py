@@ -159,19 +159,32 @@ class MonitorService:
                     and not self._stop_event.is_set()
                 )
                 if active:
-                    removed = set(self._wallets) - set(cleaned)
-                    for address in removed:
-                        self._wallets.pop(address, None)
-                        self._pending_websocket_wallets.discard(address)
+                    changed = set(self._wallets) != set(cleaned)
+                    if not changed:
+                        return self.status()
+                    # Rebuild subscriptions when the monitored wallet set changes.
+                    # This guarantees removed wallets are no longer subscribed.
+                    self._websocket_stop_event.set()
+                    old_websocket_workers = list(self._websocket_threads.values())
                     self._wallets = {
                         address: self._wallets.get(
                             address, self._new_wallet_state(bool(self._websocket_endpoint))
                         )
                         for address in cleaned
                     }
-                    for address in cleaned:
-                        self._start_websocket_worker(address)
-                    return self.status()
+                    self._pending_websocket_wallets.clear()
+                else:
+                    old_websocket_workers = []
+
+            if active:
+                for worker in old_websocket_workers:
+                    if worker.is_alive():
+                        worker.join()
+                self._websocket_threads = {}
+                self._websocket_stop_event.clear()
+                for address in cleaned:
+                    self._start_websocket_worker(address)
+                return self.status()
 
             if previous_thread is not None and previous_thread.is_alive():
                 previous_thread.join()

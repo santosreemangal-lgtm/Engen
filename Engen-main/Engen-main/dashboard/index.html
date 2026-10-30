@@ -1297,9 +1297,22 @@ async function loadPaperTradeHistory(reportOverride){
   let r=reportOverride;
   if(!r){const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile));r=d.report||d;}
   if(r.error){historySetEmpty(tbody,9,"Paper history unavailable: "+r.error);say("paper-trade-history-message",r.error);return;}
-  const orders=Array.isArray(r.orders)?r.orders.slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||""))):[];
-  const fills=Array.isArray(r.fills)?r.fills:[];
-  const pnlEvents=Array.isArray(r.pnl_events)?r.pnl_events:[];
+  const activeOrders=Array.isArray(r.orders)?r.orders:[];
+  const activeFills=Array.isArray(r.fills)?r.fills:[];
+  const activePnlEvents=Array.isArray(r.pnl_events)?r.pnl_events:[];
+  const archivedSessions=Array.isArray(r.archived_sessions)?r.archived_sessions:[];
+  const archivedOrders=archivedSessions.flatMap(session=>
+   (Array.isArray(session.orders)?session.orders:[]).map(order=>({
+    ...order,
+    archived_session_at:session.archived_at||null,
+    details:{...(order.details&&typeof order.details==="object"?order.details:{}),archived_session:true}
+   }))
+  );
+  const archivedFills=archivedSessions.flatMap(session=>Array.isArray(session.fills)?session.fills:[]);
+  const archivedPnlEvents=archivedSessions.flatMap(session=>Array.isArray(session.pnl_events)?session.pnl_events:[]);
+  const orders=[...activeOrders,...archivedOrders].sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
+  const fills=[...activeFills,...archivedFills];
+  const pnlEvents=[...activePnlEvents,...archivedPnlEvents];
   const fillByOrder=new Map(fills.map(fill=>[fill.order_id,fill]));
   const pnlByOrder=new Map(pnlEvents.filter(event=>event.order_id).map(event=>[event.order_id,event]));
   $("paper-trade-total").textContent=orders.length.toLocaleString();
@@ -1320,7 +1333,16 @@ async function loadPaperTradeHistory(reportOverride){
    const sidePill=historyPill(side,side==="BUY"?"buy":side==="SELL"?"sell":"");
    sidePill.title=state+(order.reason?" · "+order.reason:"");
    sidePill.setAttribute("aria-label",side+" · "+state);
-   typeCell.append(sidePill);row.append(typeCell);
+   typeCell.append(sidePill);
+   if(order.archived_session_at){
+    const archivedLabel=document.createElement("small");
+    archivedLabel.className="history-sub";
+    archivedLabel.textContent="Archived";
+    archivedLabel.title="Saved from the paper session reset on "+historyDate(order.archived_session_at);
+    typeCell.append(archivedLabel);
+    row.classList.add("paper-archived-row");
+   }
+   row.append(typeCell);
 
    row.append(makePaperTokenCell(order.asset_mint));
 

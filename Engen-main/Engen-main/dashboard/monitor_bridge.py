@@ -38,7 +38,9 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 classification = "UNKNOWN"
             confirmation = observation.get("confirmation_status")
             if item.get("processing_status") == "needs_review":
-                status = "needs_review"
+                # Keep the persisted status compatible with existing SQLite CHECK constraints.
+                # The distinct review state is stored in evidence.processing_status.
+                status = "pending"
             elif item.get("status") == "failed":
                 status = "failed"
             elif confirmation in ("confirmed", "finalized") and item.get("metadata_complete") is True:
@@ -82,6 +84,8 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     break
             evidence = {
                 "metadata_status": str(item.get("metadata_status", "available"))[:80],
+                "processing_status": str(item.get("processing_status", "pending" if item.get("retryable") is True else "processed"))[:40],
+                "rpc_code": item.get("rpc_code") if isinstance(item.get("rpc_code"), int) and not isinstance(item.get("rpc_code"), bool) else None,
                 "confirmation_status": confirmation,
                 "classification_reason": str(signal.get("reason", ""))[:400],
                 "confidence": str(signal.get("confidence", "unknown"))[:40],

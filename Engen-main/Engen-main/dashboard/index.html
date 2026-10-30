@@ -772,9 +772,9 @@ async function loadPortfolioForProfile(){
   await loadPaperTradeHistory(r);
  }catch(e){
   if(!balanceInputDirty){input.disabled=false;save.disabled=!selectedProfile||balanceSaveInProgress;}
+  renderPortfolioMetrics({});
   say("portfolio-message","Could not load this profile's portfolio metrics: "+e.message);
   say("virtual-balance-message","Balance data unavailable.");
-  renderPortfolioMetrics({});
   await loadPaperTradeHistory(null);
  }
 }

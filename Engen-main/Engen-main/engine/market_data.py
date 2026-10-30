@@ -40,8 +40,27 @@ def _positive_decimal(value):
     return parsed if parsed.is_finite() and parsed > 0 else None
 
 
-def fetch_market_price(mint, timeout=8):
+def _is_retryable_network_error(exc):
+    """Return True only for transient transport/provider HTTP failures."""
+    if isinstance(exc, HTTPError):
+        return exc.code == 429 or 500 <= exc.code <= 599
+    return isinstance(exc, (URLError, TimeoutError, OSError))
+
+
+def fetch_market_price(
+    mint,
+    timeout=8,
+    *,
+    max_attempts=3,
+    retry_backoff_seconds=0.25,
+    max_backoff_seconds=1.0,
+):
     """Return the highest-liquidity usable USD snapshot, or None.
+
+    Transient transport errors and HTTP 429/5xx responses are retried a
+    bounded number of times. timeout applies independently to each network
+    attempt; exponential backoff is capped. Invalid/malformed data and
+    non-retryable HTTP errors fail closed without retrying.
 
     DEX Screener's priceUsd describes the pair's base token. If the requested
     mint is the quote token and that quote token is wrapped SOL, derive SOL's
@@ -53,6 +72,20 @@ def fetch_market_price(mint, timeout=8):
         return None
     if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
         raise ValueError("Market data timeout must be positive.")
+    if not isinstance(max_attempts, int) or isinstance(max_attempts, bool) or max_attempts < 1:
+        raise ValueError("max_attempts must be a positive integer.")
+    if (
+        not isinstance(retry_backoff_seconds, (int, float))
+        or isinstance(retry_backoff_seconds, bool)
+        or retry_backoff_seconds < 0
+    ):
+        raise ValueError("retry_backoff_seconds must be non-negative.")
+    if (
+        not isinstance(max_backoff_seconds, (int, float))
+        or isinstance(max_backoff_seconds, bool)
+        or max_backoff_seconds < 0
+    ):
+        raise ValueError("max_backoff_seconds must be non-negative.")
 
     now_monotonic = time.monotonic()
     with _PRICE_CACHE_LOCK:
@@ -67,14 +100,28 @@ def fetch_market_price(mint, timeout=8):
         headers={"Accept": "application/json", "User-Agent": USER_AGENT},
         method="GET",
     )
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            raw = response.read(MAX_RESPONSE_BYTES + 1)
+
+    payload = None
+    for attempt in range(max_attempts):
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                raw = response.read(MAX_RESPONSE_BYTES + 1)
             if len(raw) > MAX_RESPONSE_BYTES:
                 return None
-            payload = json.loads(raw.decode("utf-8"))
-    except (HTTPError, URLError, TimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return None
+            break
+        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+            if not _is_retryable_network_error(exc) or attempt + 1 >= max_attempts:
+                return None
+            delay = min(
+                float(retry_backoff_seconds) * (2 ** attempt),
+                float(max_backoff_seconds),
+            )
+            if delay > 0:
+                time.sleep(delay)
 
     if not isinstance(payload, list):
         return None
@@ -96,11 +143,8 @@ def fetch_market_price(mint, timeout=8):
         quote_address = quote.get("address")
         price = None
         if base_address == mint:
-            # priceUsd is the USD price of the base token.
             price = _positive_decimal(pair.get("priceUsd"))
         elif quote_address == mint and mint == WRAPPED_SOL_MINT:
-            # For a SOL-quoted pool, priceNative is base tokens' price in SOL.
-            # This ratio gives the implied USD price of one SOL.
             base_usd = _positive_decimal(pair.get("priceUsd"))
             base_in_sol = _positive_decimal(pair.get("priceNative"))
             if base_usd is not None and base_in_sol is not None:

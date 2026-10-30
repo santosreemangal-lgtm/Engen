@@ -333,6 +333,47 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertEqual(queued[0]["sizing_mode"], "SOURCE_POSITION_REDUCTION")
         self.assertIsNone(queued[0]["target_notional_usd"])
 
+    def test_sell_without_paper_position_fails_instead_of_waiting_forever(self):
+        simulator = PaperSimulator()
+        queued = queue_paper_orders(
+            WALLET, [candidate_result(classification="SELL_CANDIDATE")], simulator
+        )
+        self.assertEqual(len(queued), 1)
+
+        outcomes = execute_pending_paper_orders(
+            WALLET, simulator, price_provider=lambda mint: None
+        )
+
+        self.assertEqual(outcomes[0]["status"], "REJECTED")
+        order = simulator.report()["orders"][0]
+        self.assertEqual(order["status"], "REJECTED")
+        self.assertIn("no position", order["reason"].lower())
+        self.assertEqual(simulator.report()["fills"], [])
+
+    def test_sell_remains_preparing_when_an_earlier_copied_buy_is_unresolved(self):
+        simulator = PaperSimulator()
+        simulator.add_virtual_balance("USD", "1000")
+        earlier_buy = candidate_result()
+        earlier_buy["signature"] = "sig-earlier-buy"
+        earlier_buy["signature_observation"]["slot"] = 122
+        later_sell = candidate_result(classification="SELL_CANDIDATE")
+        later_sell["signature"] = "sig-later-sell"
+        later_sell["signature_observation"]["slot"] = 123
+
+        queued = queue_paper_orders(WALLET, [earlier_buy, later_sell], simulator)
+        self.assertEqual([item["side"] for item in queued], ["BUY", "SELL"])
+
+        outcomes = execute_pending_paper_orders(
+            WALLET, simulator, price_provider=lambda mint: None
+        )
+
+        self.assertEqual(outcomes[0]["status"], "WAITING_FOR_MARKET_DATA")
+        self.assertEqual(outcomes[1]["status"], "WAITING_FOR_POSITION")
+        sell_order = next(order for order in simulator.report()["orders"] if order["side"] == "SELL")
+        self.assertIn("earlier copied BUY", sell_order["reason"])
+        self.assertEqual(sell_order["status"], "CREATED")
+        self.assertEqual(simulator.report()["fills"], [])
+
     def test_sell_execution_uses_fraction_of_current_paper_position(self):
         simulator = PaperSimulator(initial_balances={"USD": "1000", ASSET: "10"})
         queued = queue_paper_orders(

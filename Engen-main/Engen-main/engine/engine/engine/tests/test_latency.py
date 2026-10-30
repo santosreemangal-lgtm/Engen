@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from engine.latency import LatencyRecorder
+from engine.latency import LatencyRecorder, LATENCY_RECORDER
 
 
 class LatencyRecorderTests(unittest.TestCase):
@@ -59,6 +59,27 @@ class LatencyRecorderTests(unittest.TestCase):
             with self.subTest(duration=duration):
                 with self.assertRaises((ValueError, TypeError)):
                     recorder.record("rpc", duration)
+
+
+    def test_dashboard_scan_records_end_to_end_paper_stages(self):
+        from dashboard.monitor_bridge import create_scan_function
+
+        class EmptySimulator:
+            orders = {}
+            balances = {}
+            processed_signals = set()
+
+        with patch("dashboard.monitor_bridge.SignatureStore"), \
+             patch("dashboard.monitor_bridge.monitor_wallet", return_value=[]), \
+             patch("dashboard.monitor_bridge.queue_paper_orders", return_value=[]), \
+             patch("dashboard.monitor_bridge.execute_pending_paper_orders", return_value=[]):
+            scan = create_scan_function(simulator_getter=EmptySimulator)
+            self.assertEqual(scan("11111111111111111111111111111111"), [])
+
+        samples = LATENCY_RECORDER.summary()
+        for stage in ("pipeline.scan_total", "paper.order_queue", "paper.order_execution"):
+            self.assertIn(stage, samples)
+            self.assertGreaterEqual(samples[stage]["count"], 1)
 
     def test_empty_summary_is_empty(self):
         self.assertEqual(LatencyRecorder().summary(), {})

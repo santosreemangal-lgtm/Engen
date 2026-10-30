@@ -194,6 +194,22 @@ def process_new_signatures(
                 if item.get("err") is None and resolved_status.get("err") is not None:
                     item["err"] = resolved_status["err"]
 
+        # getTransaction was requested at confirmed commitment. A complete,
+        # successful transaction returned by that RPC is itself evidence that
+        # the transaction reached the requested commitment. Some providers
+        # omit or fail to return getSignatureStatuses history for older
+        # signatures; do not leave such transactions pending indefinitely.
+        if (
+            result.get("available") is True
+            and result.get("metadata_complete") is True
+            and result.get("status") == "success"
+            and item.get("confirmationStatus") not in ("confirmed", "finalized")
+        ):
+            item = {
+                **item,
+                "confirmationStatus": "confirmed",
+            }
+
         # Preserve provider observation metadata separately from transaction
         # metadata; a signature-list observation is not itself transaction proof.
         result = _include_signature_observation(result, item)

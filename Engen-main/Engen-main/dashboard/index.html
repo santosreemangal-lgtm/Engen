@@ -1178,7 +1178,7 @@ async function loadTransactionHistory(){
    const walletCell=document.createElement("td");const wallet=document.createElement("span");
    wallet.className="history-wallet-address";wallet.textContent=historyShortAddress(tx.source_wallet_address);
    wallet.title=tx.source_wallet_address||"";walletCell.append(wallet);row.append(walletCell);
-   const statusCell=document.createElement("td");const status=String(tx.status||"unknown").toLowerCase();
+   const statusCell=document.createElement("td");const status=String(tx.evidence&&tx.evidence.processing_status==="needs_review"?"needs_review":tx.status||"unknown").toLowerCase();
    statusCell.append(historyPill(status.toUpperCase(),["confirmed","failed","pending","needs_review","observed"].includes(status)?status:""));row.append(statusCell);
    const actionCell=document.createElement("td");
    if(tx.signature){const link=document.createElement("a");link.className="history-link";link.href="https://solscan.io/tx/"+encodeURIComponent(tx.signature);link.target="_blank";link.rel="noopener noreferrer";link.textContent="View tx ↗";actionCell.append(link);const sig=document.createElement("small");sig.className="history-sub";sig.textContent=historyShortAddress(tx.signature);sig.title=tx.signature;actionCell.append(sig);}

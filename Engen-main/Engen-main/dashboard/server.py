@@ -19,14 +19,14 @@ from urllib.parse import parse_qs, urlparse
 from decimal import Decimal
 from datetime import datetime, timezone
 
-from engine.profile_store import ProfileStore, LABELS, STATUSES, validate_public_address, settings_json
-
 ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT.parent
 
-# Make the existing engine importable when this file is run directly.
+# Make the existing engine importable before importing any engine modules.
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from engine.profile_store import ProfileStore, LABELS, STATUSES, validate_public_address, settings_json
 
 from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService

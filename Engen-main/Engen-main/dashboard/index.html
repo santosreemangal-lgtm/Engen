@@ -219,6 +219,15 @@ footer.hint{padding:10px 4px;line-height:1.7}
 #paper-history-panel .paper-token-primary{max-width:100%}
 #paper-history-panel .paper-share-btn{max-width:100%;white-space:nowrap}
 
+
+/* Keep the paper-trade view focused on the feed, not wallet-only filters. */
+#paper-history-panel .paper-trades-table th,
+#paper-history-panel .paper-trades-table td{padding:7px 7px}
+#paper-history-panel .paper-type-cell{min-width:0;vertical-align:middle}
+#paper-history-panel .history-pill{padding:5px 8px}
+#paper-history-panel .history-overview{margin:5px 0 8px}
+.history-toolbar{margin-top:8px;margin-bottom:8px}
+.history-tab{padding:8px 12px}
 </style>
 </head>
 <body><main>
@@ -730,6 +739,8 @@ function historyClassificationKind(value){
 }
 function setHistoryTab(mode){
  const observed=mode!=="paper";
+ const historyFilters=document.querySelector(".history-filters");
+ if(historyFilters)historyFilters.classList.toggle("hidden",!observed);
  $("observed-history-panel").classList.toggle("hidden",!observed);
  $("paper-history-panel").classList.toggle("hidden",observed);
  $("observed-history-tab").classList.toggle("active",observed);
@@ -902,9 +913,9 @@ async function loadPaperTradeHistory(reportOverride){
 
    const typeCell=document.createElement("td");typeCell.className="paper-type-cell";
    const sidePill=historyPill(side,side==="BUY"?"buy":side==="SELL"?"sell":"");
-   const stateLabel=document.createElement("small");stateLabel.className="paper-order-state";stateLabel.textContent=state;
-   if(order.reason)stateLabel.title=order.reason;
-   typeCell.append(sidePill,stateLabel);row.append(typeCell);
+   sidePill.title=state+(order.reason?" · "+order.reason:"");
+   sidePill.setAttribute("aria-label",side+" · "+state);
+   typeCell.append(sidePill);row.append(typeCell);
 
    row.append(makePaperTokenCell(order.asset_mint));
 

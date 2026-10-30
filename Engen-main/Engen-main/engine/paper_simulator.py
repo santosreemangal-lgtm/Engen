@@ -4,6 +4,7 @@ import sqlite3
 import uuid
 from contextlib import closing
 from decimal import Decimal
+from datetime import datetime, timezone
 from pathlib import Path
 
 from engine.pnl import MarketPrice, decimal_value, parse_timestamp
@@ -198,6 +199,238 @@ class PaperSimulator:
             "real_trading": False,
             "transaction_broadcast": False,
         }
+
+
+    def reset_session(self, amount, mint="USD"):
+        """Start a fresh paper session while preserving the previous session in archive tables."""
+        if not isinstance(mint, str) or not mint.strip() or len(mint.strip()) > 128:
+            raise ValueError("A virtual balance currency is required.")
+        mint = mint.strip()
+        value = decimal_value(amount, "Initial virtual balance")
+        if value <= 0:
+            raise ValueError("Initial virtual balance must be greater than zero.")
+
+        archived_session_id = None
+        archived_orders_count = 0
+        archived_fills_count = 0
+        if self.db_path is not None:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            with closing(self._connect()) as db:
+                db.execute("PRAGMA foreign_keys=ON")
+                with db:
+                    db.execute("""CREATE TABLE IF NOT EXISTS paper_session_archives(
+                        archive_id TEXT PRIMARY KEY,
+                        archived_at TEXT NOT NULL,
+                        initial_balance TEXT,
+                        balances_json TEXT NOT NULL,
+                        orders_count INTEGER NOT NULL,
+                        fills_count INTEGER NOT NULL
+                    )""")
+                    db.execute("""CREATE TABLE IF NOT EXISTS archived_simulated_orders(
+                        archive_id TEXT NOT NULL,
+                        order_id TEXT NOT NULL,
+                        signal_id TEXT NOT NULL,
+                        side TEXT NOT NULL,
+                        asset_mint TEXT NOT NULL,
+                        quantity TEXT NOT NULL,
+                        quote_mint TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        reason TEXT,
+                        created_at TEXT NOT NULL,
+                        details_json TEXT NOT NULL,
+                        archived_at TEXT NOT NULL,
+                        PRIMARY KEY(archive_id, order_id)
+                    )""")
+                    db.execute("""CREATE TABLE IF NOT EXISTS archived_simulated_fills(
+                        archive_id TEXT NOT NULL,
+                        fill_id TEXT NOT NULL,
+                        order_id TEXT NOT NULL,
+                        asset_mint TEXT NOT NULL,
+                        quantity TEXT NOT NULL,
+                        reference_price TEXT NOT NULL,
+                        execution_price TEXT NOT NULL,
+                        gross_quote TEXT NOT NULL,
+                        fee TEXT NOT NULL,
+                        network_cost TEXT NOT NULL,
+                        net_quote TEXT NOT NULL,
+                        currency TEXT NOT NULL,
+                        price_source TEXT NOT NULL,
+                        price_timestamp TEXT NOT NULL,
+                        price_age_seconds INTEGER NOT NULL,
+                        slippage_bps INTEGER NOT NULL,
+                        created_at TEXT NOT NULL,
+                        archived_at TEXT NOT NULL,
+                        PRIMARY KEY(archive_id, fill_id)
+                    )""")
+
+                    old_balances = {
+                        key: amount_text for key, amount_text in
+                        db.execute("SELECT mint,amount FROM simulator_balances")
+                    }
+                    previous_initial = db.execute(
+                        "SELECT value FROM simulator_meta WHERE key='initial_balance'"
+                    ).fetchone()
+                    previous_initial = previous_initial[0] if previous_initial else None
+                    archived_orders_count = db.execute(
+                        "SELECT COUNT(*) FROM simulated_orders"
+                    ).fetchone()[0]
+                    archived_fills_count = db.execute(
+                        "SELECT COUNT(*) FROM simulated_fills"
+                    ).fetchone()[0]
+
+                    # Archive only this profile's current simulator ledger.
+                    # Existing legacy paper_trades rows are deliberately left untouched.
+                    if old_balances or previous_initial is not None or archived_orders_count or archived_fills_count:
+                        archived_session_id = str(uuid.uuid4())
+                        archived_at = datetime.now(timezone.utc).isoformat()
+                        db.execute(
+                            """INSERT INTO paper_session_archives(
+                                archive_id,archived_at,initial_balance,balances_json,orders_count,fills_count
+                            ) VALUES(?,?,?,?,?,?)""",
+                            (
+                                archived_session_id, archived_at, previous_initial,
+                                json.dumps(old_balances, sort_keys=True),
+                                archived_orders_count, archived_fills_count,
+                            ),
+                        )
+                        db.execute(
+                            """INSERT INTO archived_simulated_orders(
+                                archive_id,order_id,signal_id,side,asset_mint,quantity,quote_mint,
+                                status,reason,created_at,details_json,archived_at
+                            )
+                            SELECT ?,order_id,signal_id,side,asset_mint,quantity,quote_mint,
+                                status,reason,created_at,details_json,?
+                            FROM simulated_orders""",
+                            (archived_session_id, archived_at),
+                        )
+                        db.execute(
+                            """INSERT INTO archived_simulated_fills(
+                                archive_id,fill_id,order_id,asset_mint,quantity,reference_price,
+                                execution_price,gross_quote,fee,network_cost,net_quote,currency,
+                                price_source,price_timestamp,price_age_seconds,slippage_bps,
+                                created_at,archived_at
+                            )
+                            SELECT ?,fill_id,order_id,asset_mint,quantity,reference_price,
+                                execution_price,gross_quote,fee,network_cost,net_quote,currency,
+                                price_source,price_timestamp,price_age_seconds,slippage_bps,
+                                created_at,?
+                            FROM simulated_fills""",
+                            (archived_session_id, archived_at),
+                        )
+
+                    # Clear only the active simulator ledger after its history is archived.
+                    db.execute("DELETE FROM simulated_fills")
+                    db.execute("DELETE FROM simulated_orders")
+                    db.execute("DELETE FROM simulator_balances")
+                    db.execute(
+                        "INSERT INTO simulator_balances(mint,amount) VALUES(?,?)",
+                        (mint, str(value)),
+                    )
+                    db.execute(
+                        """INSERT INTO simulator_meta(key,value) VALUES('initialized','1')
+                        ON CONFLICT(key) DO UPDATE SET value=excluded.value"""
+                    )
+                    db.execute(
+                        """INSERT INTO simulator_meta(key,value) VALUES('initial_balance',?)
+                        ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                        (str(value),),
+                    )
+
+                    tables = {
+                        row[0] for row in db.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table'"
+                        )
+                    }
+                    if "paper_balances" in tables:
+                        db.execute("DELETE FROM paper_balances")
+                        db.execute(
+                            "INSERT INTO paper_balances(mint,amount) VALUES(?,?)",
+                            (mint, str(value)),
+                        )
+                    # Do not delete paper_trades: older paper history must remain available.
+
+        self.balances = {mint: value}
+        self.orders = {}
+        self.fills = []
+        self.processed_signals = set()
+        self._initial_balance_value = str(value)
+        self._initial_balance_mint = mint
+        self._rebuild_pnl_ledger()
+        return {
+            "mint": mint,
+            "initial_balance": str(value),
+            "balance": str(value),
+            "reset": True,
+            "archived_session_id": archived_session_id,
+            "archived_orders": archived_orders_count,
+            "archived_fills": archived_fills_count,
+            "simulated": True,
+            "real_trading": False,
+            "transaction_broadcast": False,
+        }
+
+    def archived_history(self, limit=100):
+        """Return archived simulator rows for display without mixing them into active P&L."""
+        if self.db_path is None or not self.db_path.is_file():
+            return {"orders": [], "fills": [], "sessions": []}
+        with closing(self._connect()) as db:
+            db.row_factory = sqlite3.Row
+            tables = {
+                row[0] for row in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            required = {
+                "paper_session_archives",
+                "archived_simulated_orders",
+                "archived_simulated_fills",
+            }
+            if not required.issubset(tables):
+                return {"orders": [], "fills": [], "sessions": []}
+
+            archived_orders = []
+            for row in db.execute(
+                """SELECT * FROM archived_simulated_orders
+                ORDER BY created_at DESC LIMIT ?""",
+                (limit,),
+            ):
+                item = dict(row)
+                try:
+                    item["details"] = json.loads(item.pop("details_json") or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    item["details"] = {}
+                item["history_source"] = "ARCHIVED_SESSION"
+                item["archived"] = True
+                archived_orders.append(item)
+
+            archived_fills = []
+            for row in db.execute(
+                """SELECT f.*,o.side,o.quote_mint
+                FROM archived_simulated_fills f
+                JOIN archived_simulated_orders o
+                  ON o.archive_id=f.archive_id AND o.order_id=f.order_id
+                ORDER BY f.created_at DESC LIMIT ?""",
+                (limit,),
+            ):
+                item = dict(row)
+                item["history_source"] = "ARCHIVED_SESSION"
+                item["archived"] = True
+                archived_fills.append(item)
+
+            sessions = []
+            for row in db.execute(
+                """SELECT * FROM paper_session_archives
+                ORDER BY archived_at DESC LIMIT ?""",
+                (limit,),
+            ):
+                item = dict(row)
+                try:
+                    item["balances"] = json.loads(item.pop("balances_json") or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    item["balances"] = {}
+                sessions.append(item)
+
+        return {"orders": archived_orders, "fills": archived_fills, "sessions": sessions}
 
     def add_virtual_balance(self, mint, amount):
         """Add explicitly virtual funds to one paper token balance; never touches a real wallet."""
@@ -403,10 +636,14 @@ class PaperSimulator:
             return None
 
     def report(self):
+        archived = self.archived_history()
         return {"mode":"PAPER_SIMULATION","simulated":True,"real_wallet_balances_included":False,
                 "real_trading":False,"transaction_broadcast":False,
                 "balances":{mint:str(amount) for mint,amount in self.balances.items()},
                 "initial_balance": self._stored_initial_balance(),
                 "orders":[dict(order) for order in self.orders.values()],
                 "fills":[dict(fill) for fill in self.fills],
+                "archived_orders": archived["orders"],
+                "archived_fills": archived["fills"],
+                "archived_sessions": archived["sessions"],
                 "pnl":self.pnl_summary()}

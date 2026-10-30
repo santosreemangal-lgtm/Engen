@@ -454,6 +454,53 @@ def set_profile_virtual_balance(profile_id, amount):
     return {"profile_id": profile_id, "mint": "USD", "amount": format(value, "f"),
             "balance_updated": True, "real_trading": False, "transaction_broadcast": False}
 
+
+def reset_profile_paper_session(profile_id, amount):
+    """Stop one profile's monitor and begin a fresh archived paper session."""
+    from decimal import Decimal, InvalidOperation
+
+    profile_id = canonical_profile_id(profile_id)
+    try:
+        value = Decimal(str(amount))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError("Enter a valid virtual balance amount.") from exc
+    if not value.is_finite() or value <= 0 or value > Decimal("1000000000"):
+        raise ValueError("Virtual balance must be greater than zero and at most 1,000,000,000 USD.")
+    if get_profile_record(profile_id) is None:
+        raise ValueError("Profile not found.")
+
+    # Remove only this profile from the persisted monitor opt-in list.
+    set_profile_monitor_persistence(profile_id, False)
+    service = profile_monitor_services.get(profile_id)
+    if service is not None:
+        status = service.stop_and_wait(timeout=15)
+        if status.get("worker_stopped") is not True:
+            raise RuntimeError(
+                "Monitoring has been asked to stop, but its worker is still running. "
+                "The paper session was not reset; check monitoring status and retry."
+            )
+        profile_monitor_services.pop(profile_id, None)
+
+    initialize_profile_paper_ledger(profile_id)
+    with paper_simulator_lock:
+        simulator = get_profile_paper_simulator(profile_id)
+        result = simulator.reset_session(format(value, "f"), "USD")
+
+    return {
+        "profile_id": profile_id,
+        "mint": "USD",
+        "amount": format(value, "f"),
+        "balance_updated": True,
+        "fresh_paper_session": True,
+        "monitoring_stopped": True,
+        "archived_session_id": result.get("archived_session_id"),
+        "archived_orders": result.get("archived_orders", 0),
+        "archived_fills": result.get("archived_fills", 0),
+        "real_trading": False,
+        "transaction_broadcast": False,
+    }
+
+
 def load_profile_paper_simulation_report(profile_id):
     """Read one profile's isolated paper simulator and preserve legacy paper history."""
     profile_id = canonical_profile_id(profile_id)
@@ -462,6 +509,7 @@ def load_profile_paper_simulation_report(profile_id):
         "real_wallet_balances_included": False, "real_trading": False,
         "transaction_broadcast": False, "profile_id": profile_id,
         "database_available": False, "balances": {}, "orders": [], "fills": [],
+        "archived_sessions": [],
         "available_balance": None, "available_balance_usd": None,
         "initial_balance": None, "portfolio_value_usd": None,
         "realized_pnl_usd": None, "unrealized_pnl_usd": None,
@@ -489,6 +537,9 @@ def load_profile_paper_simulation_report(profile_id):
             sim_balances = dict(simulator_report.get("balances", {}))
             sim_orders = list(simulator_report.get("orders", []))
             sim_fills = list(simulator_report.get("fills", []))
+            archived_sim_orders = list(simulator_report.get("archived_orders", []))
+            archived_sim_fills = list(simulator_report.get("archived_fills", []))
+            base["archived_sessions"] = list(simulator_report.get("archived_sessions", []))
         # Keep the older PaperTrader ledger visible while the dashboard and
         # monitor use PaperSimulator. Do not fabricate missing quote amounts.
         legacy_balances = {}
@@ -530,11 +581,23 @@ def load_profile_paper_simulation_report(profile_id):
             {**order, "simulated": True, "real_trading": False, "transaction_broadcast": False}
             for order in sim_orders
         ]
+        archived_orders = [
+            {**order, "simulated": True, "real_trading": False,
+             "transaction_broadcast": False, "history_source": "ARCHIVED_SESSION",
+             "archived": True}
+            for order in archived_sim_orders
+        ]
+        archived_fills = [
+            {**fill, "simulated": True, "real_trading": False,
+             "transaction_broadcast": False, "history_source": "ARCHIVED_SESSION",
+             "archived": True}
+            for fill in archived_sim_fills
+        ]
         base["orders"] = sorted(
-            simulator_orders + legacy_orders,
+            simulator_orders + archived_orders + legacy_orders,
             key=lambda item: str(item.get("created_at") or ""), reverse=True
         )[:100]
-        base["fills"] = sim_fills
+        base["fills"] = sim_fills + archived_fills
         base["pnl"] = simulator_report.get("pnl", base["pnl"])
         realized = base["pnl"].get("realized_by_mint", {})
         if not realized:
@@ -1099,12 +1162,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return
             if action == "set-profile-initial-balance":
                 try:
-                    result = set_profile_virtual_balance(payload.get("profile_id"), payload.get("amount"))
+                    result = reset_profile_paper_session(payload.get("profile_id"), payload.get("amount"))
                     self.send_json(200, {"result": result, "report": load_profile_paper_simulation_report(payload.get("profile_id"))})
                 except ValueError as exc:
                     status = 404 if str(exc) == "Profile not found." else 400
                     self.send_json(status, {"error": str(exc)})
-                except (OSError, sqlite3.Error) as exc:
+                except (OSError, sqlite3.Error, RuntimeError) as exc:
                     self.send_json(503, {"error": "Profile paper ledger storage unavailable (" + type(exc).__name__ + ")."})
                 return
             try:

@@ -280,8 +280,8 @@ function compactNumber(value){
 function money(value){
  if(value===null||value===undefined||value==="")return "$—";
  const n=Number(value);if(!Number.isFinite(n))return "$—";
- if(Math.abs(n)>=1e3)return (n<0?"-":"")+"$"+compactNumber(Math.abs(n));
- return (n<0?"-":"")+"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+ const formatted=Math.abs(n).toLocaleString("en-US",{maximumFractionDigits:2});
+ return (n<0?"-":"")+"$"+formatted;
 }
 function say(id,text){$(id).textContent=text;}
 function post(path,payload){return api(path,{method:"POST",body:JSON.stringify(payload)});}
@@ -457,7 +457,7 @@ $("virtual-balance-form").addEventListener("submit",async e=>{
   await post("/api/paper-simulation",{action:"set-profile-initial-balance",profile_id:selectedProfile,amount:String(amount)});
   balanceInputDirty=false;
   await loadPortfolioForProfile();
-  say("virtual-balance-message","Virtual USD balance saved for this profile. Paper-trade history is preserved; no real funds were moved.");
+  say("virtual-balance-message","New paper session started with the confirmed virtual USD balance. Previous paper trades remain in History as archived records; monitoring is stopped. No real funds were moved.");
  }catch(err){say("virtual-balance-message","Balance was not saved: "+err.message);}
  finally{
   balanceSaveInProgress=false;
@@ -708,15 +708,17 @@ async function loadPaperTradeHistory(reportOverride){
    else if(details.execution_state==="EXECUTION_ERROR")state="EXECUTION ERROR";
    const kind=state==="FILLED"?"filled":state.includes("WAITING")||state==="CREATED"?"waiting":state==="REJECTED"?"rejected":"";
    const pill=historyPill(state,kind);if(order.reason)pill.title=order.reason;stateCell.append(pill);
+   if(order.history_source==="ARCHIVED_SESSION"){const archived=document.createElement("small");archived.className="history-sub";archived.textContent="Archived session";stateCell.append(archived);}
    if(order.reason){const reason=document.createElement("small");reason.className="history-sub";reason.textContent=order.reason;stateCell.append(reason);}
    row.append(stateCell);
    const sourceCell=document.createElement("td");
    if(details.source_signature){const link=document.createElement("a");link.className="history-link";link.href="https://solscan.io/tx/"+encodeURIComponent(details.source_signature);link.target="_blank";link.rel="noopener noreferrer";link.textContent="View source ↗";sourceCell.append(link);}
-   else sourceCell.textContent="—";
+   else sourceCell.textContent=order.history_source==="ARCHIVED_SESSION"?"Archived session":"—";
    row.append(sourceCell);tbody.append(row);
   });
   void loadHistoryTokenMetadata(orders.map(order=>order.asset_mint));
-  say("paper-trade-history-message",orders.length?"Showing the latest "+orders.length+" stored paper order(s); "+fills.length+" have simulated fills.":"Paper orders are shown only when the copy engine queues them. On-chain transaction rows are kept separate.");
+  const archivedCount=orders.filter(order=>order.history_source==="ARCHIVED_SESSION").length;
+  say("paper-trade-history-message",orders.length?"Showing the latest "+orders.length+" stored paper order(s); "+fills.length+" have simulated fills; "+archivedCount+" archived-session order(s) are retained in history.":"Paper orders are shown only when the copy engine queues them. On-chain transaction rows are kept separate.");
  }catch(e){historySetEmpty(tbody,7,e.message||"Unable to load paper history.");say("paper-trade-history-message",e.message);}
 }
 async function loadHistory(){await Promise.all([loadTransactionHistory(),loadPaperTradeHistory(null)]);}

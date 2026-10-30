@@ -538,6 +538,7 @@ def load_profile_paper_simulation_report(profile_id):
         "real_wallet_balances_included": False, "real_trading": False,
         "transaction_broadcast": False, "profile_id": profile_id,
         "database_available": False, "balances": {}, "orders": [], "fills": [], "pnl_events": [],
+        "archived_sessions": [],
         "available_balance": None, "available_balance_usd": None,
         "initial_balance": None, "portfolio_value_usd": None,
         "realized_pnl_usd": None, "unrealized_pnl_usd": None,
@@ -566,6 +567,7 @@ def load_profile_paper_simulation_report(profile_id):
             sim_orders = list(simulator_report.get("orders", []))
             sim_fills = list(simulator_report.get("fills", []))
             sim_pnl_events = list(simulator_report.get("pnl_events", []))
+            base["archived_sessions"] = list(simulator_report.get("archived_sessions") or [])
         # Keep the older PaperTrader ledger visible while the dashboard and
         # monitor use PaperSimulator. Do not fabricate missing quote amounts.
         legacy_balances = {}

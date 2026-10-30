@@ -358,6 +358,10 @@ footer.hint{padding:10px 4px;line-height:1.7}
 /* Compact portfolio summary and one-row virtual cash editor. */
 .portfolio-summary{padding-bottom:16px}
 .portfolio-summary .portfolio-head{margin-bottom:12px}
+.portfolio-head-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0}
+#reset-paper-session{min-height:29px;padding:5px 10px;font-size:10px;border-radius:8px;white-space:nowrap}
+#reset-paper-session:disabled{opacity:.45;cursor:not-allowed}
+.paper-archived-row{background:rgba(123,145,180,.035)}
 .portfolio-metrics{grid-template-columns:repeat(4,minmax(0,1fr));gap:11px}
 .portfolio-metrics .metric{min-width:0;min-height:92px;padding:14px 15px}
 .portfolio-metrics .label{font-size:10px;letter-spacing:.02em}
@@ -380,6 +384,8 @@ footer.hint{padding:10px 4px;line-height:1.7}
 .virtual-balance-compact .message{flex:0 0 100%;margin:0;font-size:10px;line-height:1.3}
 .virtual-balance-compact .message:empty{display:none}
 @media(max-width:760px){
+ .portfolio-head-actions{flex-wrap:wrap;gap:7px}
+ .portfolio-head-actions .status-group{flex-wrap:wrap;justify-content:flex-end}
  .portfolio-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
  .virtual-balance-compact{gap:8px}
  .virtual-balance-compact form{min-width:100%}
@@ -390,11 +396,11 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </head>
 <body><main>
 <section class="panel portfolio-summary">
-<div class="panel-head portfolio-head"><h2>Portfolio</h2><div class="status-group"><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span><span id="rpc-health-status" class="status" title="Read-only public Solana RPC health"><span id="rpc-health-dot" class="dot"></span><span id="rpc-health-state">RPC checking…</span></span></div></div>
+<div class="panel-head portfolio-head"><h2>Portfolio</h2><div class="portfolio-head-actions"><button id="reset-paper-session" class="secondary" type="button" disabled title="Start a fresh $100 paper session">Reset</button><div class="status-group"><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span><span id="rpc-health-status" class="status" title="Read-only public Solana RPC health"><span id="rpc-health-dot" class="dot"></span><span id="rpc-health-state">RPC checking…</span></span></div></div></div>
 <div class="grid portfolio-metrics">
- <div class="metric"><div class="label">Initial Deposit</div><p id="initial-deposit" class="value">$—</p></div>
+ <div class="metric"><div class="label">Internal Deposit</div><p id="initial-deposit" class="value">$—</p></div>
  <div class="metric"><div class="label">Total Return</div><p id="total-return" class="value">—</p></div>
- <div class="metric"><div class="label">Today Realized P&amp;L</div><p id="today-pnl" class="value">$—</p></div>
+ <div class="metric"><div class="label">Today’s Realized P&amp;L</div><p id="today-pnl" class="value">$—</p></div>
  <div class="metric"><div class="label">Total P&amp;L</div><p id="total-pnl" class="value">$—</p></div>
 </div>
 <p id="portfolio-message" class="message" role="status"></p>
@@ -485,7 +491,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </main>
 <script>
 const $ = id => document.getElementById(id);
-let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, currentMonitorWallets = [], balanceInputDirty = false, balanceSaveInProgress = false;
+let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, currentMonitorWallets = [], balanceInputDirty = false, paperSessionResetInProgress = false;
 let pendingSellAllPreview = null, sellAllInProgress = false;
 const headers = {"Content-Type":"application/json"};
 function apiRequestHeaders(extra={}) {
@@ -545,8 +551,7 @@ function compactNumber(value){
 function money(value){
  if(value===null||value===undefined||value==="")return "$—";
  const n=Number(value);if(!Number.isFinite(n))return "$—";
- if(Math.abs(n)>=1e3)return (n<0?"-":"")+"$"+compactNumber(Math.abs(n));
- return (n<0?"-":"")+"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+ return "$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 }
 function say(id,text){$(id).textContent=text;}
 function post(path,payload){return api(path,{method:"POST",body:JSON.stringify(payload)});}
@@ -557,8 +562,7 @@ function numericValue(value){
 function signedMoney(value){
  const number=numericValue(value);if(number===null)return "$—";
  const prefix=number>0?"+":number<0?"-":"";
- const absolute=Math.abs(number);
- const formatted=absolute>=1000?compactNumber(absolute):absolute.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+ const formatted=Math.abs(number).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
  return prefix+"$"+formatted;
 }
 function signedPercent(value){
@@ -592,14 +596,20 @@ function renderPortfolioMetrics(report){
  const unrealized=numericValue(report&&report.unrealized_pnl_usd);
  const fills=Array.isArray(report&&report.fills)?report.fills:[];
  const hasPaperFills=fills.length>0;
- ["total-return","today-pnl","total-pnl"].forEach(id=>{
-  const metric=$(id).closest(".metric");
-  if(metric)metric.classList.toggle("hidden",!hasPaperFills);
- });
+ const balances=report&&report.balances&&typeof report.balances==="object"?report.balances:{};
+ const hasTokenHoldings=Object.entries(balances).some(([mint,amount])=>
+  mint!=="USD"&&numericValue(amount)!==null&&numericValue(amount)!==0
+ );
+ const reportedPortfolioValue=numericValue(report&&report.portfolio_value_usd);
+ const availableCash=numericValue(report&&(report.available_balance_usd??report.available_balance??balances.USD));
+ const currentCapital=reportedPortfolioValue!==null?reportedPortfolioValue:(!hasTokenHoldings?availableCash:null);
  const total=!hasPaperFills||realized===null||unrealized===null?null:realized+unrealized;
  const returnPercent=total===null||initial===null||initial<=0?null:(total/initial)*100;
  const today=hasPaperFills?todayRealizedPnl(report&&report.pnl_events):null;
- setMetricValue("initial-deposit",money(initial),"neutral");
+
+ // All four cards remain visible. Capital is an unsigned amount;
+ // only return and P&L metrics display positive/negative signs.
+ setMetricValue("initial-deposit",currentCapital===null?"$—":money(Math.abs(currentCapital)),"neutral");
  setMetricValue("total-return",hasPaperFills?signedPercent(returnPercent):"—",
   !hasPaperFills?"neutral":returnPercent>0?"positive":returnPercent<0?"negative":"neutral");
  setMetricValue("today-pnl",hasPaperFills?signedMoney(today):"—",
@@ -607,10 +617,11 @@ function renderPortfolioMetrics(report){
  setMetricValue("total-pnl",hasPaperFills?signedMoney(total):"—",
   !hasPaperFills?"neutral":total>0?"positive":total<0?"negative":"neutral");
  if(report&&report.error)say("portfolio-message",report.error);
- else if(!hasPaperFills)say("portfolio-message","Fresh paper session. P&L metrics will appear after the first completed paper fill.");
- else if(total===null)say("portfolio-message","Total P&L is unavailable until realized and unrealized P&L can both be verified.");
+ else if(!hasPaperFills)say("portfolio-message","Fresh $100 paper session. Return and P&L appear after the first completed paper fill.");
+ else if(total===null)say("portfolio-message","Total P&L is unavailable until realized and unrealized P&L can both be verified with fresh market prices.");
  else say("portfolio-message","");
 }
+
 async function loadPortfolio(){
  try{
   const data=await api("/api/paper-simulation"),r=data.report||data;
@@ -758,15 +769,20 @@ function renderDirectionFromProfile(){
  updateAmountLabel();
 }
 async function loadPortfolioForProfile(){
- const input=$("virtual-balance-value"),save=$("save-virtual-balance");
+ const resetButton=$("reset-paper-session");
+ const input=$("virtual-balance-value");
+ const save=$("save-virtual-balance");
  if(!selectedProfile){
-  balanceInputDirty=false;input.value="";input.disabled=true;save.disabled=true;
+  resetButton.disabled=true;
+  input.value="";input.disabled=true;save.disabled=true;
+  balanceInputDirty=false;
   renderPortfolioMetrics({});
   say("virtual-balance-message","");
-  await loadPaperTradeHistory(null);return;
+  await loadPaperTradeHistory(null);
+  return;
  }
- const preserveDraft=balanceInputDirty;
- if(!preserveDraft){input.disabled=true;save.disabled=true;}
+ resetButton.disabled=paperSessionResetInProgress;
+ if(!balanceInputDirty){input.disabled=true;save.disabled=true;}
  try{
   const path="/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile);
   let d=await api(path),r=d.report||d;
@@ -776,20 +792,24 @@ async function loadPortfolioForProfile(){
   }
   const balance=r.available_balance_usd??r.available_balance??r.balances?.USD??null;
   if(!balanceInputDirty)input.value=balance===null||balance===undefined?"":String(balance);
-  input.disabled=false;save.disabled=!selectedProfile||!balanceInputDirty||balanceSaveInProgress;
+  input.disabled=paperSessionResetInProgress;
+  save.disabled=!selectedProfile||!balanceInputDirty||paperSessionResetInProgress;
   renderPortfolioMetrics(r);
-  if(r.error){say("virtual-balance-message",r.error);}
-  else if(balance===null||balance===undefined){say("virtual-balance-message","");}
-  else{say("virtual-balance-message","");}
+  resetButton.disabled=paperSessionResetInProgress;
+  say("virtual-balance-message",r.error||"");
   await loadPaperTradeHistory(r);
  }catch(e){
-  if(!balanceInputDirty){input.disabled=false;save.disabled=!selectedProfile||balanceSaveInProgress;}
+  if(!balanceInputDirty)input.value="";
+  input.disabled=paperSessionResetInProgress;
+  save.disabled=!selectedProfile||!balanceInputDirty||paperSessionResetInProgress;
   renderPortfolioMetrics({});
   say("portfolio-message","Could not load this profile's portfolio metrics: "+e.message);
   say("virtual-balance-message","Balance data unavailable.");
+  resetButton.disabled=paperSessionResetInProgress;
   await loadPaperTradeHistory(null);
  }
 }
+
 function updateAmountLabel(){
  const mode=document.querySelector('input[name="sizing"]:checked')?.value||"FIXED_USD";
  const mirror=mode==="MIRROR_AMOUNT";
@@ -809,36 +829,76 @@ $("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const ad
 $("create-profile").addEventListener("click",()=>{if(profiles.length>=3){say("profile-card-message","You can create up to 3 paper profiles.");return;} $("profile-form").classList.toggle("hidden");});$("cancel-create-profile").addEventListener("click",()=>$("profile-form").classList.add("hidden"));
 $("profile-form").addEventListener("submit",async e=>{e.preventDefault();if(profiles.length>=3){say("wallet-message","Maximum of 3 paper profiles reached.");return;}try{const d=await post("/api/profiles",{action:"create",name:$("profile-name").value.trim(),destination_public_address:null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"FIXED_USD",sizing_value:"3"}}});selectedProfile=d.profile.profile_id;$("profile-name").value="";$("profile-form").classList.add("hidden");say("wallet-message","Paper profile created. Activate it, then start read-only monitoring when ready.");await loadProfiles();$("profile-select").value=selectedProfile;}catch(err){say("wallet-message",err.message);}});
 $("profile-select").addEventListener("change",async()=>{selectedProfile=$("profile-select").value;renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();if($("history-details").open)loadHistory();renderWallets();});
+
 $("virtual-balance-value").addEventListener("input",()=>{
  balanceInputDirty=true;
- say("virtual-balance-message","Unsaved change. Press Confirm Balance to save this amount.");
- $("save-virtual-balance").disabled=!selectedProfile||balanceSaveInProgress;
+ say("virtual-balance-message","Unsaved amount. Confirm Balance starts a new paper session with this amount.");
+ $("save-virtual-balance").disabled=!selectedProfile||paperSessionResetInProgress;
 });
-$("virtual-balance-form").addEventListener("submit",async e=>{
- e.preventDefault();
- if(balanceSaveInProgress)return;
+$("virtual-balance-form").addEventListener("submit",async event=>{
+ event.preventDefault();
+ if(paperSessionResetInProgress)return;
  if(!selectedProfile){say("virtual-balance-message","Select a paper profile first.");return;}
  const raw=$("virtual-balance-value").value.trim(),amount=Number(raw);
- if(!raw||!Number.isFinite(amount)||amount<=0||amount>1000000000){say("virtual-balance-message","Enter an amount greater than $0 and no more than $1,000,000,000.");return;}
- if(!confirm("Start a fresh paper session with "+formatPaperUsd(amount,false)+"? This will stop monitoring and clear this profile's paper positions, orders, fills, paper-trade history and P&L. Saved wallets, profile settings and public wallet activity history will remain. No real funds or blockchain transactions are involved."))return;
- const button=$("save-virtual-balance");balanceSaveInProgress=true;button.disabled=true;
+ if(!raw||!Number.isFinite(amount)||amount<=0||amount>1000000000){
+  say("virtual-balance-message","Enter an amount greater than $0 and no more than $1,000,000,000.");return;
+ }
+ const profileId=selectedProfile;
+ const profileName=selected()?.name||"selected profile";
+ const message="Start a fresh paper session for "+profileName+" with "+formatPaperUsd(amount,false)+"?\n\nPrevious paper orders, fills and P&L will be archived in History, not deleted. Monitoring will stop for this profile only. Saved source wallets, settings and observed wallet activity will remain unchanged. No real funds or blockchain transactions are involved.";
+ if(!confirm(message))return;
+ paperSessionResetInProgress=true;
+ $("reset-paper-session").disabled=true;
+ $("virtual-balance-value").disabled=true;
+ $("save-virtual-balance").disabled=true;
  try{
   await post("/api/paper-simulation",{
-   action:"reset-profile-session",profile_id:selectedProfile,amount:String(amount),confirmed:true
+   action:"reset-profile-session",profile_id:profileId,amount:String(amount),confirmed:true
   });
   balanceInputDirty=false;
   await Promise.all([loadPortfolioForProfile(),loadMonitor()]);
-  say("virtual-balance-message","Fresh paper session started with "+formatPaperUsd(amount,false)+". Initial Deposit is updated and monitoring is OFF.");
+  if($("history-details").open)await loadHistory();
+  say("virtual-balance-message","Fresh paper session started with "+formatPaperUsd(amount,false)+". Previous paper trades were archived.");
  }catch(err){
-  say("virtual-balance-message","Paper session was not confirmed as reset: "+err.message);
+  say("virtual-balance-message","Paper session was not reset: "+err.message);
   await loadMonitor();
- }
- finally{
-  balanceSaveInProgress=false;
+ }finally{
+  paperSessionResetInProgress=false;
   $("virtual-balance-value").disabled=!selectedProfile;
-  button.disabled=!selectedProfile||!balanceInputDirty;
+  $("save-virtual-balance").disabled=!selectedProfile||!balanceInputDirty;
+  $("reset-paper-session").disabled=!selectedProfile;
  }
 });
+$("reset-paper-session").addEventListener("click",async()=>{
+ if(paperSessionResetInProgress)return;
+ if(!selectedProfile){say("portfolio-message","Select a paper profile before resetting its paper session.");return;}
+ const profileName=selected()?.name||"selected profile";
+ const message="Start a fresh $100 paper session for "+profileName+"?\n\nThe current paper orders, fills and P&L will be archived in History, not deleted. Monitoring will stop for this profile only. Saved source wallets, profile settings and observed wallet activity will remain unchanged. No real funds or blockchain transactions are involved.";
+ if(!confirm(message))return;
+ paperSessionResetInProgress=true;
+ const button=$("reset-paper-session");button.disabled=true;
+ $("virtual-balance-value").disabled=true;
+ $("save-virtual-balance").disabled=true;
+ say("portfolio-message","Resetting this profile's paper session…");
+ try{
+  await post("/api/paper-simulation",{
+   action:"reset-profile-session",profile_id:selectedProfile,amount:"100",confirmed:true
+  });
+  balanceInputDirty=false;
+  await Promise.all([loadPortfolioForProfile(),loadMonitor()]);
+  if($("history-details").open)await loadHistory();
+  say("portfolio-message","Fresh $100 paper session started. Previous paper trades were archived and monitoring is OFF.");
+ }catch(err){
+  say("portfolio-message","Paper session was not reset: "+err.message);
+  await loadMonitor();
+ }finally{
+  paperSessionResetInProgress=false;
+  $("virtual-balance-value").disabled=!selectedProfile;
+  $("save-virtual-balance").disabled=!selectedProfile||!balanceInputDirty;
+  button.disabled=!selectedProfile;
+ }
+});
+
 $("confirm-settings").addEventListener("click",async()=>{
  if(!selectedProfile){say("settings-message","Create or select a profile before confirming settings.");return;}
  const mode=document.querySelector('input[name="sizing"]:checked')?.value||"FIXED_USD";
@@ -1303,9 +1363,22 @@ async function loadPaperTradeHistory(reportOverride){
   let r=reportOverride;
   if(!r){const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile));r=d.report||d;}
   if(r.error){historySetEmpty(tbody,9,"Paper history unavailable: "+r.error);say("paper-trade-history-message",r.error);return;}
-  const orders=Array.isArray(r.orders)?r.orders.slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||""))):[];
-  const fills=Array.isArray(r.fills)?r.fills:[];
-  const pnlEvents=Array.isArray(r.pnl_events)?r.pnl_events:[];
+  const activeOrders=Array.isArray(r.orders)?r.orders:[];
+  const activeFills=Array.isArray(r.fills)?r.fills:[];
+  const activePnlEvents=Array.isArray(r.pnl_events)?r.pnl_events:[];
+  const archivedSessions=Array.isArray(r.archived_sessions)?r.archived_sessions:[];
+  const archivedOrders=archivedSessions.flatMap(session=>
+   (Array.isArray(session.orders)?session.orders:[]).map(order=>({
+    ...order,
+    archived_session_at:session.archived_at||null,
+    details:{...(order.details&&typeof order.details==="object"?order.details:{}),archived_session:true}
+   }))
+  );
+  const archivedFills=archivedSessions.flatMap(session=>Array.isArray(session.fills)?session.fills:[]);
+  const archivedPnlEvents=archivedSessions.flatMap(session=>Array.isArray(session.pnl_events)?session.pnl_events:[]);
+  const orders=[...activeOrders,...archivedOrders].sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
+  const fills=[...activeFills,...archivedFills];
+  const pnlEvents=[...activePnlEvents,...archivedPnlEvents];
   const fillByOrder=new Map(fills.map(fill=>[fill.order_id,fill]));
   const pnlByOrder=new Map(pnlEvents.filter(event=>event.order_id).map(event=>[event.order_id,event]));
   $("paper-trade-total").textContent=orders.length.toLocaleString();
@@ -1326,7 +1399,16 @@ async function loadPaperTradeHistory(reportOverride){
    const sidePill=historyPill(side,side==="BUY"?"buy":side==="SELL"?"sell":"");
    sidePill.title=state+(order.reason?" · "+order.reason:"");
    sidePill.setAttribute("aria-label",side+" · "+state);
-   typeCell.append(sidePill);row.append(typeCell);
+   typeCell.append(sidePill);
+   if(order.archived_session_at){
+    const archivedLabel=document.createElement("small");
+    archivedLabel.className="history-sub";
+    archivedLabel.textContent="Archived";
+    archivedLabel.title="Saved from the paper session reset on "+historyDate(order.archived_session_at);
+    typeCell.append(archivedLabel);
+    row.classList.add("paper-archived-row");
+   }
+   row.append(typeCell);
 
    row.append(makePaperTokenCell(order.asset_mint));
 

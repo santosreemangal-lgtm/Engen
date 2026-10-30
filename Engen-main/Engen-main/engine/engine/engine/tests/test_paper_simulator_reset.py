@@ -87,15 +87,31 @@ class PaperSimulatorResetTests(unittest.TestCase):
             self.assertEqual(report["fills"], [])
             self.assertEqual(report["pnl_events"], [])
             self.assertEqual(simulator.processed_signals, set())
+            self.assertEqual(len(report["archived_sessions"]), 1)
+            archived = report["archived_sessions"][0]
+            self.assertEqual(archived["initial_balance"], "1000")
+            self.assertEqual(len(archived["orders"]), 1)
+            self.assertEqual(len(archived["fills"]), 1)
 
             with sqlite3.connect(str(db_path)) as db:
+                # Legacy paper trades remain available to the History view.
                 self.assertEqual(
-                    db.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0], 0
+                    db.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0], 1
                 )
                 self.assertEqual(
                     dict(db.execute("SELECT mint,amount FROM paper_balances")),
                     {"USD": "250"},
                 )
+
+            reopened = PaperSimulator(db_path=db_path)
+            reopened_report = reopened.report()
+            self.assertEqual(reopened_report["orders"], [])
+            self.assertEqual(reopened_report["fills"], [])
+            self.assertEqual(len(reopened_report["archived_sessions"]), 1)
+            self.assertEqual(
+                reopened_report["archived_sessions"][0]["orders"][0]["signal_id"],
+                "previous-session-signal",
+            )
 
             # A signal from the previous session can be processed again.
             next_order = simulator.create_order(

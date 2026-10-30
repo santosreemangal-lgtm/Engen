@@ -354,22 +354,53 @@ footer.hint{padding:10px 4px;line-height:1.7}
  #wallet-list .wallet-monitor-status{grid-column:1/-1;grid-row:2;white-space:normal}
  #wallet-list .wallet-actions{grid-column:2;grid-row:1}
 }
+
+/* Compact portfolio summary and one-row virtual cash editor. */
+.portfolio-summary{padding-bottom:16px}
+.portfolio-summary .portfolio-head{margin-bottom:12px}
+.portfolio-metrics{grid-template-columns:repeat(4,minmax(0,1fr));gap:11px}
+.portfolio-metrics .metric{min-width:0;min-height:92px;padding:14px 15px}
+.portfolio-metrics .label{font-size:10px;letter-spacing:.02em}
+.portfolio-metrics .value{font-size:clamp(19px,2.5vw,27px);margin-top:10px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.portfolio-metrics .value.metric-positive{color:#67dcae}
+.portfolio-metrics .value.metric-negative{color:#ff8997}
+.portfolio-metrics .value.metric-neutral{color:var(--text)}
+.portfolio-summary .message:empty{display:none}
+.portfolio-summary .message{margin:8px 2px 0;font-size:10px;line-height:1.4}
+.virtual-balance-compact{
+ display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+ padding:10px 14px;margin:10px 0 18px;
+ border:1px solid #30415f;border-radius:12px;
+ background:linear-gradient(145deg,#111e31,#0c1525)
+}
+.virtual-balance-compact h3{margin:0;flex:0 0 auto;font-size:13px;font-weight:800}
+.virtual-balance-compact form{display:flex;align-items:center;gap:8px;flex:1;min-width:240px;margin:0}
+.virtual-balance-compact input{min-height:36px;height:36px;flex:1;min-width:0;padding:7px 11px;border-radius:8px;font-size:12px}
+.virtual-balance-compact button{min-height:36px;padding:7px 13px;border-radius:8px;font-size:11px;white-space:nowrap}
+.virtual-balance-compact .message{flex:0 0 100%;margin:0;font-size:10px;line-height:1.3}
+.virtual-balance-compact .message:empty{display:none}
+@media(max-width:760px){
+ .portfolio-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .virtual-balance-compact{gap:8px}
+ .virtual-balance-compact form{min-width:100%}
+}
 </style>
 </head>
 <body><main>
-<section class="panel"><div class="panel-head portfolio-head"><div class="status-group"><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span><span id="rpc-health-status" class="status" title="Read-only public Solana RPC health"><span id="rpc-health-dot" class="dot"></span><span id="rpc-health-state">RPC checking…</span></span></div></div>
-<div class="virtual-balance-editor">
-<div><h3>Virtual USD Balance</h3><p class="hint">Set or change your paper cash balance. This is simulated money only; no wallet is funded.</p></div>
-<form id="virtual-balance-form" class="row"><label class="sr-only" for="virtual-balance-value">Virtual USD balance</label><input id="virtual-balance-value" type="number" min="0.01" max="1000000000" step="0.01" placeholder="Enter amount in $" required disabled><button id="save-virtual-balance" type="submit" disabled>Confirm Balance</button></form>
-<p id="virtual-balance-message" class="message" role="status">Select a paper profile to set its virtual balance.</p>
+<section class="panel portfolio-summary">
+<div class="panel-head portfolio-head"><div class="status-group"><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span><span id="rpc-health-status" class="status" title="Read-only public Solana RPC health"><span id="rpc-health-dot" class="dot"></span><span id="rpc-health-state">RPC checking…</span></span></div></div>
+<div class="grid portfolio-metrics">
+ <div class="metric"><div class="label">Initial Deposit</div><p id="initial-deposit" class="value">$—</p></div>
+ <div class="metric"><div class="label">Total Return</div><p id="total-return" class="value">—</p></div>
+ <div class="metric"><div class="label">Today Realized P&amp;L</div><p id="today-pnl" class="value">$—</p></div>
+ <div class="metric"><div class="label">Total P&amp;L</div><p id="total-pnl" class="value">$—</p></div>
 </div>
-<div class="grid">
-<div class="metric"><div class="label">Portfolio Value</div><p id="total-value" class="value">$—</p></div>
-<div class="metric"><div class="label">Available USD</div><p id="available" class="value">$—</p></div>
-<div class="metric"><div class="label">Realized P&amp;L</div><p id="realized" class="value">$—</p></div>
-<div class="metric"><div class="label">Unrealized P&amp;L</div><p id="unrealized" class="value">$—</p></div>
-</div>
-<p id="portfolio-message" class="message" role="status">Portfolio amounts are from the selected profile’s paper simulator. Token holdings require verified prices before total value can be calculated.</p>
+<p id="portfolio-message" class="message" role="status"></p>
+</section>
+<section class="virtual-balance-compact">
+ <h3>Virtual USD Balance</h3>
+ <form id="virtual-balance-form" class="row"><label class="sr-only" for="virtual-balance-value">Virtual USD balance</label><input id="virtual-balance-value" type="number" min="0.01" max="1000000000" step="0.01" placeholder="Enter amount in USD" required disabled><button id="save-virtual-balance" type="submit" disabled>Confirm Balance</button></form>
+ <p id="virtual-balance-message" class="message" role="status"></p>
 </section>
 
 <section class="panel wallet-workspace">
@@ -517,15 +548,61 @@ function money(value){
 }
 function say(id,text){$(id).textContent=text;}
 function post(path,payload){return api(path,{method:"POST",body:JSON.stringify(payload)});}
+function numericValue(value){
+ if(value===null||value===undefined||value==="")return null;
+ const number=Number(value);return Number.isFinite(number)?number:null;
+}
+function signedMoney(value){
+ const number=numericValue(value);if(number===null)return "$—";
+ const prefix=number>0?"+":number<0?"-":"";
+ const absolute=Math.abs(number);
+ const formatted=absolute>=1000?compactNumber(absolute):absolute.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+ return prefix+"$"+formatted;
+}
+function signedPercent(value){
+ const number=numericValue(value);if(number===null)return "—";
+ return (number>0?"+":number<0?"-":"")+Math.abs(number).toFixed(2)+"%";
+}
+function setMetricValue(id,value,kind){
+ const node=$(id);node.textContent=value;
+ node.classList.remove("metric-positive","metric-negative","metric-neutral");
+ node.classList.add(kind==="positive"?"metric-positive":kind==="negative"?"metric-negative":"metric-neutral");
+}
+function todayRealizedPnl(events){
+ if(!Array.isArray(events))return null;
+ const today=new Date().toDateString();
+ const todaySells=events.filter(event=>{
+  if(!event||String(event.type||"").toUpperCase()!=="SELL"||!event.timestamp)return false;
+  const date=new Date(event.timestamp);
+  return !Number.isNaN(date.getTime())&&date.toDateString()===today;
+ });
+ let total=0;
+ for(const event of todaySells){
+  const value=numericValue(event.realized_pnl);
+  if(value===null)return null;
+  total+=value;
+ }
+ return total;
+}
+function renderPortfolioMetrics(report){
+ const initial=numericValue(report&&report.initial_balance);
+ const realized=numericValue(report&&report.realized_pnl_usd);
+ const unrealized=numericValue(report&&report.unrealized_pnl_usd);
+ const total=realized===null||unrealized===null?null:realized+unrealized;
+ const returnPercent=total===null||initial===null||initial<=0?null:(total/initial)*100;
+ const today=todayRealizedPnl(report&&report.pnl_events);
+ setMetricValue("initial-deposit",money(initial),"neutral");
+ setMetricValue("total-return",signedPercent(returnPercent),returnPercent>0?"positive":returnPercent<0?"negative":"neutral");
+ setMetricValue("today-pnl",signedMoney(today),today>0?"positive":today<0?"negative":"neutral");
+ setMetricValue("total-pnl",signedMoney(total),total>0?"positive":total<0?"negative":"neutral");
+ if(report&&report.error)say("portfolio-message",report.error);
+ else if(total===null)say("portfolio-message","Total P&L is unavailable until realized and unrealized P&L can both be verified.");
+ else say("portfolio-message","");
+}
 async function loadPortfolio(){
  try{
-  const data=await api("/api/paper-simulation"), r=data.report||data;
-  const initial=r.initial_balance;
-  $("total-value").textContent=money(r.portfolio_value_usd ?? (r.available_balance!==undefined && r.open_positions_value_usd!==undefined ? Number(r.available_balance)+Number(r.open_positions_value_usd) : null));
-  $("available").textContent=money(r.available_balance_usd ?? r.available_balance);
-  $("realized").textContent=money(r.realized_pnl_usd ?? r.realized_pnl);
-  $("unrealized").textContent=money(r.unrealized_pnl_usd ?? r.unrealized_pnl);
-  say("portfolio-message",r.database_available===false?"Paper ledger is not initialized yet.":"Values not provided by the ledger or verified price data remain unavailable.");
+  const data=await api("/api/paper-simulation"),r=data.report||data;
+  renderPortfolioMetrics(r);
  }catch(e){say("portfolio-message",e.message);}
 }
 function renderWallets(){
@@ -672,10 +749,8 @@ async function loadPortfolioForProfile(){
  const input=$("virtual-balance-value"),save=$("save-virtual-balance");
  if(!selectedProfile){
   balanceInputDirty=false;input.value="";input.disabled=true;save.disabled=true;
-  $("total-value").textContent=money(null);$("available").textContent=money(null);
-  $("realized").textContent=money(null);$("unrealized").textContent=money(null);
-  say("virtual-balance-message","Select a paper profile to set its virtual balance.");
-  say("portfolio-message","Select a paper profile to view its portfolio.");
+  renderPortfolioMetrics({});
+  say("virtual-balance-message","");
   await loadPaperTradeHistory(null);return;
  }
  const preserveDraft=balanceInputDirty;
@@ -690,18 +765,16 @@ async function loadPortfolioForProfile(){
   const balance=r.available_balance_usd??r.available_balance??r.balances?.USD??null;
   if(!balanceInputDirty)input.value=balance===null||balance===undefined?"":String(balance);
   input.disabled=false;save.disabled=!selectedProfile||!balanceInputDirty||balanceSaveInProgress;
-  $("total-value").textContent=money(r.portfolio_value_usd);
-  $("available").textContent=money(balance);
-  $("realized").textContent=money(r.realized_pnl_usd);
-  $("unrealized").textContent=money(r.unrealized_pnl_usd);
-  if(r.error){say("portfolio-message",r.error);}
-  else if(balance===null||balance===undefined){say("portfolio-message","No virtual USD balance is set for this profile yet. Enter an amount above and confirm it.");}
-  else if(r.portfolio_value_usd===null||r.portfolio_value_usd===undefined){say("portfolio-message","Available cash is shown in USD. Portfolio value is unavailable while token holdings lack a verified fresh market price.");}
-  else{say("portfolio-message","Portfolio value currently reflects virtual USD cash; token holdings are included only when reliably valued.");}
+  renderPortfolioMetrics(r);
+  if(r.error){say("virtual-balance-message",r.error);}
+  else if(balance===null||balance===undefined){say("virtual-balance-message","");}
+  else{say("virtual-balance-message","");}
   await loadPaperTradeHistory(r);
  }catch(e){
   if(!balanceInputDirty){input.disabled=false;save.disabled=!selectedProfile||balanceSaveInProgress;}
-  say("portfolio-message",e.message);say("virtual-balance-message","Could not load this profile's virtual balance.");
+  say("portfolio-message","Could not load this profile's portfolio metrics: "+e.message);
+  say("virtual-balance-message","Balance data unavailable.");
+  renderPortfolioMetrics({});
   await loadPaperTradeHistory(null);
  }
 }

@@ -313,10 +313,51 @@ footer.hint{padding:10px 4px;line-height:1.7}
 .sell-all-confirm-btn:hover:not(:disabled){background:#67343f;border-color:#cc7986}
 .sell-all-confirm-btn:disabled{opacity:.55;cursor:wait}
 @media(max-width:600px){.sell-all-confirmation{align-items:stretch}.sell-all-confirmation-actions{width:100%}.sell-all-confirmation-actions button{flex:1}}
+
+/* Compact Wallet Workspace controls and profile-scoped wallet list. */
+.portfolio-head{justify-content:flex-end;align-items:center;margin-bottom:12px}
+.portfolio-head .status-group{flex-wrap:nowrap;white-space:nowrap;gap:7px}
+.wallet-workspace-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.wallet-top-actions{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:nowrap;white-space:nowrap}
+.wallet-top-actions .status{font-size:10px;padding:5px 8px}
+.wallet-top-actions button{min-height:34px;padding:7px 11px;font-size:11px;white-space:nowrap}
+#monitor-state[data-state="on"]{color:#79dfb7;border-color:#286a58}
+#monitor-state[data-state="off"]{color:#aab8cc}
+#monitor-state[data-state="error"]{color:#ff9aa5;border-color:#71414b}
+.wallet-workspace .message:empty{display:none}
+.wallet-workspace .message{margin:5px 0 0;font-size:11px;line-height:1.4}
+.wallet-section-card .panel-head{align-items:center}
+.profile-card{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.profile-card .card-name{min-width:0;overflow-wrap:anywhere}
+.profile-card .profile-state{flex:0 0 auto;margin:0;padding:4px 8px;border-radius:999px;border:1px solid #35445b;background:#111d30;font-size:9px;font-weight:850}
+.profile-card .profile-state[data-state="active"]{color:#70dfb6;border-color:#286a58;background:#102a28}
+.profile-card .profile-state[data-state="inactive"]{color:#b6c2d5}
+.selected-profile-head{margin-bottom:8px}
+#detail-profile-status[data-state="active"]{color:#70dfb6;border-color:#286a58}
+#detail-profile-status[data-state="inactive"]{color:#e8c878;border-color:#6b5936}
+.profile-activate-button{min-height:34px;padding:7px 11px;font-size:11px}
+.profile-activate-button.hidden{display:none}
+#profile-card-message:empty,#wallet-message:empty{display:none}
+#wallet-list .wallet{grid-template-columns:minmax(0,1fr) minmax(120px,auto) auto;align-items:center;gap:12px}
+#wallet-list .wallet-monitor-status{font-size:10px;line-height:1.3;white-space:nowrap}
+#wallet-list .wallet-actions button{min-height:30px;padding:6px 10px;font-size:10px}
+@media(max-width:900px){
+ .wallet-workspace-head{align-items:flex-start;flex-direction:column}
+ .wallet-top-actions{width:100%;justify-content:flex-start}
+ .portfolio-head .status-group{flex-wrap:wrap}
+}
+@media(max-width:600px){
+ .wallet-top-actions{display:flex;flex-wrap:wrap;gap:6px}
+ .wallet-top-actions .status{grid-column:auto}
+ .wallet-top-actions button{flex:1}
+ #wallet-list .wallet{grid-template-columns:minmax(0,1fr) auto;gap:7px}
+ #wallet-list .wallet-monitor-status{grid-column:1/-1;grid-row:2;white-space:normal}
+ #wallet-list .wallet-actions{grid-column:2;grid-row:1}
+}
 </style>
 </head>
 <body><main>
-<section class="panel"><div class="panel-head"><h2>Portfolio</h2><div class="status-group"><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span><span id="rpc-health-status" class="status" title="Read-only public Solana RPC health"><span id="rpc-health-dot" class="dot"></span><span id="rpc-health-state">RPC checking…</span></span></div></div>
+<section class="panel"><div class="panel-head portfolio-head"><div class="status-group"><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span><span id="rpc-health-status" class="status" title="Read-only public Solana RPC health"><span id="rpc-health-dot" class="dot"></span><span id="rpc-health-state">RPC checking…</span></span></div></div>
 <div class="virtual-balance-editor">
 <div><h3>Virtual USD Balance</h3><p class="hint">Set or change your paper cash balance. This is simulated money only; no wallet is funded.</p></div>
 <form id="virtual-balance-form" class="row"><label class="sr-only" for="virtual-balance-value">Virtual USD balance</label><input id="virtual-balance-value" type="number" min="0.01" max="1000000000" step="0.01" placeholder="Enter amount in $" required disabled><button id="save-virtual-balance" type="submit" disabled>Confirm Balance</button></form>
@@ -333,27 +374,25 @@ footer.hint{padding:10px 4px;line-height:1.7}
 
 <section class="panel wallet-workspace">
 <div class="panel-head wallet-workspace-head">
-<div><h2>Wallet Workspace</h2><p class="hint">Paper trading requires no personal destination wallet. Add public Solana wallets to watch; monitoring is read-only.</p></div>
-<div class="wallet-top-actions"><span id="wallet-count" class="status">0 saved</span><button id="start-monitoring" type="button" disabled>Start Monitoring</button><button id="stop-monitoring" type="button" class="danger" disabled>Stop Monitoring</button></div>
+<div><h2>Wallet Workspace</h2></div>
+<div class="wallet-top-actions"><span id="monitor-state" class="status">Monitoring OFF</span><span id="wallet-count" class="status">0 wallets</span><button id="start-monitoring" type="button" disabled>Start Monitoring</button><button id="stop-monitoring" type="button" class="danger" disabled>Stop Monitoring</button></div>
 </div>
-<p id="monitor-state" class="status">Select or create a paper profile</p><p id="monitor-message" class="message" role="status">Monitoring starts only after you explicitly press Start Monitoring. No signing or live trades occur.</p>
+<p id="monitor-message" class="message" role="status"></p>
 <div class="wallet-layout">
 <section class="wallet-section-card">
-<div class="panel-head"><div><h3>Paper Profile</h3><p class="hint">A profile groups source wallets and copy settings. No personal wallet address is needed.</p></div><button id="create-profile" type="button" class="secondary">＋ Create Profile</button></div>
+<div class="panel-head"><div><h3>Paper Profile</h3></div><button id="create-profile" type="button" class="secondary">＋ Create Profile</button></div>
 <div id="profile-cards" class="profile-cards" aria-live="polite"></div><div id="profile-card-message" class="message" role="status"></div>
 <select id="profile-select" class="hidden" aria-label="Selected paper profile"><option value="">No profile selected</option></select>
 <form id="profile-form" class="hidden field"><label for="profile-name">Profile name</label><div class="row"><input id="profile-name" maxlength="80" placeholder="e.g. Paper Test 1" required><button type="submit">Create Profile</button></div><button id="cancel-create-profile" type="button" class="secondary">Cancel</button><p class="hint">This creates a paper-trading profile, not a blockchain wallet.</p></form>
 <div id="selected-profile-detail" class="profile-detail">
-<div class="panel-head"><div><h3 id="detail-profile-title">Choose a paper profile</h3><p id="detail-profile-subtitle" class="hint">Create or select a profile to manage source wallets.</p></div><span id="detail-profile-status" class="status">No selection</span></div>
-
-<div class="field"><button id="activate-profile" class="secondary" type="button" disabled>Activate Profile</button><p class="hint">Activation does not start monitoring. Start Monitoring remains a separate, manual action.</p></div>
+<div class="panel-head selected-profile-head"><div><h3 id="detail-profile-title">Choose a paper profile</h3></div><span id="detail-profile-status" class="status">No selection</span></div>
+<button id="activate-profile" class="secondary profile-activate-button" type="button" disabled>Activate Profile</button>
 </div>
 </section>
 <section class="wallet-section-card">
-<div class="panel-head"><div><h3>Public Source Wallets</h3><p class="hint">Add a real Solana public address to follow its on-chain activity. Never enter a seed phrase or private key.</p></div></div>
+<div class="panel-head"><div><h3>Public Source Wallets</h3></div></div>
 <form id="wallet-form" class="wallet-add-form"><label for="wallet-address">Solana public address</label><div class="row"><input id="wallet-address" autocomplete="off" spellcheck="false" placeholder="Paste public wallet address" aria-label="Source public wallet address" required><button id="add-wallet" type="submit">Add Wallet</button></div></form>
-<div class="field"><label for="wallet-search">Search saved source wallets</label><input id="wallet-search" placeholder="Filter by wallet address…" autocomplete="off" spellcheck="false"></div>
-<div class="field"><div class="panel-head"><h3>Saved Addresses</h3><span class="hint">Read-only</span></div><div id="wallet-list"><p class="empty">Loading public wallets…</p></div></div>
+<div class="field"><div class="panel-head"><h3>Saved Addresses</h3></div><div id="wallet-list"><p class="empty">Select a profile to view its source wallets.</p></div></div>
 <p id="wallet-message" class="message" role="status"></p>
 </section>
 </div>
@@ -490,37 +529,46 @@ async function loadPortfolio(){
  }catch(e){say("portfolio-message",e.message);}
 }
 function renderWallets(){
- const list=$("wallet-list");list.replaceChildren();const q=$("wallet-search").value.trim().toLowerCase();const visible=wallets.filter(a=>a.toLowerCase().includes(q));
- if(!visible.length){const p=document.createElement("p");p.className="empty";p.textContent=wallets.length?"No saved source address matches that search.":"No saved source wallets yet. Add a public address above.";list.append(p);}
+ const list=$("wallet-list");list.replaceChildren();
+ const assigned=selected()?.source_wallets||[];
+ const visible=wallets.filter(address=>assigned.includes(address));
+ $("wallet-count").textContent=assigned.length+" wallet"+(assigned.length===1?"":"s");
+ if(!selectedProfile){
+  const p=document.createElement("p");p.className="empty";p.textContent="Select a paper profile to view its source wallets.";list.append(p);return;
+ }
+ if(!visible.length){
+  const p=document.createElement("p");p.className="empty";p.textContent="No source wallets assigned to this profile.";list.append(p);return;
+ }
  visible.forEach(address=>{
   const row=document.createElement("div");row.className="wallet";
   const code=document.createElement("div");code.className="address";code.textContent=address;
-  const actions=document.createElement("div");actions.className="wallet-actions";
-  const assigned=selected()?.source_wallets||[];const isAssigned=assigned.includes(address);
   const monitor=currentMonitorWallets.find(item=>item&&item.address===address);
   const monitorStatus=document.createElement("div");monitorStatus.className="wallet-monitor-status";
-  if(!isAssigned){monitorStatus.textContent="Not assigned to selected profile";monitorStatus.dataset.state="unassigned";}
-  else if(!monitor){monitorStatus.textContent=currentMonitor?"Waiting for monitor status":"Assigned · monitoring stopped";monitorStatus.dataset.state="waiting";}
+  if(!monitor){monitorStatus.textContent=currentMonitor?"Waiting for status":"Monitoring stopped";monitorStatus.dataset.state="waiting";}
   else{
    const state=String(monitor.state||"waiting").toLowerCase();
    const checked=monitor.last_successful_check?new Date(monitor.last_successful_check):null;
-   const checkedLabel=checked&&!Number.isNaN(checked.getTime())?" · last check "+checked.toLocaleTimeString():"";
+   const checkedLabel=checked&&!Number.isNaN(checked.getTime())?" · "+checked.toLocaleTimeString():"";
    const resultCount=Array.isArray(monitor.latest_results)?monitor.latest_results.length:0;
-   monitorStatus.textContent=state.replaceAll("_"," ")+checkedLabel+(resultCount?" · "+resultCount+" recent result(s)":"");
+   monitorStatus.textContent=state.replaceAll("_"," ")+checkedLabel+(resultCount?" · "+resultCount+" recent":"");
    monitorStatus.dataset.state=state;
   }
-  const assign=document.createElement("button");assign.className="secondary";assign.textContent=isAssigned?"Assigned":"Assign to profile";assign.disabled=!selectedProfile||isAssigned;
-  assign.addEventListener("click",async()=>{try{await post("/api/profiles",{action:"associate-source-wallet",profile_id:selectedProfile,wallet_address:address});say("wallet-message","Public source wallet assigned to this paper profile.");await loadProfiles();renderWallets();}catch(e){say("wallet-message",e.message);}});
-  const remove=document.createElement("button");remove.className="danger";remove.textContent=isAssigned?"Unassign":"Remove saved";remove.addEventListener("click",async()=>{try{if(isAssigned&&selectedProfile){await post("/api/profiles",{action:"disassociate-source-wallet",profile_id:selectedProfile,wallet_address:address});say("wallet-message","Public source wallet unassigned from this profile; it remains saved for other profiles.");await loadProfiles();}else{await post("/api/wallets",{action:"remove",address});say("wallet-message","Saved source wallet removed from the global saved list.");await loadWallets();}}catch(e){say("wallet-message",e.message);}});
-  actions.append(assign,remove);row.append(code,monitorStatus,actions);list.append(row);
+  const actions=document.createElement("div");actions.className="wallet-actions";
+  const unassign=document.createElement("button");unassign.className="danger";unassign.textContent="Unassign";
+  unassign.addEventListener("click",async()=>{
+   unassign.disabled=true;
+   try{
+    await post("/api/profiles",{action:"disassociate-source-wallet",profile_id:selectedProfile,wallet_address:address});
+    say("wallet-message","Wallet unassigned from this profile.");await loadProfiles();
+   }catch(error){say("wallet-message",error.message);unassign.disabled=false;}
+  });
+  actions.append(unassign);row.append(code,monitorStatus,actions);list.append(row);
  });
 }
 async function loadWallets(){
  try{
   const d=await api("/api/wallets");wallets=Array.isArray(d.wallets)?d.wallets:[];backendReady=true;
   $("engine-dot").classList.add("on");say("engine-state","Backend connected");
-  $("wallet-count").textContent=wallets.length+" saved";
-  renderWallets();
   await loadProfiles();
  }catch(e){backendReady=false;$("engine-dot").classList.remove("on");say("engine-state","Backend unavailable");say("wallet-message",e.message);if(/authentication required/i.test(e.message)){$("api-auth-details").open=true;say("api-auth-message","The backend requires a bearer token. Enter it above and click Use Token.");}}
 }
@@ -539,12 +587,13 @@ async function loadRpcHealth(){
 }
 async function loadMonitor(){
  const p=selected();
- if(!selectedProfile||!p){currentMonitor=false;currentMonitorWallets=[];renderWallets();say("monitor-state","Select a profile");say("monitor-message","Choose a paper profile and add at least one public source wallet.");$("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;return;}
+ if(!selectedProfile||!p){currentMonitor=false;currentMonitorWallets=[];renderWallets();say("monitor-state","No profile");$("monitor-state").dataset.state="off";say("monitor-message","");$("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;return;}
  const eligible=String(p.status||"").toLowerCase()==="active"&&Array.isArray(p.source_wallets)&&p.source_wallets.length>0;
  try{
   const d=await api("/api/profile-monitor?profile_id="+encodeURIComponent(selectedProfile));const report=d.monitor||d.report||d;
   currentMonitor=Boolean(report.enabled);
-  $("monitor-state").textContent=currentMonitor?"Monitoring enabled":"Monitoring stopped";
+  $("monitor-state").textContent=currentMonitor?"Monitoring ON":"Monitoring OFF";
+  $("monitor-state").dataset.state=currentMonitor?"on":"off";
   $("start-monitoring").disabled=currentMonitor||!eligible;$("stop-monitoring").disabled=!currentMonitor;
   const observed=Array.isArray(report.wallets)?report.wallets:[];
   currentMonitorWallets=observed;
@@ -556,12 +605,8 @@ async function loadMonitor(){
   if(historyFailed){say("monitor-message","Read-only scanning is active, but transaction-history storage failed for at least one observation. The history may be incomplete.");}
   else if(queueFailed){say("monitor-message","Read-only scanning is active, but a paper-order queue step failed. No real transaction was sent; check the paper-trade history and server logs.");}
   else if(failed){say("monitor-message","Monitoring is enabled, but a source-wallet scan failed. "+(failed.last_error||"Check the configured RPC connection."));}
-  else if(currentMonitor&&connected.length&&!observed.some(x=>(x.latest_results||[]).some(tx=>["BUY_CANDIDATE","SELL_CANDIDATE"].includes(tx.trade_signal&&tx.trade_signal.classification)))){const newest=connected.map(x=>x.last_successful_check).filter(Boolean).sort().at(-1);say("monitor-message","Monitoring is running, but the latest scan has no new confirmed BUY/SELL candidate to copy. The first scan is a baseline only; it does not replay old transactions. Last successful check: "+(newest?new Date(newest).toLocaleString():"time unavailable")+".");}
-  else if(connected.length){const newest=connected.map(x=>x.last_successful_check).filter(Boolean).sort().at(-1);say("monitor-message","Read-only scan completed for "+connected.length+" wallet(s). Eligible signals and paper-order outcomes are shown in History. Last successful check: "+(newest?new Date(newest).toLocaleString():"time unavailable")+".");}
-  else if(currentMonitor){say("monitor-message","Monitoring is enabled. Waiting for the first read-only RPC scan to finish.");}
-  else if(!eligible){say("monitor-message",String(p.status||"").toLowerCase()!=="active"?"Activate this paper profile before starting monitoring.":"Add at least one public source wallet to this profile first.");}
-  else{say("monitor-message","Ready. Start Monitoring will check the selected public source wallets only.");}
- }catch(e){currentMonitor=false;currentMonitorWallets=[];renderWallets();say("monitor-state","Status unavailable");$("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;say("monitor-message","Could not verify monitor status: "+e.message);}
+  else{say("monitor-message","");}
+ }catch(e){currentMonitor=false;currentMonitorWallets=[];renderWallets();say("monitor-state","Status unavailable");$("monitor-state").dataset.state="error";$("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;say("monitor-message","Could not verify monitor status: "+e.message);}
 }
 async function loadProfiles(){
  try{
@@ -573,7 +618,35 @@ async function loadProfiles(){
   renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();renderWallets();if($("history-details").open)await loadHistory();
  }catch(e){say("wallet-message","Profiles unavailable: "+e.message);}
 }
-function renderProfileCards(){const host=$("profile-cards");host.replaceChildren();if(!profiles.length){const p=document.createElement("p");p.className="empty";p.textContent="No paper profile yet. Create one to organize the public wallets you want to monitor.";host.append(p);}profiles.forEach(p=>{const card=document.createElement("button");card.type="button";card.className="profile-card";card.setAttribute("aria-pressed",String(p.profile_id===selectedProfile));const name=document.createElement("span");name.className="card-name";name.textContent=p.name||"Paper profile";const address=document.createElement("span");address.className="card-address";address.textContent="Paper-only · no personal wallet required";const meta=document.createElement("span");meta.className="card-meta";const state=document.createElement("span");state.textContent=(p.status||"disabled").toUpperCase();const count=document.createElement("span");count.textContent=(p.source_wallets||[]).length+" source wallet(s)";meta.append(state,count);card.append(name,address,meta);card.addEventListener("click",async()=>{if(balanceInputDirty&&selectedProfile!==p.profile_id&&!confirm("Discard the unsaved virtual balance change before switching profiles?"))return;balanceInputDirty=false;selectedProfile=p.profile_id;$("profile-select").value=selectedProfile;await loadProfiles();if($("history-details").open)await loadHistory();});host.append(card);});$("create-profile").disabled=profiles.length>=3;$("create-profile").title=profiles.length>=3?"Maximum of 3 paper profiles reached":"";const p=selected();$("detail-profile-title").textContent=p?p.name:"Select a paper profile";$("detail-profile-subtitle").textContent=p?(p.source_wallets||[]).length+" public source wallet(s) assigned":"Create a profile to group source wallets.";$("detail-profile-status").textContent=p?(p.status||"disabled").toUpperCase():"No selection";$("selected-profile-detail").classList.toggle("hidden",!p);$("activate-profile").disabled=!p||String(p.status||"").toLowerCase()==="active";}
+function renderProfileCards(){
+ const host=$("profile-cards");host.replaceChildren();
+ if(!profiles.length){const p=document.createElement("p");p.className="empty";p.textContent="No paper profiles yet.";host.append(p);}
+ profiles.forEach(p=>{
+  const card=document.createElement("button");card.type="button";card.className="profile-card";
+  card.setAttribute("aria-pressed",String(p.profile_id===selectedProfile));
+  const name=document.createElement("span");name.className="card-name";name.textContent=p.name||"Paper profile";
+  const state=document.createElement("span");state.className="card-meta profile-state";
+  const active=String(p.status||"disabled").toLowerCase()==="active";
+  state.textContent=active?"ACTIVE":"INACTIVE";state.dataset.state=active?"active":"inactive";
+  card.append(name,state);
+  card.addEventListener("click",async()=>{
+   if(balanceInputDirty&&selectedProfile!==p.profile_id&&!confirm("Discard the unsaved virtual balance change before switching profiles?"))return;
+   balanceInputDirty=false;selectedProfile=p.profile_id;$("profile-select").value=selectedProfile;
+   await loadProfiles();if($("history-details").open)await loadHistory();
+  });
+  host.append(card);
+ });
+ $("create-profile").disabled=profiles.length>=3;
+ $("create-profile").title=profiles.length>=3?"Maximum of 3 paper profiles reached":"";
+ const p=selected(),active=String(p?.status||"disabled").toLowerCase()==="active";
+ $("detail-profile-title").textContent=p?p.name:"Select a paper profile";
+ $("detail-profile-status").textContent=p?(active?"ACTIVE":"INACTIVE"):"NO PROFILE";
+ $("detail-profile-status").dataset.state=p?(active?"active":"inactive"):"off";
+ $("selected-profile-detail").classList.toggle("hidden",!p);
+ $("activate-profile").classList.toggle("hidden",!p||active);
+ $("activate-profile").disabled=!p||active;
+ renderWallets();
+}
 function selected(){return profiles.find(p=>p.profile_id===selectedProfile);}
 function settingsOf(p){return p?.settings?.paper_trading||p?.settings?.settings?.paper_trading||{};}
 function hideSellAllConfirmation(){
@@ -770,8 +843,7 @@ $("confirm-paper-sell-all").addEventListener("click",async()=>{
 });
 $("start-monitoring").addEventListener("click",async()=>{const p=selected();if(!p){say("monitor-message","Select a profile first.");return;}if(String(p.status||"").toLowerCase()!=="active"){say("monitor-message","Activate this profile before starting monitoring.");return;}if(!Array.isArray(p.source_wallets)||!p.source_wallets.length){say("monitor-message","Add at least one source wallet to this profile first.");return;}if(!confirm("Start read-only monitoring for this profile's selected source wallets only? No signing or real trades will occur."))return;try{await post("/api/profile-monitor",{action:"start",profile_id:selectedProfile});say("monitor-message","Monitoring enabled; checking the first read-only scan status.");await loadMonitor();}catch(e){say("monitor-message",e.message);}});
 $("stop-monitoring").addEventListener("click",async()=>{if(!selectedProfile){say("monitor-message","Select a profile first.");return;}try{await post("/api/profile-monitor",{action:"stop",profile_id:selectedProfile});say("monitor-message","Stop requested for this profile.");await loadMonitor();}catch(e){say("monitor-message",e.message);}});
-$("wallet-search").addEventListener("input",()=>renderWallets());
-$("activate-profile").addEventListener("click",async()=>{if(!selectedProfile){say("wallet-message","Create or select a profile first.");return;}try{await post("/api/profiles",{action:"update",profile_id:selectedProfile,status:"active"});say("wallet-message","Paper profile activated. Monitoring remains stopped until you start it.");await loadProfiles();await loadMonitor();}catch(e){say("wallet-message",e.message);}});
+$("activate-profile").addEventListener("click",async()=>{if(!selectedProfile)return;try{await post("/api/profiles",{action:"update",profile_id:selectedProfile,status:"active"});say("wallet-message","Profile activated.");await loadProfiles();await loadMonitor();}catch(e){say("wallet-message",e.message);}});
 function appendHistoryField(card,label,value){const p=document.createElement("p");p.className="hint";p.textContent=label+": "+(value===null||value===undefined||value===""?"unavailable":String(value));card.append(p);}
 let transactionHistoryPage=1;
 const transactionHistoryPageSize=25;

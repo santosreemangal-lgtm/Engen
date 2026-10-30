@@ -210,7 +210,8 @@ class PaperSimulatorTests(unittest.TestCase):
         self.assertEqual(result["status"], "WAITING_FOR_LIQUIDITY")
         self.assertIn("below the configured USD minimum", result["reason"])
         self.assertEqual(order["status"], "CREATED")
-        self.assertEqual(order["details"]["execution_state"], "WAITING_FOR_LIQUIDITY")
+        updated_order = simulator.orders[order["order_id"]]
+        self.assertEqual(updated_order["details"]["execution_state"], "WAITING_FOR_LIQUIDITY")
         self.assertEqual(simulator.fills, [])
 
     def test_transient_market_data_failure_can_retry_and_fill(self):

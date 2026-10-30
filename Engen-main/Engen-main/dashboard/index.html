@@ -179,6 +179,46 @@ footer.hint{padding:10px 4px;line-height:1.7}
  .paper-token-icon{width:27px;height:27px;flex-basis:27px;font-size:9px}
  .paper-token-primary,.paper-token-secondary{display:block;max-width:110px}
 }
+
+/* Paper trade feed: keep the full table visible without a nested scroll area. */
+#paper-history-panel .history-table-wrap{
+ max-height:none;
+ overflow:visible;
+ scrollbar-gutter:auto;
+}
+#paper-history-panel .paper-trades-table{
+ width:100%;
+ min-width:0;
+ table-layout:fixed;
+}
+#paper-history-panel .paper-trades-table th,
+#paper-history-panel .paper-trades-table td{
+ padding:10px 7px;
+ overflow:hidden;
+ text-overflow:ellipsis;
+}
+#paper-history-panel .paper-trades-table th:nth-child(1),
+#paper-history-panel .paper-trades-table td:nth-child(1){width:12%}
+#paper-history-panel .paper-trades-table th:nth-child(2),
+#paper-history-panel .paper-trades-table td:nth-child(2){width:19%}
+#paper-history-panel .paper-trades-table th:nth-child(3),
+#paper-history-panel .paper-trades-table td:nth-child(3){width:8%}
+#paper-history-panel .paper-trades-table th:nth-child(4),
+#paper-history-panel .paper-trades-table td:nth-child(4){width:9%}
+#paper-history-panel .paper-trades-table th:nth-child(5),
+#paper-history-panel .paper-trades-table td:nth-child(5){width:12%}
+#paper-history-panel .paper-trades-table th:nth-child(6),
+#paper-history-panel .paper-trades-table td:nth-child(6){width:10%}
+#paper-history-panel .paper-trades-table th:nth-child(7),
+#paper-history-panel .paper-trades-table td:nth-child(7){width:8%}
+#paper-history-panel .paper-trades-table th:nth-child(8),
+#paper-history-panel .paper-trades-table td:nth-child(8){width:8%}
+#paper-history-panel .paper-trades-table th:nth-child(9),
+#paper-history-panel .paper-trades-table td:nth-child(9){width:14%}
+#paper-history-panel .paper-token-cell{min-width:0;max-width:100%}
+#paper-history-panel .paper-token-primary{max-width:100%}
+#paper-history-panel .paper-share-btn{max-width:100%;white-space:nowrap}
+
 </style>
 </head>
 <body><main>

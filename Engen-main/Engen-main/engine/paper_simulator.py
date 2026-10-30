@@ -415,4 +415,5 @@ class PaperSimulator:
                 "initial_balance": self._stored_initial_balance(),
                 "orders":[dict(order) for order in self.orders.values()],
                 "fills":[dict(fill) for fill in self.fills],
-                "pnl":self.pnl_summary(),\n                "pnl_events":[dict(event) for event in self.pnl_events]}
+                "pnl":self.pnl_summary(),
+                "pnl_events":[dict(event) for event in self.pnl_events]}

@@ -757,7 +757,8 @@ function formatPaperUsd(value,signed){
  const amount=Number(value);
  if(!Number.isFinite(amount))return "—";
  const prefix=signed?(amount>0?"+":amount<0?"-":""):"";
- return "$"+prefix+Math.abs(amount).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:4});
+ const formatted=Math.abs(amount).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:4});
+ return prefix+"$"+formatted;
 }
 async function sharePaperTrade(order,fill,pnlEvent,button){
  const mint=order.asset_mint||"";

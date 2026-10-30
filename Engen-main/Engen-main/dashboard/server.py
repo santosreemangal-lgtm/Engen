@@ -32,6 +32,7 @@ from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
 from engine.solana_websocket import DEFAULT_WS_URL
 from engine.logger import redact
+from engine.latency import LATENCY_RECORDER
 from engine.pnl import MarketPrice, realized_pnl_from_fills
 from engine.market_data import fetch_market_price
 from engine.paper_copy_runner import (get_paper_simulator, MIN_PAPER_LIQUIDITY_USD, PAPER_SIMULATOR_LOCK as paper_simulator_lock)
@@ -1009,6 +1010,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/monitor":
             self.send_json(200, monitor_service.status())
+            return
+
+        if path == "/api/latency":
+            self.send_json(200, {
+                "mode": "PAPER_ONLY",
+                "samples": LATENCY_RECORDER.summary(),
+                "sample_scope": "This dashboard process only; in-memory bounded samples reset on restart.",
+                "chain_to_paper_note": "Per-transaction chain_to_paper_decision_ms uses Solana blockTime and is approximate; blockTime has second-level precision and is not pure processing latency.",
+                "live_execution_latency": False,
+                "transaction_broadcast": False,
+            })
             return
 
         if path == "/api/rpc-health":

@@ -1,38 +1,44 @@
+"""Read-only wallet monitor with WebSocket notifications and polling fallback."""
 
-"""Read-only monitoring service for saved public Solana wallets."""
-
+import os
 import threading
 import time
+from datetime import datetime, timezone
 
 from engine.solana_validation import is_valid_solana_address
-from datetime import datetime, timezone
 
 
 class MonitorService:
-    """Manage opt-in, read-only monitoring for saved wallet addresses."""
+    """Manage opt-in public-wallet monitoring; WebSocket is an accelerator, polling is fallback."""
 
-    def __init__(self, scan_function, interval=15):
+    def __init__(self, scan_function, interval=15, websocket_endpoint=None,
+                 websocket_listener_factory=None):
         if not callable(scan_function):
             raise ValueError("scan_function must be callable.")
-
-        if (
-            not isinstance(interval, int)
-            or isinstance(interval, bool)
-            or interval < 15
-        ):
+        if not isinstance(interval, int) or isinstance(interval, bool) or interval < 15:
             raise ValueError("Monitoring interval must be at least 15 seconds.")
 
         self._scan_function = scan_function
         self._interval = interval
+        self._websocket_endpoint = (
+            websocket_endpoint
+            if websocket_endpoint is not None
+            else os.environ.get("ENGEN_WS_URL", "wss://api.mainnet-beta.solana.com").strip()
+        )
+        self._websocket_listener_factory = websocket_listener_factory
         self._lock = threading.RLock()
         self._lifecycle_lock = threading.Lock()
         self._stop_event = threading.Event()
+        self._websocket_stop_event = threading.Event()
+        self._wake_event = threading.Event()
         self._thread = None
+        self._websocket_threads = {}
+        self._pending_websocket_wallets = set()
         self._wallets = {}
         self._enabled = False
 
     @staticmethod
-    def _new_wallet_state():
+    def _new_wallet_state(websocket_enabled=True):
         return {
             "state": "waiting",
             "last_scan": None,
@@ -40,10 +46,15 @@ class MonitorService:
             "last_successful_check": None,
             "last_error": None,
             "latest_results": [],
+            "last_scan_source": None,
+            "websocket_state": "connecting" if websocket_enabled else "disabled",
+            "websocket_last_notification": None,
+            "websocket_last_signature": None,
+            "websocket_reconnects": 0,
+            "websocket_error_type": None,
         }
 
     def _status_details(self, details):
-        """Report monitors as stale when their last successful check is old."""
         snapshot = dict(details)
         successful = snapshot.get("last_successful_check")
         if successful:
@@ -57,92 +68,144 @@ class MonitorService:
         return snapshot
 
     def status(self):
-        """Return a safe snapshot of monitoring state."""
         with self._lock:
             return {
                 "enabled": self._enabled,
                 "interval_seconds": self._interval,
+                "websocket_enabled": bool(self._websocket_endpoint),
+                "polling_fallback_enabled": True,
                 "wallets": [
-                    {
-                        "address": address,
-                        **self._status_details(details),
-                    }
+                    {"address": address, **self._status_details(details)}
                     for address, details in self._wallets.items()
                 ],
             }
 
+    def _set_websocket_state(self, address, state, error_type=None):
+        with self._lock:
+            details = self._wallets.get(address)
+            if details is None:
+                return
+            details["websocket_state"] = state
+            details["websocket_error_type"] = error_type
+            if state == "reconnecting":
+                details["websocket_reconnects"] += 1
+
+    def _queue_websocket_event(self, address, signature, _message):
+        with self._lock:
+            details = self._wallets.get(address)
+            if details is None or self._stop_event.is_set():
+                return
+            details["websocket_last_notification"] = datetime.now(timezone.utc).isoformat()
+            details["websocket_last_signature"] = signature
+            self._pending_websocket_wallets.add(address)
+        # The single scan worker consumes this wake-up. This coalesces bursts
+        # and prevents concurrent WebSocket and polling scans for one wallet.
+        self._wake_event.set()
+
+    def _make_websocket_listener(self):
+        if self._websocket_listener_factory is not None:
+            return self._websocket_listener_factory(self._websocket_endpoint)
+        from engine.solana_websocket import SolanaLogsWebSocket
+        return SolanaLogsWebSocket(self._websocket_endpoint)
+
+    def _start_websocket_worker(self, address):
+        if not self._websocket_endpoint or address in self._websocket_threads:
+            return
+        try:
+            listener = self._make_websocket_listener()
+        except Exception as exc:
+            self._set_websocket_state(address, "unavailable", type(exc).__name__)
+            return
+
+        def run_listener():
+            try:
+                listener.run(
+                    address,
+                    self._websocket_stop_event,
+                    lambda signature, message: self._queue_websocket_event(address, signature, message),
+                    lambda state, error_type=None: self._set_websocket_state(address, state, error_type),
+                )
+            except Exception as exc:
+                self._set_websocket_state(address, "unavailable", type(exc).__name__)
+
+        worker = threading.Thread(
+            target=run_listener,
+            name="solana-wallet-websocket",
+            daemon=True,
+        )
+        self._websocket_threads[address] = worker
+        worker.start()
+
     def start(self, addresses):
-        """Start monitoring explicitly for a list of public addresses."""
+        """Start WebSocket subscriptions plus a periodic polling safety net."""
         if not isinstance(addresses, list):
             raise ValueError("Wallet addresses must be provided as a list.")
-
         cleaned = []
-
         for address in addresses:
             if not isinstance(address, str) or not address.strip():
                 continue
-
             address = address.strip()
             if not is_valid_solana_address(address):
                 raise ValueError("A monitored wallet must be a valid Solana public address.")
-
             if address not in cleaned:
                 cleaned.append(address)
 
-        # Serialize start/stop operations so two callers cannot create
-        # overlapping monitor threads.
         with self._lifecycle_lock:
             with self._lock:
                 previous_thread = self._thread
-
-                if (
+                active = (
                     previous_thread is not None
                     and previous_thread.is_alive()
                     and not self._stop_event.is_set()
-                ):
-                    # Monitoring is already active. Update the wallet list
-                    # without starting a second worker.
+                )
+                if active:
+                    removed = set(self._wallets) - set(cleaned)
+                    for address in removed:
+                        self._wallets.pop(address, None)
+                        self._pending_websocket_wallets.discard(address)
                     self._wallets = {
                         address: self._wallets.get(
-                            address,
-                            self._new_wallet_state(),
+                            address, self._new_wallet_state(bool(self._websocket_endpoint))
                         )
                         for address in cleaned
                     }
-                    self._enabled = True
+                    for address in cleaned:
+                        self._start_websocket_worker(address)
                     return self.status()
 
-            # If a stop was requested, let the old worker finish before
-            # clearing the shared stop event or creating another worker.
-            if (
-                previous_thread is not None
-                and previous_thread.is_alive()
-            ):
+            if previous_thread is not None and previous_thread.is_alive():
                 previous_thread.join()
+            for worker in list(self._websocket_threads.values()):
+                if worker.is_alive():
+                    worker.join()
+            self._websocket_threads = {}
+            self._stop_event.clear()
+            self._websocket_stop_event.clear()
+            self._wake_event.clear()
+            self._pending_websocket_wallets.clear()
 
             with self._lock:
                 self._wallets = {
-                    address: self._new_wallet_state()
+                    address: self._new_wallet_state(bool(self._websocket_endpoint))
                     for address in cleaned
                 }
-
-                self._stop_event.clear()
                 self._enabled = True
-
                 self._thread = threading.Thread(
                     target=self._run,
                     name="solana-read-only-monitor",
                     daemon=True,
                 )
                 self._thread.start()
-
+                for address in cleaned:
+                    self._start_websocket_worker(address)
                 return self.status()
 
     def stop(self):
-        """Request a graceful stop without blocking the caller."""
+        """Request a graceful stop for polling and all WebSocket workers."""
         with self._lifecycle_lock:
             self._stop_event.set()
-
+            self._websocket_stop_event.set()
+            self._wake_event.set()
             with self._lock:
                 self._enabled = False
                 for details in self._wallets.values():
@@ -151,87 +214,84 @@ class MonitorService:
                 return self.status()
 
     def stop_and_wait(self, timeout=15):
-        """Request stop and wait a bounded time for the worker to exit."""
-        if (
-            not isinstance(timeout, (int, float))
-            or isinstance(timeout, bool)
-            or timeout <= 0
-        ):
+        if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
             raise ValueError("Shutdown timeout must be positive.")
-
         self.stop()
+        deadline = time.monotonic() + timeout
         with self._lock:
-            worker = self._thread
+            workers = [self._thread] + list(self._websocket_threads.values())
+        for worker in workers:
+            if worker is not None and worker is not threading.current_thread():
+                worker.join(timeout=max(0, deadline - time.monotonic()))
+        stopped = all(worker is None or not worker.is_alive() for worker in workers)
+        return {**self.status(), "worker_stopped": stopped}
 
-        if worker is not None and worker is not threading.current_thread():
-            worker.join(timeout=timeout)
-
-        return {
-            **self.status(),
-            "worker_stopped": worker is None or not worker.is_alive(),
-        }
+    def _scan_one(self, address, source):
+        with self._lock:
+            if address not in self._wallets or self._stop_event.is_set():
+                return
+            self._wallets[address]["state"] = "scanning"
+        started_ns = time.perf_counter_ns()
+        scanned_at = datetime.now(timezone.utc).isoformat()
+        try:
+            results = self._scan_function(address)
+            if not isinstance(results, list):
+                results = []
+            with self._lock:
+                if address in self._wallets:
+                    self._wallets[address].update({
+                        "state": "connected",
+                        "last_scan": scanned_at,
+                        "last_scan_duration_ms": round(
+                            (time.perf_counter_ns() - started_ns) / 1_000_000, 3
+                        ),
+                        "last_successful_check": scanned_at,
+                        "last_error": None,
+                        "latest_results": results[:20],
+                        "last_scan_source": source,
+                    })
+        except Exception:
+            with self._lock:
+                if address in self._wallets:
+                    self._wallets[address].update({
+                        "state": "error",
+                        "last_scan": scanned_at,
+                        "last_scan_duration_ms": round(
+                            (time.perf_counter_ns() - started_ns) / 1_000_000, 3
+                        ),
+                        "last_error": "Monitoring scan failed; sensitive error details are hidden.",
+                        "last_scan_source": source,
+                    })
 
     def _run(self):
-        """Poll saved addresses without signing or submitting transactions."""
+        """Poll on schedule and immediately rescan wallets signalled by WebSocket."""
+        next_poll = 0.0
         try:
             while not self._stop_event.is_set():
+                wait_seconds = max(0.0, next_poll - time.monotonic())
+                self._wake_event.wait(wait_seconds)
+                self._wake_event.clear()
+                if self._stop_event.is_set():
+                    break
+
+                now = time.monotonic()
                 with self._lock:
-                    addresses = list(self._wallets.keys())
+                    signalled = set(self._pending_websocket_wallets)
+                    self._pending_websocket_wallets.clear()
+                    if now >= next_poll:
+                        addresses = list(self._wallets)
+                        next_poll = now + self._interval
+                        source = "polling"
+                    else:
+                        addresses = [a for a in self._wallets if a in signalled]
+                        source = "websocket"
 
                 for address in addresses:
                     if self._stop_event.is_set():
                         break
-
-                    with self._lock:
-                        if address not in self._wallets:
-                            continue
-
-                        self._wallets[address]["state"] = "scanning"
-
-                    scan_started_ns = time.perf_counter_ns()
-                    try:
-                        results = self._scan_function(address)
-
-                        if not isinstance(results, list):
-                            results = []
-
-                        with self._lock:
-                            if address in self._wallets:
-                                self._wallets[address].update(
-                                    {
-                                        "state": "connected",
-                                        "last_scan": datetime.now(
-                                            timezone.utc
-                                        ).isoformat(),
-                                        "last_scan_duration_ms": round((time.perf_counter_ns() - scan_started_ns) / 1_000_000, 3),
-                                        "last_successful_check": datetime.now(
-                                            timezone.utc
-                                        ).isoformat(),
-                                        "last_error": None,
-                                        "latest_results": results[:20],
-                                    }
-                                )
-
-                    except Exception:
-                        with self._lock:
-                            if address in self._wallets:
-                                self._wallets[address].update(
-                                    {
-                                        "state": "error",
-                                        "last_scan": datetime.now(
-                                            timezone.utc
-                                        ).isoformat(),
-                                        "last_scan_duration_ms": round((time.perf_counter_ns() - scan_started_ns) / 1_000_000, 3),
-                                        "last_error": "Monitoring scan failed; sensitive error details are hidden.",
-                                    }
-                                )
-
-                self._stop_event.wait(self._interval)
-
+                    self._scan_one(address, source)
         finally:
             with self._lock:
-                # The lifecycle lock ensures a replacement worker cannot
-                # start until this worker has completely exited.
                 self._enabled = False
                 if self._stop_event.is_set():
                     for details in self._wallets.values():
@@ -239,4 +299,4 @@ class MonitorService:
 
 
 if __name__ == "__main__":
-    print("Read-only monitoring service loaded successfully.")
+    print("Read-only WebSocket and polling monitor service loaded successfully.")

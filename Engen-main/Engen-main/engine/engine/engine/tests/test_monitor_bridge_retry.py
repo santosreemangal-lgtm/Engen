@@ -53,6 +53,17 @@ class MonitorBridgeRetryTests(unittest.TestCase):
         self.assertEqual(output[0]["paper_copy_status"], "RETRYING_QUEUE")
         self.assertIn("remains pending", output[0]["paper_copy_message"])
 
+    def test_needs_review_signature_is_not_marked_processed(self):
+        result = {
+            **candidate_result("UNKNOWN"),
+            "metadata_complete": False,
+            "retryable": False,
+            "processing_status": "needs_review",
+        }
+        store, _, _ = self._scan_with(result, [])
+
+        store.mark_processed.assert_not_called()
+
     def test_non_candidate_is_marked_processed_to_avoid_retry_loop(self):
         store, _, output = self._scan_with(candidate_result("UNKNOWN"), [])
 

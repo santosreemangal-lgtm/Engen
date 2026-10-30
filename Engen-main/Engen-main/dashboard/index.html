@@ -590,14 +590,20 @@ function renderPortfolioMetrics(report){
  const initial=numericValue(report&&report.initial_balance);
  const realized=numericValue(report&&report.realized_pnl_usd);
  const unrealized=numericValue(report&&report.unrealized_pnl_usd);
- const total=realized===null||unrealized===null?null:realized+unrealized;
+ const fills=Array.isArray(report&&report.fills)?report.fills:[];
+ const hasPaperFills=fills.length>0;
+ const total=!hasPaperFills||realized===null||unrealized===null?null:realized+unrealized;
  const returnPercent=total===null||initial===null||initial<=0?null:(total/initial)*100;
- const today=todayRealizedPnl(report&&report.pnl_events);
+ const today=hasPaperFills?todayRealizedPnl(report&&report.pnl_events):null;
  setMetricValue("initial-deposit",money(initial),"neutral");
- setMetricValue("total-return",signedPercent(returnPercent),returnPercent>0?"positive":returnPercent<0?"negative":"neutral");
- setMetricValue("today-pnl",signedMoney(today),today>0?"positive":today<0?"negative":"neutral");
- setMetricValue("total-pnl",signedMoney(total),total>0?"positive":total<0?"negative":"neutral");
+ setMetricValue("total-return",hasPaperFills?signedPercent(returnPercent):"—",
+  !hasPaperFills?"neutral":returnPercent>0?"positive":returnPercent<0?"negative":"neutral");
+ setMetricValue("today-pnl",hasPaperFills?signedMoney(today):"—",
+  !hasPaperFills?"neutral":today>0?"positive":today<0?"negative":"neutral");
+ setMetricValue("total-pnl",hasPaperFills?signedMoney(total):"—",
+  !hasPaperFills?"neutral":total>0?"positive":total<0?"negative":"neutral");
  if(report&&report.error)say("portfolio-message",report.error);
+ else if(!hasPaperFills)say("portfolio-message","Fresh paper session. P&L metrics will appear after the first completed paper fill.");
  else if(total===null)say("portfolio-message","Total P&L is unavailable until realized and unrealized P&L can both be verified.");
  else say("portfolio-message","");
 }
@@ -810,13 +816,19 @@ $("virtual-balance-form").addEventListener("submit",async e=>{
  if(!selectedProfile){say("virtual-balance-message","Select a paper profile first.");return;}
  const raw=$("virtual-balance-value").value.trim(),amount=Number(raw);
  if(!raw||!Number.isFinite(amount)||amount<=0||amount>1000000000){say("virtual-balance-message","Enter an amount greater than $0 and no more than $1,000,000,000.");return;}
+ if(!confirm("Start a fresh paper session with "+formatPaperUsd(amount,false)+"? This will stop monitoring and clear this profile's paper positions, orders, fills, paper-trade history and P&L. Saved wallets, profile settings and public wallet activity history will remain. No real funds or blockchain transactions are involved."))return;
  const button=$("save-virtual-balance");balanceSaveInProgress=true;button.disabled=true;
  try{
-  await post("/api/paper-simulation",{action:"set-profile-initial-balance",profile_id:selectedProfile,amount:String(amount)});
+  await post("/api/paper-simulation",{
+   action:"reset-profile-session",profile_id:selectedProfile,amount:String(amount),confirmed:true
+  });
   balanceInputDirty=false;
-  await loadPortfolioForProfile();
-  say("virtual-balance-message","Virtual USD balance saved for this profile. Paper-trade history is preserved; no real funds were moved.");
- }catch(err){say("virtual-balance-message","Balance was not saved: "+err.message);}
+  await Promise.all([loadPortfolioForProfile(),loadMonitor()]);
+  say("virtual-balance-message","Fresh paper session started with "+formatPaperUsd(amount,false)+". Initial Deposit is updated and monitoring is OFF.");
+ }catch(err){
+  say("virtual-balance-message","Paper session was not confirmed as reset: "+err.message);
+  await loadMonitor();
+ }
  finally{
   balanceSaveInProgress=false;
   $("virtual-balance-value").disabled=!selectedProfile;

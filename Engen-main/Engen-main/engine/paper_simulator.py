@@ -326,11 +326,16 @@ class PaperSimulator:
 
     def _wait(self, order, reason):
         """Keep transient provider/data failures retryable; never fabricate a fill."""
+        waiting_state = (
+            "WAITING_FOR_LIQUIDITY"
+            if "liquidity" in str(reason).lower()
+            else "WAITING_FOR_MARKET_DATA"
+        )
         updated = dict(order, status="CREATED", reason=reason,
-                       details={**order["details"], "execution_state":"WAITING_FOR_MARKET_DATA"})
+                       details={**order["details"], "execution_state":waiting_state})
         self._persist(updated)
         self.orders[order["order_id"]] = updated
-        return {"status":"WAITING_FOR_MARKET_DATA","reason":reason,
+        return {"status":waiting_state,"reason":reason,
                 "simulated":True,"real_trading":False,"transaction_broadcast":False}
 
     def _reject(self, order, reason):

@@ -932,7 +932,7 @@ def load_profile_transactions(query):
     token_mint = (query.get("token_mint") or [""])[0].strip()
     if classification and classification not in LABELS:
         raise ValueError("Unsupported transaction classification.")
-    if status and status not in STATUSES:
+    if status and status not in STATUSES and status != "needs_review":
         raise ValueError("Unsupported transaction status.")
     if token_mint:
         validate_public_address(token_mint, "token mint")
@@ -941,7 +941,10 @@ def load_profile_transactions(query):
     if classification:
         filters.append("t.classification=?")
         params.append(classification)
-    if status:
+    if status == "needs_review":
+        filters.append("json_extract(t.evidence_json, '$.processing_status')=?")
+        params.append(status)
+    elif status:
         filters.append("t.status=?")
         params.append(status)
     if token_mint:

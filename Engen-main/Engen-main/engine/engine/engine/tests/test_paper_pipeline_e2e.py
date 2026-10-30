@@ -141,7 +141,7 @@ class PaperPipelineE2ETests(unittest.TestCase):
                     self.assertEqual(order["status"], "CREATED")
                     self.assertEqual(order["details"]["origin"], "AUTOMATIC_WALLET_COPY")
                     self.assertEqual(order["details"]["target_notional_usd"], "10")
-                    self.assertIn("market", (order.get("reason") or "").lower())
+                    self.assertIn("price", (order.get("reason") or "").lower())
                     self.assertEqual(simulator.fills, [])
                     self.assertFalse(order["details"]["transaction_broadcast"])
 

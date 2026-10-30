@@ -266,7 +266,7 @@ class PaperSimulator:
                     order,
                     "Pool liquidity $" + format(market_price.liquidity_usd, "f")
                     + " is below the configured USD minimum of $" + format(minimum_liquidity, "f")
-                    + "; waiting for a deeper pool before paper execution.",
+                    + "; paper execution is paused until a fresh pool meets the configured minimum.",
                 )
         for name, value in (("slippage_bps",slippage_bps),("fee_bps",fee_bps)):
             if not isinstance(value,int) or isinstance(value,bool) or not 0 <= value <= 10000:

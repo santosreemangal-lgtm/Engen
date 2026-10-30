@@ -592,6 +592,10 @@ function renderPortfolioMetrics(report){
  const unrealized=numericValue(report&&report.unrealized_pnl_usd);
  const fills=Array.isArray(report&&report.fills)?report.fills:[];
  const hasPaperFills=fills.length>0;
+ ["total-return","today-pnl","total-pnl"].forEach(id=>{
+  const metric=$(id).closest(".metric");
+  if(metric)metric.classList.toggle("hidden",!hasPaperFills);
+ });
  const total=!hasPaperFills||realized===null||unrealized===null?null:realized+unrealized;
  const returnPercent=total===null||initial===null||initial<=0?null:(total/initial)*100;
  const today=hasPaperFills?todayRealizedPnl(report&&report.pnl_events):null;

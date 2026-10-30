@@ -37,6 +37,9 @@ class MonitorService:
             "last_scan": None,
             "last_successful_check": None,
             "last_error": None,
+            "source_quality": "unknown",
+            "rpc_error_count": 0,
+            "retryable_count": 0,
             "latest_results": [],
         }
 
@@ -48,7 +51,12 @@ class MonitorService:
             try:
                 last_success = datetime.fromisoformat(successful)
                 age = (datetime.now(timezone.utc) - last_success).total_seconds()
-                if self._interval > 0 and age > self._interval * 2 and snapshot.get("state") != "error":
+                active_states = {"connecting", "scanning", "waiting", "stopping", "stopped", "error"}
+                if (
+                    self._interval > 0
+                    and age > self._interval * 2
+                    and snapshot.get("state") not in active_states
+                ):
                     snapshot["state"] = "stale"
             except (TypeError, ValueError):
                 snapshot["state"] = "stale"
@@ -190,7 +198,47 @@ class MonitorService:
                         results = self._scan_function(address)
 
                         if not isinstance(results, list):
-                            results = []
+                            raise TypeError("Monitor scan must return a list.")
+
+                        rpc_errors = [
+                            item for item in results
+                            if isinstance(item, dict)
+                            and item.get("metadata_status") == "rpc_error"
+                        ]
+                        retryable = [
+                            item for item in results
+                            if isinstance(item, dict) and item.get("retryable") is True
+                        ]
+                        rpc_codes = sorted({
+                            str(item.get("rpc_code"))
+                            for item in rpc_errors
+                            if isinstance(item.get("rpc_code"), int)
+                            and not isinstance(item.get("rpc_code"), bool)
+                        })
+                        if rpc_errors:
+                            source_quality = "degraded"
+                            code_note = (
+                                " (RPC codes: " + ", ".join(rpc_codes) + ")"
+                                if rpc_codes else ""
+                            )
+                            scan_error = (
+                                "Transaction details failed for "
+                                + str(len(rpc_errors))
+                                + " of "
+                                + str(len(results))
+                                + " pending signature(s)"
+                                + code_note
+                                + "."
+                            )
+                        elif retryable:
+                            source_quality = "pending"
+                            scan_error = (
+                                str(len(retryable))
+                                + " transaction(s) remain pending confirmation or metadata."
+                            )
+                        else:
+                            source_quality = "healthy"
+                            scan_error = None
 
                         with self._lock:
                             if address in self._wallets:
@@ -203,12 +251,19 @@ class MonitorService:
                                         "last_successful_check": datetime.now(
                                             timezone.utc
                                         ).isoformat(),
-                                        "last_error": None,
+                                        "last_error": scan_error,
+                                        "source_quality": source_quality,
+                                        "rpc_error_count": len(rpc_errors),
+                                        "retryable_count": len(retryable),
                                         "latest_results": results[:20],
                                     }
                                 )
 
-                    except Exception:
+                    except Exception as exc:
+                        provider_code = getattr(exc, "code", None)
+                        error_detail = type(exc).__name__
+                        if isinstance(provider_code, int) and not isinstance(provider_code, bool):
+                            error_detail += "; RPC code " + str(provider_code)
                         with self._lock:
                             if address in self._wallets:
                                 self._wallets[address].update(
@@ -217,7 +272,8 @@ class MonitorService:
                                         "last_scan": datetime.now(
                                             timezone.utc
                                         ).isoformat(),
-                                        "last_error": "Monitoring scan failed; sensitive error details are hidden.",
+                                        "last_error": "Monitoring scan failed (" + error_detail + ").",
+                                        "source_quality": "unavailable",
                                     }
                                 )
 

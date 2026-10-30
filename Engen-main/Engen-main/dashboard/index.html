@@ -484,7 +484,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </main>
 <script>
 const $ = id => document.getElementById(id);
-let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, currentMonitorWallets = [], balanceInputDirty = false, balanceSaveInProgress = false;
+let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, currentMonitorWallets = [], paperSessionResetInProgress = false;
 let pendingSellAllPreview = null, sellAllInProgress = false;
 const headers = {"Content-Type":"application/json"};
 function apiRequestHeaders(extra={}) {
@@ -718,8 +718,7 @@ function renderProfileCards(){
   state.textContent=active?"ACTIVE":"INACTIVE";state.dataset.state=active?"active":"inactive";
   card.append(name,state);
   card.addEventListener("click",async()=>{
-   if(balanceInputDirty&&selectedProfile!==p.profile_id&&!confirm("Discard the unsaved virtual balance change before switching profiles?"))return;
-   balanceInputDirty=false;selectedProfile=p.profile_id;$("profile-select").value=selectedProfile;
+   selectedProfile=p.profile_id;$("profile-select").value=selectedProfile;
    await loadProfiles();if($("history-details").open)await loadHistory();
   });
   host.append(card);
@@ -757,15 +756,14 @@ function renderDirectionFromProfile(){
  updateAmountLabel();
 }
 async function loadPortfolioForProfile(){
- const input=$("virtual-balance-value"),save=$("save-virtual-balance");
+ const resetButton=$("reset-paper-session");
  if(!selectedProfile){
-  balanceInputDirty=false;input.value="";input.disabled=true;save.disabled=true;
+  resetButton.disabled=true;
   renderPortfolioMetrics({});
-  say("virtual-balance-message","");
-  await loadPaperTradeHistory(null);return;
+  await loadPaperTradeHistory(null);
+  return;
  }
- const preserveDraft=balanceInputDirty;
- if(!preserveDraft){input.disabled=true;save.disabled=true;}
+ resetButton.disabled=paperSessionResetInProgress;
  try{
   const path="/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile);
   let d=await api(path),r=d.report||d;
@@ -773,22 +771,17 @@ async function loadPortfolioForProfile(){
    await post("/api/paper-simulation",{action:"initialize-profile-ledger",profile_id:selectedProfile});
    d=await api(path);r=d.report||d;
   }
-  const balance=r.available_balance_usd??r.available_balance??r.balances?.USD??null;
-  if(!balanceInputDirty)input.value=balance===null||balance===undefined?"":String(balance);
-  input.disabled=false;save.disabled=!selectedProfile||!balanceInputDirty||balanceSaveInProgress;
   renderPortfolioMetrics(r);
-  if(r.error){say("virtual-balance-message",r.error);}
-  else if(balance===null||balance===undefined){say("virtual-balance-message","");}
-  else{say("virtual-balance-message","");}
+  resetButton.disabled=paperSessionResetInProgress;
   await loadPaperTradeHistory(r);
  }catch(e){
-  if(!balanceInputDirty){input.disabled=false;save.disabled=!selectedProfile||balanceSaveInProgress;}
   renderPortfolioMetrics({});
   say("portfolio-message","Could not load this profile's portfolio metrics: "+e.message);
-  say("virtual-balance-message","Balance data unavailable.");
+  resetButton.disabled=paperSessionResetInProgress;
   await loadPaperTradeHistory(null);
  }
 }
+
 function updateAmountLabel(){
  const mode=document.querySelector('input[name="sizing"]:checked')?.value||"FIXED_USD";
  const mirror=mode==="MIRROR_AMOUNT";
@@ -808,36 +801,31 @@ $("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const ad
 $("create-profile").addEventListener("click",()=>{if(profiles.length>=3){say("profile-card-message","You can create up to 3 paper profiles.");return;} $("profile-form").classList.toggle("hidden");});$("cancel-create-profile").addEventListener("click",()=>$("profile-form").classList.add("hidden"));
 $("profile-form").addEventListener("submit",async e=>{e.preventDefault();if(profiles.length>=3){say("wallet-message","Maximum of 3 paper profiles reached.");return;}try{const d=await post("/api/profiles",{action:"create",name:$("profile-name").value.trim(),destination_public_address:null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"FIXED_USD",sizing_value:"3"}}});selectedProfile=d.profile.profile_id;$("profile-name").value="";$("profile-form").classList.add("hidden");say("wallet-message","Paper profile created. Activate it, then start read-only monitoring when ready.");await loadProfiles();$("profile-select").value=selectedProfile;}catch(err){say("wallet-message",err.message);}});
 $("profile-select").addEventListener("change",async()=>{selectedProfile=$("profile-select").value;renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();if($("history-details").open)loadHistory();renderWallets();});
-$("virtual-balance-value").addEventListener("input",()=>{
- balanceInputDirty=true;
- say("virtual-balance-message","Unsaved change. Press Confirm Balance to save this amount.");
- $("save-virtual-balance").disabled=!selectedProfile||balanceSaveInProgress;
-});
-$("virtual-balance-form").addEventListener("submit",async e=>{
- e.preventDefault();
- if(balanceSaveInProgress)return;
- if(!selectedProfile){say("virtual-balance-message","Select a paper profile first.");return;}
- const raw=$("virtual-balance-value").value.trim(),amount=Number(raw);
- if(!raw||!Number.isFinite(amount)||amount<=0||amount>1000000000){say("virtual-balance-message","Enter an amount greater than $0 and no more than $1,000,000,000.");return;}
- if(!confirm("Start a fresh paper session with "+formatPaperUsd(amount,false)+"? This will stop monitoring and clear this profile's paper positions, orders, fills, paper-trade history and P&L. Saved wallets, profile settings and public wallet activity history will remain. No real funds or blockchain transactions are involved."))return;
- const button=$("save-virtual-balance");balanceSaveInProgress=true;button.disabled=true;
+$("reset-paper-session").addEventListener("click",async()=>{
+ if(paperSessionResetInProgress)return;
+ if(!selectedProfile){say("portfolio-message","Select a paper profile before resetting its paper session.");return;}
+ const profileName=selected()?.name||"selected profile";
+ const message="Start a fresh $100 paper session for "+profileName+"?\n\nThe current paper orders, fills and P&L will be archived in History, not deleted. Monitoring will stop for this profile only. Saved source wallets, profile settings and observed wallet activity will remain unchanged. No real funds or blockchain transactions are involved.";
+ if(!confirm(message))return;
+ paperSessionResetInProgress=true;
+ const button=$("reset-paper-session");button.disabled=true;
+ say("portfolio-message","Resetting this profile's paper session…");
  try{
   await post("/api/paper-simulation",{
-   action:"reset-profile-session",profile_id:selectedProfile,amount:String(amount),confirmed:true
+   action:"reset-profile-session",profile_id:selectedProfile,amount:"100",confirmed:true
   });
-  balanceInputDirty=false;
   await Promise.all([loadPortfolioForProfile(),loadMonitor()]);
-  say("virtual-balance-message","Fresh paper session started with "+formatPaperUsd(amount,false)+". Initial Deposit is updated and monitoring is OFF.");
+  if($("history-details").open)await loadHistory();
+  say("portfolio-message","Fresh $100 paper session started. Previous paper trades were archived and monitoring is OFF.");
  }catch(err){
-  say("virtual-balance-message","Paper session was not confirmed as reset: "+err.message);
+  say("portfolio-message","Paper session was not reset: "+err.message);
   await loadMonitor();
- }
- finally{
-  balanceSaveInProgress=false;
-  $("virtual-balance-value").disabled=!selectedProfile;
-  button.disabled=!selectedProfile||!balanceInputDirty;
+ }finally{
+  paperSessionResetInProgress=false;
+  button.disabled=!selectedProfile;
  }
 });
+
 $("confirm-settings").addEventListener("click",async()=>{
  if(!selectedProfile){say("settings-message","Create or select a profile before confirming settings.");return;}
  const mode=document.querySelector('input[name="sizing"]:checked')?.value||"FIXED_USD";

@@ -1606,6 +1606,13 @@ if __name__ == "__main__":
         ) from exc
 
     server = ThreadingHTTPServer((HOST, PORT), DashboardHandler)
+    if PROFILE_STORE_DB.is_file():
+        try:
+            # Apply the per-source-wallet activity retention policy to existing
+            # databases before the dashboard begins serving history requests.
+            ProfileStore(PROFILE_STORE_DB)
+        except (OSError, sqlite3.Error, RuntimeError) as exc:
+            print("WARNING: wallet-history retention could not be applied (%s)." % type(exc).__name__)
     try:
         resumed = restore_persisted_monitors()
         print("Restored explicit monitoring opt-ins: %s" % resumed)

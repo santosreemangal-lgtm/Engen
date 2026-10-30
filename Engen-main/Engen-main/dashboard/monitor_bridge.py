@@ -37,7 +37,9 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             if classification not in LABELS:
                 classification = "UNKNOWN"
             confirmation = observation.get("confirmation_status")
-            if item.get("status") == "failed":
+            if item.get("processing_status") == "needs_review":
+                status = "needs_review"
+            elif item.get("status") == "failed":
                 status = "failed"
             elif confirmation in ("confirmed", "finalized") and item.get("metadata_complete") is True:
                 status = "confirmed"
@@ -137,7 +139,11 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             processed_signals = getattr(simulator, "processed_signals", set())
             for item in results:
                 signature = item.get("signature")
-                if not isinstance(signature, str) or item.get("retryable") is True:
+                if (
+                    not isinstance(signature, str)
+                    or item.get("retryable") is True
+                    or item.get("processing_status") == "needs_review"
+                ):
                     continue
                 signal = item.get("trade_signal")
                 classification = signal.get("classification") if isinstance(signal, dict) else None

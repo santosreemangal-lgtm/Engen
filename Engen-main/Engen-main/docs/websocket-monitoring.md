@@ -26,11 +26,13 @@ A WebSocket notification is only a wake-up signal. The monitor does not treat no
 
 ## Configuration
 
-Set `ENGEN_WS_URL` to a provider's WebSocket endpoint when using a custom Solana RPC provider. If unset, the monitor uses Solana's public mainnet WebSocket endpoint:
+WebSocket monitoring is opt-in. Set `ENGEN_WS_URL` to your provider's WebSocket endpoint to enable subscriptions. For Solana's public mainnet endpoint, use:
 
-```text
-wss://api.mainnet-beta.solana.com
+```bash
+ENGEN_WS_URL=wss://api.mainnet-beta.solana.com
 ```
+
+When `ENGEN_WS_URL` is unset or empty, WebSocket connections remain disabled and polling continues normally. This avoids unexpected external connections in offline/test environments. If you use a custom HTTP RPC endpoint, configure its matching WebSocket endpoint as well.
 
 Install the transport dependency with the project's normal dependency installation:
 

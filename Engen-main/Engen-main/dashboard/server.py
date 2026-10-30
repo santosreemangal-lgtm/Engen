@@ -30,6 +30,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
+from engine.solana_websocket import DEFAULT_WS_URL
 from engine.logger import redact
 from engine.pnl import MarketPrice, realized_pnl_from_fills
 from engine.market_data import fetch_market_price
@@ -218,7 +219,7 @@ def is_valid_solana_address(value):
 
 
 # Creating services does not start monitoring or make RPC requests.
-monitor_service = MonitorService(create_scan_function(), interval=15)
+monitor_service = MonitorService(create_scan_function(), interval=15, websocket_endpoint=DEFAULT_WS_URL)
 # Each saved profile gets its own in-memory monitor lifecycle. The saved source
 # wallet list remains profile-scoped in ProfileStore.
 profile_monitor_services = {}
@@ -811,6 +812,7 @@ def get_profile_monitor_service(profile_id):
                 profile_store=ProfileStore(PROFILE_STORE_DB),
             ),
             interval=15,
+            websocket_endpoint=DEFAULT_WS_URL,
         )
     return profile_monitor_services[canonical]
 

@@ -5,8 +5,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from engine.signature_store import SignatureStore
-from engine.solana_public import SolanaRPCError
-from engine.transaction_monitor import monitor_wallet
+from engine.solana_public import SolanaRPCError, SolanaRPCProviderError
+from engine.transaction_monitor import monitor_wallet, process_new_signatures
 
 
 class PendingRetryTests(unittest.TestCase):
@@ -96,6 +96,29 @@ class PendingRetryTests(unittest.TestCase):
 
             self.assertEqual(fourth_result, [])
             self.assertEqual(mock_process.call_count, 2)
+
+    def test_provider_error_stops_after_five_attempts_and_needs_review(self):
+        signature = "1" * 64
+
+        with patch(
+            "engine.transaction_monitor.process_transaction_signature",
+            side_effect=SolanaRPCProviderError(-32015),
+        ):
+            for attempt in range(5):
+                result = process_new_signatures(
+                    [{"signature": signature}],
+                    wallet_address=self.wallet,
+                    store=self.store,
+                )[0]
+                if attempt < 4:
+                    self.assertTrue(result["retryable"])
+                    self.assertEqual(result["processing_status"], "pending")
+
+        self.assertFalse(result["retryable"])
+        self.assertEqual(result["rpc_code"], -32015)
+        self.assertEqual(result["processing_status"], "needs_review")
+        self.assertEqual(self.store.get_status(self.wallet, signature), "needs_review")
+        self.assertEqual(self.store.get_pending_signatures(self.wallet), [])
 
     def test_rpc_error_keeps_signature_pending_for_retry(self):
         signature = "1111111111111111111111111111111111111111111111111111111111111114"

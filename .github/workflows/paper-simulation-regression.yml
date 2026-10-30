@@ -1,8 +1,12 @@
 name: Paper simulation regression
 
 on:
+  push:
+    branches:
+      - feat/websocket-paper-latency-pipeline
   pull_request:
     branches:
+      - feat/websocket-paper-latency-pipeline
       - feature/paper-balance-dashboard-refresh
   workflow_dispatch:
 

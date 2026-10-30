@@ -76,7 +76,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 .wallet-section-card .message{overflow-wrap:anywhere}.wallet-monitor-status{font-size:12px;color:var(--muted);line-height:1.5;overflow-wrap:anywhere}.wallet-monitor-status[data-state="error"]{color:var(--red)}.wallet-monitor-status[data-state="connected"]{color:var(--green)}
 @media(max-width:760px){.wallet-layout{grid-template-columns:1fr}.wallet-top-actions{width:100%}.wallet-top-actions button{flex:1}}
 @media(max-width:520px){.wallet-top-actions{display:grid;grid-template-columns:1fr 1fr}.wallet-top-actions .status{grid-column:1/-1}.wallet-section-card{padding:14px}.wallet-top-actions button{width:100%;white-space:normal}}
-.amount-input-wrap{display:flex;align-items:center;gap:8px}.amount-input-wrap input{flex:1;min-width:0}.amount-suffix{min-width:54px;text-align:center;padding:11px 12px;font-weight:800;border:1px solid var(--line);border-radius:10px;background:#17243a;color:#cbd6eb}.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.virtual-balance-editor{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:16px;margin:16px 0 18px;border:1px solid #30415f;border-radius:15px;background:linear-gradient(145deg,#111e31,#0c1525)}.virtual-balance-editor h3{margin:0;font-size:15px}.virtual-balance-editor form{align-items:stretch}.virtual-balance-editor input{flex:1;min-width:0}.virtual-balance-editor .message{margin-top:0}.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.history-subpanel{min-width:0;padding:16px;border:1px solid #2a3a55;border-radius:14px;background:linear-gradient(145deg,#111c2d,#0c1422)}.history-subpanel h3{margin:0 0 5px}.history-subpanel .history-list{margin-top:12px}.history-subpanel a{color:#aebeff;font-size:13px;overflow-wrap:anywhere}.history-subpanel .history-item{min-width:0}@media(max-width:760px){.history-grid{grid-template-columns:1fr}}</style>
+.amount-input-wrap{display:flex;align-items:center;gap:8px}.amount-input-wrap input{flex:1;min-width:0}.amount-suffix{min-width:54px;text-align:center;padding:11px 12px;font-weight:800;border:1px solid var(--line);border-radius:10px;background:#17243a;color:#cbd6eb}.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.reset-paper-session{display:block;width:100%;min-height:34px;margin-top:10px;padding:7px 12px;font-size:12px}.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.history-subpanel{min-width:0;padding:16px;border:1px solid #2a3a55;border-radius:14px;background:linear-gradient(145deg,#111c2d,#0c1422)}.history-subpanel h3{margin:0 0 5px}.history-subpanel .history-list{margin-top:12px}.history-subpanel a{color:#aebeff;font-size:13px;overflow-wrap:anywhere}.history-subpanel .history-item{min-width:0}@media(max-width:760px){.history-grid{grid-template-columns:1fr}}</style>
 <style>
 .history-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin:14px 0 12px}
 .history-tabs,.history-filters{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -367,23 +367,8 @@ footer.hint{padding:10px 4px;line-height:1.7}
 .portfolio-metrics .value.metric-neutral{color:var(--text)}
 .portfolio-summary .message:empty{display:none}
 .portfolio-summary .message{margin:8px 2px 0;font-size:10px;line-height:1.4}
-.virtual-balance-compact{
- display:flex;align-items:center;gap:14px;flex-wrap:wrap;
- padding:10px 14px;margin:10px 0 18px;
- border:1px solid #30415f;border-radius:12px;
- background:linear-gradient(145deg,#111e31,#0c1525)
-}
-.virtual-balance-compact h3{margin:0;flex:0 0 auto;font-size:13px;font-weight:800}
-.virtual-balance-compact form{display:flex;align-items:center;gap:8px;flex:1;min-width:240px;margin:0}
-.virtual-balance-compact input{min-height:36px;height:36px;flex:1;min-width:0;padding:7px 11px;border-radius:8px;font-size:12px}
-.virtual-balance-compact button{min-height:36px;padding:7px 13px;border-radius:8px;font-size:11px;white-space:nowrap}
-.virtual-balance-compact .message{flex:0 0 100%;margin:0;font-size:10px;line-height:1.3}
-.virtual-balance-compact .message:empty{display:none}
-@media(max-width:760px){
- .portfolio-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
- .virtual-balance-compact{gap:8px}
- .virtual-balance-compact form{min-width:100%}
-}
+.reset-paper-session{display:block;width:100%;min-height:34px;margin-top:10px;padding:7px 12px;font-size:12px}
+@media(max-width:760px){.portfolio-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
 
 .portfolio-summary .portfolio-head{justify-content:space-between;align-items:center;gap:12px}
 </style>
@@ -392,18 +377,14 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <section class="panel portfolio-summary">
 <div class="panel-head portfolio-head"><h2>Portfolio</h2><div class="status-group"><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span><span id="rpc-health-status" class="status" title="Read-only public Solana RPC health"><span id="rpc-health-dot" class="dot"></span><span id="rpc-health-state">RPC checking…</span></span></div></div>
 <div class="grid portfolio-metrics">
- <div class="metric"><div class="label">Initial Deposit</div><p id="initial-deposit" class="value">$—</p></div>
+ <div class="metric"><div class="label">Internal Deposit</div><p id="initial-deposit" class="value">$—</p><button id="reset-paper-session" class="secondary reset-paper-session" type="button" disabled title="Reset this paper profile to a $100 simulated deposit">Reset</button></div>
  <div class="metric"><div class="label">Total Return</div><p id="total-return" class="value">—</p></div>
  <div class="metric"><div class="label">Today Realized P&amp;L</div><p id="today-pnl" class="value">$—</p></div>
  <div class="metric"><div class="label">Total P&amp;L</div><p id="total-pnl" class="value">$—</p></div>
 </div>
 <p id="portfolio-message" class="message" role="status"></p>
 </section>
-<section class="virtual-balance-compact">
- <h3>Virtual USD Balance</h3>
- <form id="virtual-balance-form" class="row"><label class="sr-only" for="virtual-balance-value">Virtual USD balance</label><input id="virtual-balance-value" type="number" min="0.01" max="1000000000" step="0.01" placeholder="Enter amount in USD" required disabled><button id="save-virtual-balance" type="submit" disabled>Confirm Balance</button></form>
- <p id="virtual-balance-message" class="message" role="status"></p>
-</section>
+<p id="paper-reset-message" class="message" role="status">New paper profiles start with a $100 simulated internal deposit. Reset starts the selected profile over at $100.</p>
 
 <section class="panel wallet-workspace">
 <div class="panel-head wallet-workspace-head">
@@ -485,7 +466,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </main>
 <script>
 const $ = id => document.getElementById(id);
-let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, currentMonitorWallets = [], balanceInputDirty = false, balanceSaveInProgress = false;
+let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, currentMonitorWallets = [], paperResetInProgress = false;
 let pendingSellAllPreview = null, sellAllInProgress = false;
 const headers = {"Content-Type":"application/json"};
 function apiRequestHeaders(extra={}) {
@@ -719,8 +700,8 @@ function renderProfileCards(){
   state.textContent=active?"ACTIVE":"INACTIVE";state.dataset.state=active?"active":"inactive";
   card.append(name,state);
   card.addEventListener("click",async()=>{
-   if(balanceInputDirty&&selectedProfile!==p.profile_id&&!confirm("Discard the unsaved virtual balance change before switching profiles?"))return;
-   balanceInputDirty=false;selectedProfile=p.profile_id;$("profile-select").value=selectedProfile;
+   if(paperResetInProgress)return;
+   selectedProfile=p.profile_id;$("profile-select").value=selectedProfile;
    await loadProfiles();if($("history-details").open)await loadHistory();
   });
   host.append(card);
@@ -758,15 +739,14 @@ function renderDirectionFromProfile(){
  updateAmountLabel();
 }
 async function loadPortfolioForProfile(){
- const input=$("virtual-balance-value"),save=$("save-virtual-balance");
+ const resetButton=$("reset-paper-session");
  if(!selectedProfile){
-  balanceInputDirty=false;input.value="";input.disabled=true;save.disabled=true;
+  resetButton.disabled=true;
   renderPortfolioMetrics({});
-  say("virtual-balance-message","");
+  say("paper-reset-message","Select a paper profile to view its internal deposit.");
   await loadPaperTradeHistory(null);return;
  }
- const preserveDraft=balanceInputDirty;
- if(!preserveDraft){input.disabled=true;save.disabled=true;}
+ resetButton.disabled=true;
  try{
   const path="/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile);
   let d=await api(path),r=d.report||d;
@@ -774,19 +754,20 @@ async function loadPortfolioForProfile(){
    await post("/api/paper-simulation",{action:"initialize-profile-ledger",profile_id:selectedProfile});
    d=await api(path);r=d.report||d;
   }
-  const balance=r.available_balance_usd??r.available_balance??r.balances?.USD??null;
-  if(!balanceInputDirty)input.value=balance===null||balance===undefined?"":String(balance);
-  input.disabled=false;save.disabled=!selectedProfile||!balanceInputDirty||balanceSaveInProgress;
   renderPortfolioMetrics(r);
-  if(r.error){say("virtual-balance-message",r.error);}
-  else if(balance===null||balance===undefined){say("virtual-balance-message","");}
-  else{say("virtual-balance-message","");}
+  if(r.error){say("paper-reset-message",r.error);}
+  else if(numericValue(r.initial_balance)===null){
+   say("paper-reset-message","This profile has no internal deposit yet. Use Reset to start it with $100.");
+  }else{
+   say("paper-reset-message","Internal Deposit is "+money(r.initial_balance)+". Reset starts a fresh paper session with $100.");
+  }
+  resetButton.disabled=false;
   await loadPaperTradeHistory(r);
  }catch(e){
-  if(!balanceInputDirty){input.disabled=false;save.disabled=!selectedProfile||balanceSaveInProgress;}
   renderPortfolioMetrics({});
   say("portfolio-message","Could not load this profile's portfolio metrics: "+e.message);
-  say("virtual-balance-message","Balance data unavailable.");
+  say("paper-reset-message","Deposit data unavailable. Reset can be retried after the paper ledger is reachable.");
+  resetButton.disabled=false;
   await loadPaperTradeHistory(null);
  }
 }
@@ -807,43 +788,54 @@ function updateAmountLabel(){
 document.querySelectorAll('input[name="sizing"]').forEach(x=>x.addEventListener("change",updateAmountLabel));
 $("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const address=$("wallet-address").value.trim();if(!selectedProfile){say("wallet-message","Create or select a paper profile before adding a public source wallet.");return;}try{await post("/api/wallets",{action:"add",address});await post("/api/profiles",{action:"associate-source-wallet",profile_id:selectedProfile,wallet_address:address});$("wallet-address").value="";say("wallet-message","Public source wallet saved and associated with the selected paper profile.");await loadWallets();}catch(err){say("wallet-message","Source wallet was not fully added: "+err.message+" Refresh the wallet list and verify the association.");await loadProfiles();}});
 $("create-profile").addEventListener("click",()=>{if(profiles.length>=3){say("profile-card-message","You can create up to 3 paper profiles.");return;} $("profile-form").classList.toggle("hidden");});$("cancel-create-profile").addEventListener("click",()=>$("profile-form").classList.add("hidden"));
-$("profile-form").addEventListener("submit",async e=>{e.preventDefault();if(profiles.length>=3){say("wallet-message","Maximum of 3 paper profiles reached.");return;}try{const d=await post("/api/profiles",{action:"create",name:$("profile-name").value.trim(),destination_public_address:null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"FIXED_USD",sizing_value:"3"}}});selectedProfile=d.profile.profile_id;$("profile-name").value="";$("profile-form").classList.add("hidden");say("wallet-message","Paper profile created. Activate it, then start read-only monitoring when ready.");await loadProfiles();$("profile-select").value=selectedProfile;}catch(err){say("wallet-message",err.message);}});
-$("profile-select").addEventListener("change",async()=>{selectedProfile=$("profile-select").value;renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();if($("history-details").open)loadHistory();renderWallets();});
-$("virtual-balance-value").addEventListener("input",()=>{
- balanceInputDirty=true;
- say("virtual-balance-message","Unsaved change. Press Confirm Balance to save this amount.");
- $("save-virtual-balance").disabled=!selectedProfile||balanceSaveInProgress;
-});
-$("virtual-balance-form").addEventListener("submit",async e=>{
+$("profile-form").addEventListener("submit",async e=>{
  e.preventDefault();
- if(balanceSaveInProgress)return;
- if(!selectedProfile){say("virtual-balance-message","Select a paper profile first.");return;}
- const raw=$("virtual-balance-value").value.trim(),amount=Number(raw);
- if(!raw||!Number.isFinite(amount)||amount<=0||amount>1000000000){say("virtual-balance-message","Enter an amount greater than $0 and no more than $1,000,000,000.");return;}
- if(!confirm("Start a fresh paper session with "+formatPaperUsd(amount,false)+"? This will stop monitoring and clear this profile's paper positions, orders, fills, paper-trade history and P&L. Saved wallets, profile settings and public wallet activity history will remain. No real funds or blockchain transactions are involved."))return;
- const button=$("save-virtual-balance");balanceSaveInProgress=true;button.disabled=true;
+ if(profiles.length>=3){say("wallet-message","Maximum of 3 paper profiles reached.");return;}
+ try{
+  const d=await post("/api/profiles",{action:"create",name:$("profile-name").value.trim(),destination_public_address:null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"FIXED_USD",sizing_value:"3"}}});
+  const profileId=d.profile.profile_id;
+  const seeded=await post("/api/paper-simulation",{action:"set-profile-initial-balance",profile_id:profileId,amount:"100"});
+  const report=seeded?.report;
+  const available=numericValue(report?.available_balance_usd??report?.available_balance??report?.balances?.USD);
+  const initial=numericValue(report?.initial_balance);
+  if(report?.database_available!==true||available!==100||initial!==100){
+   throw new Error("The profile was created, but its $100 internal deposit could not be verified. Use Reset on that profile to initialize it.");
+  }
+  selectedProfile=profileId;$("profile-name").value="";$("profile-form").classList.add("hidden");
+  say("wallet-message","Paper profile created with a $100 simulated internal deposit. Activate it; monitoring remains stopped.");
+  await loadProfiles();$("profile-select").value=selectedProfile;
+ }catch(err){say("wallet-message",err.message);}
+});
+$("profile-select").addEventListener("change",async()=>{
+ if(paperResetInProgress){$("profile-select").value=selectedProfile;return;}
+ selectedProfile=$("profile-select").value;renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();if($("history-details").open)loadHistory();renderWallets();
+});
+$("reset-paper-session").addEventListener("click",async()=>{
+ if(paperResetInProgress)return;
+ if(!selectedProfile){say("paper-reset-message","Select a paper profile first.");return;}
+ const profileId=selectedProfile,amount=100,button=$("reset-paper-session");
+ if(!confirm("Reset "+(selected()?.name||"this paper profile")+" to a $100 internal deposit? This clears this profile's simulated positions, orders, fills, paper-trade history and P&L. Saved wallets, profile settings and observed public wallet activity remain. Monitoring will stop. No real funds or blockchain transactions are involved."))return;
+ paperResetInProgress=true;button.disabled=true;
  try{
   const saved=await post("/api/paper-simulation",{
-   action:"reset-profile-session",profile_id:selectedProfile,amount:String(amount),confirmed:true
+   action:"reset-profile-session",profile_id:profileId,amount:"100",confirmed:true
   },30000);
   const report=saved?.report;
   const confirmedBalance=numericValue(report?.available_balance_usd??report?.available_balance??report?.balances?.USD);
   const confirmedInitial=numericValue(report?.initial_balance);
-  if(report?.database_available!==true||confirmedBalance===null||confirmedInitial===null||
+  if(report?.profile_id!==profileId||report?.database_available!==true||
+     confirmedBalance===null||confirmedInitial===null||
      Math.abs(confirmedBalance-amount)>0.000001||Math.abs(confirmedInitial-amount)>0.000001){
-   throw new Error("The server did not verify the requested balance. Refresh the profile and check its paper ledger before retrying.");
+   throw new Error("The server did not verify the $100 deposit. The dashboard will not report a successful reset.");
   }
-  balanceInputDirty=false;
   await Promise.all([loadPortfolioForProfile(),loadMonitor()]);
-  say("virtual-balance-message","Fresh paper session started with "+formatPaperUsd(amount,false)+". Initial Deposit is updated and monitoring is OFF.");
+  say("paper-reset-message","Reset complete. Internal Deposit: $100.00. Monitoring is OFF.");
  }catch(err){
-  say("virtual-balance-message","Paper session was not confirmed as reset: "+err.message);
+  say("paper-reset-message","Reset was not confirmed: "+err.message);
   await loadMonitor();
- }
- finally{
-  balanceSaveInProgress=false;
-  $("virtual-balance-value").disabled=!selectedProfile;
-  button.disabled=!selectedProfile||!balanceInputDirty;
+ }finally{
+  paperResetInProgress=false;
+  button.disabled=!selectedProfile;
  }
 });
 $("confirm-settings").addEventListener("click",async()=>{

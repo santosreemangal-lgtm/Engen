@@ -152,6 +152,35 @@ class SignatureStoreTests(unittest.TestCase):
         self.assertEqual(record["raw_transaction"], payload)
         self.assertEqual(record["status"], "incomplete")
 
+    def test_raw_transaction_payloads_retain_latest_1000_but_keep_dedupe_checkpoints(self):
+        wallet = "wallet_retention"
+        for index in range(1005):
+            signature = f"retained-sig-{index:04d}"
+            self.store.save(wallet, signature, slot=20000 + index)
+            self.store.save_transaction_record(
+                wallet, signature,
+                {"slot": 20000 + index, "payload": "x" * 128},
+                processing_status="processed",
+            )
+
+        with sqlite3.connect(self.store.db_path) as db:
+            raw_count = db.execute(
+                "SELECT COUNT(*) FROM transaction_records WHERE wallet_address=?",
+                (wallet,),
+            ).fetchone()[0]
+            checkpoint_count = db.execute(
+                "SELECT COUNT(*) FROM seen_signatures WHERE wallet_address=?",
+                (wallet,),
+            ).fetchone()[0]
+
+        self.assertEqual(raw_count, 1000)
+        self.assertEqual(checkpoint_count, 1005)
+        self.assertIsNone(self.store.get_transaction_record(wallet, "retained-sig-0000"))
+        newest = self.store.get_transaction_record(wallet, "retained-sig-1004")
+        self.assertEqual(newest["raw_transaction"]["slot"], 21004)
+        self.assertTrue(self.store.has_seen(wallet, "retained-sig-0000"))
+        self.assertFalse(self.store.save(wallet, "retained-sig-0000", slot=20000))
+
     def test_processed_slot_updates_wallet_position_monotonically(self):
         self.store.save("wallet_A", "sig_newer", slot=200)
         self.store.mark_processed("wallet_A", "sig_newer")

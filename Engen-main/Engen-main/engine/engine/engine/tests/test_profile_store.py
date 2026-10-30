@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from engine.profile_store import ProfileStore
@@ -70,6 +71,51 @@ class ProfileStoreTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM profile_transactions").fetchone()[0], 1)
             row = db.execute("SELECT raw_amount,token_decimals,observed_at FROM transactions").fetchone()
         self.assertEqual(row, ("000123", 6, "2026-01-02T03:04:05Z"))
+
+    def test_wallet_activity_retains_latest_1000_per_source_wallet(self):
+        profile = self.store.create_profile("Retention")
+        second_wallet = "So11111111111111111111111111111111111111112"
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        self.store.associate_source_wallet(profile, second_wallet)
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+        for index in range(1005):
+            observed = (start + timedelta(seconds=index)).isoformat().replace("+00:00", "Z")
+            self.store.save_transaction(
+                signature=f"wallet-a-{index:04d}",
+                source_wallet_address=PUBLIC_ADDRESS,
+                classification="UNKNOWN",
+                status="observed",
+                slot=10000 + index,
+                block_time=1700000000 + index,
+                profile_ids=[profile],
+                observed_at=observed,
+            )
+
+        self.store.save_transaction(
+            "wallet-b-only", second_wallet, profile_ids=[profile],
+            observed_at="2026-01-02T00:00:00Z",
+        )
+        with sqlite3.connect(self.path) as db:
+            total = db.execute(
+                "SELECT COUNT(*) FROM transactions WHERE source_wallet_address=?",
+                (PUBLIC_ADDRESS,),
+            ).fetchone()[0]
+            oldest = db.execute(
+                "SELECT COUNT(*) FROM transactions WHERE signature='wallet-a-0004'"
+            ).fetchone()[0]
+            newest = db.execute(
+                "SELECT COUNT(*) FROM transactions WHERE signature='wallet-a-1004'"
+            ).fetchone()[0]
+            second_wallet_total = db.execute(
+                "SELECT COUNT(*) FROM transactions WHERE source_wallet_address=?",
+                (second_wallet,),
+            ).fetchone()[0]
+        self.assertEqual(total, 1000)
+        self.assertEqual(oldest, 0)
+        self.assertEqual(newest, 1)
+        self.assertEqual(second_wallet_total, 1)
+        self.assertEqual(len(self.store.list_transactions(profile)), 1001)
 
     def test_balance_snapshots_keep_history_and_latest_current(self):
         p = self.store.create_profile("Portfolio")

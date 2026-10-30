@@ -6,6 +6,7 @@ from pathlib import Path
 
 
 DEFAULT_DB_PATH = Path("data/signatures.db")
+MAX_RAW_TRANSACTION_RECORDS_PER_WALLET = 1000
 
 
 class SignatureStore:
@@ -86,6 +87,62 @@ class SignatureStore:
                         PRIMARY KEY (wallet_address, signature)
                     )
                 """)
+                pruned = self._prune_transaction_records(
+                    connection, limit=MAX_RAW_TRANSACTION_RECORDS_PER_WALLET
+                )
+        if pruned:
+            # Keep all compact signature checkpoints for deduplication, but reclaim
+            # the large raw-transaction payload pages removed by the retention rule.
+            with closing(self._connect()) as connection:
+                connection.execute("PRAGMA busy_timeout=10000")
+                connection.execute("VACUUM")
+
+    @staticmethod
+    def _prune_transaction_records(connection, wallet_address=None, limit=MAX_RAW_TRANSACTION_RECORDS_PER_WALLET):
+        """Keep only the newest raw transaction payloads per wallet.
+
+        seen_signatures is deliberately never pruned: its compact checkpoints
+        prevent old transactions from being fetched and processed repeatedly.
+        """
+        if wallet_address is None:
+            counts = connection.execute(
+                "SELECT wallet_address, COUNT(*) FROM transaction_records GROUP BY wallet_address"
+            ).fetchall()
+            pruned = 0
+            for address, count in counts:
+                if count > limit:
+                    pruned += SignatureStore._prune_transaction_records(
+                        connection, address, limit
+                    )
+            return pruned
+        count = connection.execute(
+            "SELECT COUNT(*) FROM transaction_records WHERE wallet_address=?",
+            (wallet_address,),
+        ).fetchone()[0]
+        if count <= limit:
+            return 0
+        cursor = connection.execute(
+            """DELETE FROM transaction_records
+               WHERE rowid IN (
+                   SELECT record_rowid FROM (
+                       SELECT tr.rowid AS record_rowid,
+                              ROW_NUMBER() OVER (
+                                  PARTITION BY tr.wallet_address
+                                  ORDER BY COALESCE(ss.slot, -1) DESC,
+                                           COALESCE(ss.first_seen_at, tr.updated_at) DESC,
+                                           tr.updated_at DESC, tr.signature DESC
+                              ) AS retention_rank
+                       FROM transaction_records tr
+                       LEFT JOIN seen_signatures ss
+                         ON ss.wallet_address=tr.wallet_address
+                        AND ss.signature=tr.signature
+                       WHERE tr.wallet_address=?
+                   ) ranked
+                   WHERE retention_rank>?
+               )""",
+            (wallet_address, limit),
+        )
+        return cursor.rowcount
 
     @staticmethod
     def _validate_wallet(wallet_address):
@@ -301,6 +358,10 @@ class SignatureStore:
                          processing_status = excluded.processing_status,
                          updated_at = CURRENT_TIMESTAMP""",
                     (wallet_address, signature, raw_json, processing_status),
+                )
+                self._prune_transaction_records(
+                    connection, wallet_address,
+                    MAX_RAW_TRANSACTION_RECORDS_PER_WALLET,
                 )
         return True
 

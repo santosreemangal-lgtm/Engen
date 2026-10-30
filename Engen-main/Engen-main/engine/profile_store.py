@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 DEFAULT_DB_PATH = Path("data/profiles.db")
+MAX_WALLET_ACTIVITY_TRANSACTIONS = 1000
 LABELS = {"BUY_CANDIDATE", "SELL_CANDIDATE", "TRANSFER", "UNKNOWN",
           "FAILED_TRANSACTION", "RENT", "LIQUIDITY_OPERATION"}
 STATUSES = {"observed", "confirmed", "failed", "pending", "unknown"}
@@ -157,6 +158,60 @@ class ProfileStore:
                 CREATE INDEX idx_transactions_observed ON transactions(observed_at);
                 """)
                 db.execute("PRAGMA user_version=1")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_transactions_wallet_history
+                ON transactions(source_wallet_address, block_time DESC, observed_at DESC, signature DESC)""")
+            wallets = [row[0] for row in db.execute(
+                "SELECT DISTINCT source_wallet_address FROM transactions"
+            )]
+            pruned = sum(
+                self._prune_wallet_transactions(db, wallet, MAX_WALLET_ACTIVITY_TRANSACTIONS)
+                for wallet in wallets
+            )
+        if pruned:
+            self._compact_after_retention()
+
+    @staticmethod
+    def _prune_wallet_transactions(db, wallet_address, limit=MAX_WALLET_ACTIVITY_TRANSACTIONS):
+        """Keep the newest observed history rows per source wallet."""
+        count = db.execute(
+            "SELECT COUNT(*) FROM transactions WHERE source_wallet_address=?",
+            (wallet_address,),
+        ).fetchone()[0]
+        if count <= limit:
+            return 0
+        stale = """
+            SELECT signature FROM (
+                SELECT signature,
+                       ROW_NUMBER() OVER (
+                           ORDER BY CASE WHEN block_time IS NULL THEN 1 ELSE 0 END,
+                                    block_time DESC, observed_at DESC, signature DESC
+                       ) AS retention_rank
+                FROM transactions
+                WHERE source_wallet_address=?
+            ) ranked
+            WHERE retention_rank>?
+        """
+        db.execute(
+            "DELETE FROM profile_transactions WHERE signature IN (" + stale + ")",
+            (wallet_address, limit),
+        )
+        before = db.total_changes
+        db.execute(
+            "DELETE FROM transactions WHERE source_wallet_address=? AND signature IN (" + stale + ")",
+            (wallet_address, wallet_address, limit),
+        )
+        return db.total_changes - before
+
+    def _compact_after_retention(self):
+        """Reclaim pages after one-time startup pruning; never vacuum per inserted row."""
+        try:
+            with closing(self.connect()) as db:
+                db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                db.execute("VACUUM")
+                db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.OperationalError:
+            # Retention has already been committed; SQLite can reuse free pages later.
+            pass
 
     def create_profile(self, name, destination_public_address=None, settings=None):
         if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80:
@@ -357,6 +412,7 @@ class ProfileStore:
                     raise ValueError("Associate source wallet with profile before linking transaction.")
                 db.execute("INSERT OR IGNORE INTO profile_transactions VALUES(?,?,?)",
                            (pid,signature,utc_now()))
+            self._prune_wallet_transactions(db, source_wallet_address)
         return signature
 
     def save_balance_snapshot(self, profile_id, wallet_address, token_mint, raw_amount,

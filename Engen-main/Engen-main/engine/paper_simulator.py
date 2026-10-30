@@ -10,6 +10,9 @@ from pathlib import Path
 from engine.pnl import MarketPrice, decimal_value, parse_timestamp
 
 
+MAX_PAPER_TRADE_HISTORY = 100
+
+
 class PaperSimulator:
     """Persist simulated orders/fills; never broadcasts or signs transactions."""
 
@@ -36,8 +39,118 @@ class PaperSimulator:
     def _connect(self):
         return sqlite3.connect(str(self.db_path))
 
+    @staticmethod
+    def _trim_archived_history_in_connection(db, limit=MAX_PAPER_TRADE_HISTORY):
+        """Keep the latest paper orders across archived sessions, with matching fills/P&L."""
+        rows = db.execute(
+            """SELECT archive_id,archived_at,orders_json,fills_json,pnl_events_json
+               FROM simulator_session_archive ORDER BY archived_at DESC"""
+        ).fetchall()
+        parsed = []
+        order_rows = []
+        for archive_id, archived_at, orders_json, fills_json, pnl_events_json in rows:
+            try:
+                orders = json.loads(orders_json)
+                fills = json.loads(fills_json)
+                events = json.loads(pnl_events_json)
+            except (TypeError, json.JSONDecodeError):
+                # Leave malformed archives untouched rather than deleting user history.
+                continue
+            orders = orders if isinstance(orders, list) else []
+            fills = fills if isinstance(fills, list) else []
+            events = events if isinstance(events, list) else []
+            parsed.append((archive_id, archived_at, orders, fills, events))
+            for order in orders:
+                if isinstance(order, dict) and order.get("order_id"):
+                    order_rows.append((
+                        str(order.get("created_at") or archived_at or ""),
+                        str(archive_id),
+                        str(order["order_id"]),
+                    ))
+
+        order_rows.sort(reverse=True)
+        keep = {(archive_id, order_id) for _, archive_id, order_id in order_rows[:limit]}
+        removed = max(0, len(order_rows) - len(keep))
+        for archive_id, archived_at, orders, fills, events in parsed:
+            kept_orders = [
+                order for order in orders
+                if isinstance(order, dict) and order.get("order_id")
+                and (str(archive_id), str(order["order_id"])) in keep
+            ]
+            kept_order_ids = {str(order["order_id"]) for order in kept_orders}
+            if not kept_orders:
+                db.execute(
+                    "DELETE FROM simulator_session_archive WHERE archive_id=?",
+                    (archive_id,),
+                )
+                removed += 1
+                continue
+            kept_fills = [
+                fill for fill in fills
+                if not isinstance(fill, dict) or not fill.get("order_id")
+                or str(fill.get("order_id")) in kept_order_ids
+            ]
+            kept_events = [
+                event for event in events
+                if not isinstance(event, dict) or not event.get("order_id")
+                or str(event.get("order_id")) in kept_order_ids
+            ]
+            if len(kept_orders) != len(orders) or len(kept_fills) != len(fills) or len(kept_events) != len(events):
+                db.execute(
+                    """UPDATE simulator_session_archive
+                       SET orders_json=?,fills_json=?,pnl_events_json=?
+                       WHERE archive_id=?""",
+                    (
+                        json.dumps(kept_orders, sort_keys=True),
+                        json.dumps(kept_fills, sort_keys=True),
+                        json.dumps(kept_events, sort_keys=True),
+                        archive_id,
+                    ),
+                )
+        return removed
+
+    @staticmethod
+    def _trim_legacy_paper_trades_in_connection(db, limit=MAX_PAPER_TRADE_HISTORY):
+        """Trim the retired legacy trade table without touching current simulator fills."""
+        tables = {
+            row[0] for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        if "paper_trades" not in tables:
+            return 0
+        before = db.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0]
+        if before <= limit:
+            return 0
+        db.execute(
+            """DELETE FROM paper_trades
+               WHERE id NOT IN (
+                   SELECT id FROM paper_trades
+                   ORDER BY created_at DESC, id DESC LIMIT ?
+               )""",
+            (limit,),
+        )
+        return before - db.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0]
+
+    @staticmethod
+    def _vacuum_database(path):
+        try:
+            with closing(sqlite3.connect(str(path), timeout=10)) as db:
+                db.execute("PRAGMA busy_timeout=10000")
+                db.execute("VACUUM")
+        except sqlite3.OperationalError:
+            # Data retention has committed; SQLite can reuse free pages later.
+            pass
+
+    def _trim_persisted_history(self, db):
+        return (
+            self._trim_archived_history_in_connection(db)
+            + self._trim_legacy_paper_trades_in_connection(db)
+        )
+
     def _initialize(self):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        trimmed = 0
         with closing(self._connect()) as db:
             with db:
                 db.execute("PRAGMA foreign_keys=ON")
@@ -89,6 +202,9 @@ class PaperSimulator:
                      "reference_price","execution_price","gross_quote","fee","network_cost",
                      "net_quote","currency","price_source","price_timestamp","price_age_seconds",
                      "slippage_bps","created_at"), row)) for row in fill_rows]
+                trimmed = self._trim_persisted_history(db)
+        if trimmed:
+            self._vacuum_database(self.db_path)
         self._rebuild_pnl_ledger()
 
     def _persist(self, order, balances=None, fill=None):
@@ -223,6 +339,7 @@ class PaperSimulator:
             "pnl_events": [dict(event) for event in self.pnl_events],
         }
         has_history = bool(archive["orders"] or archive["fills"])
+        trimmed = 0
 
         if self.db_path is not None:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -279,8 +396,12 @@ class PaperSimulator:
                             "INSERT INTO paper_balances(mint,amount) VALUES(?,?)",
                             (mint, str(value)),
                         )
+                    trimmed = self._trim_persisted_history(db)
+            if trimmed:
+                self._vacuum_database(self.db_path)
         elif has_history:
             self._archived_sessions.append(archive)
+            self._trim_memory_archives()
 
         self.balances = {mint: value}
         self.orders = {}
@@ -299,6 +420,44 @@ class PaperSimulator:
             "real_trading": False,
             "transaction_broadcast": False,
         }
+
+    def _trim_memory_archives(self, limit=MAX_PAPER_TRADE_HISTORY):
+        """Apply the same archived-order limit to non-persistent simulator instances."""
+        records = []
+        for session_index, session in enumerate(self._archived_sessions):
+            archived_at = str(session.get("archived_at") or "")
+            for order in session.get("orders", []):
+                if isinstance(order, dict) and order.get("order_id"):
+                    records.append((
+                        str(order.get("created_at") or archived_at),
+                        session_index,
+                        str(order["order_id"]),
+                    ))
+        records.sort(reverse=True)
+        keep = {(session_index, order_id) for _, session_index, order_id in records[:limit]}
+        retained = []
+        for session_index, session in enumerate(self._archived_sessions):
+            orders = [
+                order for order in session.get("orders", [])
+                if isinstance(order, dict) and order.get("order_id")
+                and (session_index, str(order["order_id"])) in keep
+            ]
+            order_ids = {str(order["order_id"]) for order in orders}
+            if not orders:
+                continue
+            session["orders"] = orders
+            session["fills"] = [
+                fill for fill in session.get("fills", [])
+                if not isinstance(fill, dict) or not fill.get("order_id")
+                or str(fill.get("order_id")) in order_ids
+            ]
+            session["pnl_events"] = [
+                event for event in session.get("pnl_events", [])
+                if not isinstance(event, dict) or not event.get("order_id")
+                or str(event.get("order_id")) in order_ids
+            ]
+            retained.append(session)
+        self._archived_sessions = retained
 
     def add_virtual_balance(self, mint, amount):
         """Add explicitly virtual funds to one paper token balance; never touches a real wallet."""

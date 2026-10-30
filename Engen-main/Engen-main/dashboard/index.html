@@ -1296,9 +1296,11 @@ async function loadPaperTradeHistory(reportOverride){
   );
   const archivedFills=archivedSessions.flatMap(session=>Array.isArray(session.fills)?session.fills:[]);
   const archivedPnlEvents=archivedSessions.flatMap(session=>Array.isArray(session.pnl_events)?session.pnl_events:[]);
-  const orders=[...activeOrders,...archivedOrders].sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
-  const fills=[...activeFills,...archivedFills];
-  const pnlEvents=[...activePnlEvents,...archivedPnlEvents];
+  const allOrders=[...activeOrders,...archivedOrders].sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
+  const orders=allOrders.slice(0,100);
+  const visibleOrderIds=new Set(orders.map(order=>String(order.order_id||"")));
+  const fills=[...activeFills,...archivedFills].filter(fill=>visibleOrderIds.has(String(fill.order_id||"")));
+  const pnlEvents=[...activePnlEvents,...archivedPnlEvents].filter(event=>visibleOrderIds.has(String(event.order_id||"")));
   const fillByOrder=new Map(fills.map(fill=>[fill.order_id,fill]));
   const pnlByOrder=new Map(pnlEvents.filter(event=>event.order_id).map(event=>[event.order_id,event]));
   $("paper-trade-total").textContent=orders.length.toLocaleString();
@@ -1375,7 +1377,7 @@ async function loadPaperTradeHistory(reportOverride){
   void loadHistoryTokenMetadata(orders.map(order=>order.asset_mint));
   refreshPaperTradeAges();
   say("paper-trade-history-message",orders.length
-   ?"Showing "+orders.length+" paper order(s). Buy/Sell colors identify the side; Age updates every second. Total USD, Profit and simulated Gas are shown only when a fill exists. Market cap is shown only when verified data is available."
+   ?"Showing "+orders.length+" of "+allOrders.length+" paper order(s); the 100 most recent are retained in History. Buy/Sell colors identify the side; Age updates every second. Total USD, Profit and simulated Gas are shown only when a fill exists. Market cap is shown only when verified data is available."
    :"Paper orders appear after the copy engine queues them. Wallet Activity remains separate from simulated paper trades.");
  }catch(e){
   historySetEmpty(tbody,9,e.message||"Unable to load paper history.");

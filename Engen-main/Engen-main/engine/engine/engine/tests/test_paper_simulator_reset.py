@@ -1,7 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -123,6 +123,40 @@ class PaperSimulatorResetTests(unittest.TestCase):
                 created_at=created_at,
             )
             self.assertEqual(next_order["status"], "CREATED")
+
+    def test_archived_trade_history_retains_only_latest_100_orders(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "paper_trading.db"
+            simulator = PaperSimulator(db_path=db_path)
+            start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            for index in range(105):
+                created_at = (start + timedelta(seconds=index)).isoformat()
+                simulator.create_order(
+                    f"retention-signal-{index:03d}",
+                    "BUY",
+                    "TEST_TOKEN",
+                    "1",
+                    "USD",
+                    created_at=created_at,
+                )
+
+            simulator.reset_session("100", "USD")
+            report = simulator.report()
+            self.assertEqual(report["orders"], [])
+            self.assertEqual(report["balances"], {"USD": "100"})
+            self.assertEqual(len(report["archived_sessions"]), 1)
+            archived_orders = report["archived_sessions"][0]["orders"]
+            self.assertEqual(len(archived_orders), 100)
+            signal_ids = {order["signal_id"] for order in archived_orders}
+            self.assertNotIn("retention-signal-000", signal_ids)
+            self.assertNotIn("retention-signal-004", signal_ids)
+            self.assertIn("retention-signal-005", signal_ids)
+            self.assertIn("retention-signal-104", signal_ids)
+
+            reopened = PaperSimulator(db_path=db_path)
+            self.assertEqual(
+                len(reopened.report()["archived_sessions"][0]["orders"]), 100
+            )
 
     def test_reset_rejects_zero_balance_without_changing_the_session(self):
         simulator = PaperSimulator({"USD": "100"})

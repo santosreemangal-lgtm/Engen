@@ -24,7 +24,10 @@ class FakeConnection:
 
     def recv(self):
         if self.messages:
-            return self.messages.pop(0)
+            message = self.messages.pop(0)
+            if not message and self.stop_event is not None:
+                self.stop_event.set()
+            return message
         if self.stop_event is not None:
             self.stop_event.set()
         return ""

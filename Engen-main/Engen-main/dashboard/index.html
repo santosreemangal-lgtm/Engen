@@ -228,6 +228,59 @@ footer.hint{padding:10px 4px;line-height:1.7}
 #paper-history-panel .history-overview{margin:5px 0 8px}
 .history-toolbar{margin-top:8px;margin-bottom:8px}
 .history-tab{padding:8px 12px}
+
+/* Unified GMGN-inspired activity styling. Existing dashboard backgrounds are retained. */
+#history-details>summary{font-size:15px;font-weight:800;letter-spacing:-.02em;padding:8px 2px 10px}
+.history-toolbar{align-items:center;gap:10px;margin:8px 0 10px}
+.history-tabs{gap:7px}
+.history-tab{min-height:36px;padding:8px 13px;border-radius:8px;font-size:12px;letter-spacing:-.01em;transition:border-color .15s,filter .15s,transform .15s}
+.history-tab:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.history-tab:focus-visible,.history-filters button:focus-visible,.history-token-copy:focus-visible{outline:2px solid #8ab7ff;outline-offset:2px}
+.history-filters{gap:7px}
+.history-filters select,.history-filters input{min-height:38px;padding:8px 11px;border-radius:8px;font-size:12px}
+.history-filters button{min-height:36px;padding:8px 12px;border-radius:8px;font-size:11px}
+.history-overview{margin:5px 0 9px;gap:10px}
+.history-overview strong{font-size:20px;font-weight:800;letter-spacing:-.04em}
+.history-overview span,.history-overview small{font-size:11px}
+.history-overview p{font-size:11px;line-height:1.45}
+.history-table-wrap{border-radius:10px}
+.history-table{min-width:760px;font-variant-numeric:tabular-nums}
+.history-table th{padding:10px 11px;font-size:9px;letter-spacing:.075em;font-weight:800}
+.history-table td{padding:9px 11px;font-size:11px;line-height:1.35}
+.history-table tbody tr{transition:filter .12s}
+.history-table tbody tr:hover{filter:brightness(1.08)}
+.history-pill{padding:4px 8px;border-radius:6px;font-size:9px;letter-spacing:.015em;font-weight:850}
+.history-pill.buy,.history-pill.confirmed{color:#66e2b2;border-color:#246a58}
+.history-pill.sell{color:#ff8c98;border-color:#78404a}
+.history-pill.failed,.history-pill.rejected{color:#ff929f;border-color:#71404a}
+.history-pill.pending,.history-pill.created,.history-pill.waiting{color:#e8c878;border-color:#6e5e34}
+.history-token-cell{min-width:145px;max-width:240px;gap:8px}
+.history-token-icon{width:27px;height:27px;flex:0 0 27px;display:grid;place-items:center;border:1px solid hsl(var(--token-hue,215) 48% 48%);border-radius:50%;color:hsl(var(--token-hue,215) 88% 82%);font-size:9px;font-weight:900;letter-spacing:-.03em}
+.history-token-labels{gap:2px}
+.history-token-primary{font-size:11px;font-weight:850}
+.history-token-secondary{font-size:9px}
+.history-token-copy{width:23px;height:23px;padding:0;border-radius:6px;font-size:13px;display:inline-grid;place-items:center}
+.history-token-copy.copied{font-size:9px}
+.history-wallet-address{display:block;color:#aebbd0;font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:-.025em;white-space:nowrap}
+.history-age,.paper-age{color:#c7d2e3;font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.activity-buy-value{color:#62dcae!important;font-weight:800}
+.activity-sell-value{color:#ff8997!important;font-weight:800}
+.observed-buy-row td:first-child{border-left:2px solid #36c997}
+.observed-sell-row td:first-child{border-left:2px solid #ed7888}
+.history-link{font-size:10px;font-weight:800;letter-spacing:-.01em}
+.history-pagination{margin-top:10px}
+.history-pagination button{min-height:33px;padding:7px 11px;font-size:10px}
+.paper-trades-table th{font-size:9px;letter-spacing:.075em}
+.paper-trades-table td{font-size:11px}
+.paper-type-cell .history-pill{min-width:42px;justify-content:center}
+.paper-profit{font-size:11px}
+.paper-share-btn{font-size:10px!important;font-weight:800!important}
+@media(max-width:760px){
+ .history-table th,.history-table td{padding:9px 8px}
+ .history-token-cell{min-width:130px}
+ .history-token-icon{width:23px;height:23px;flex-basis:23px}
+ .history-filters select,.history-filters input{font-size:11px}
+}
 </style>
 </head>
 <body><main>
@@ -311,7 +364,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </div>
 <section id="observed-history-panel" class="history-subpanel" role="tabpanel" aria-labelledby="observed-history-tab">
  <div class="history-overview"><div><strong id="observed-history-total">—</strong><span>matched wallet transactions</span></div><p class="hint">Public on-chain activity from monitored wallets. These rows are not simulated trades.</p></div>
- <div class="history-table-wrap"><table class="history-table"><thead><tr><th>Time</th><th>Type</th><th>Token mint</th><th>Amount</th><th>Source wallet</th><th>Chain status</th><th>Explorer</th></tr></thead><tbody id="transaction-history-table"><tr><td colspan="7" class="history-empty">Select a profile to load wallet activity.</td></tr></tbody></table></div>
+ <div class="history-table-wrap"><table class="history-table"><thead><tr><th>Age</th><th>Type</th><th>Token</th><th>Amount</th><th>Source wallet</th><th>Status</th><th>Explorer</th></tr></thead><tbody id="transaction-history-table"><tr><td colspan="7" class="history-empty">Select a profile to load wallet activity.</td></tr></tbody></table></div>
  <div class="history-pagination"><button id="transaction-history-prev" type="button" disabled>Previous</button><span id="transaction-history-page">Page 1</span><button id="transaction-history-next" type="button" disabled>Next</button></div>
  <p id="transaction-history-message" class="message" role="status"></p>
 </section>
@@ -616,15 +669,21 @@ let historyTokenMetadataQueue=Promise.resolve();
 function updateHistoryTokenCell(container){
  const mint=container.dataset.tokenMint||"";
  const primary=container.querySelector(".history-token-primary");
- if(!primary)return;
+ const secondary=container.querySelector(".history-token-secondary");
+ const icon=container.querySelector(".history-token-icon");
+ if(!primary||!secondary||!icon)return;
  const meta=historyTokenMetadataCache.get(mint);
  const name=meta&&typeof meta.name==="string"?meta.name.trim():"";
  const symbol=meta&&typeof meta.symbol==="string"?meta.symbol.trim():"";
- // Never display a mint address here, even when public token metadata is missing.
  const unavailable=meta&&["unavailable","service_error"].includes(meta.status);
- const display=name||symbol||(unavailable?"Token metadata service unavailable":"Token name unavailable");
+ const display=symbol||name||(unavailable?"Token data unavailable":"Token unavailable");
  primary.textContent=display;
- primary.title=display;
+ primary.title=name&&symbol?name+" · "+symbol:display;
+ secondary.textContent=name&&symbol?name:historyShortAddress(mint);
+ const initials=(symbol||name||"T").replace(/[^a-z0-9]/gi,"").slice(0,2).toUpperCase()||"T";
+ icon.textContent=initials;
+ let hue=0;for(const character of mint)hue=(hue*31+character.charCodeAt(0))%360;
+ icon.style.setProperty("--token-hue",String(hue));
 }
 function updatePaperTokenCell(container){
  const mint=container.dataset.tokenMint||"";
@@ -651,13 +710,15 @@ function makeHistoryTokenCell(mint){
  const cell=document.createElement("td");
  if(!mint){cell.textContent="Token unavailable";return cell;}
  const wrapper=document.createElement("div");wrapper.className="history-token-cell";wrapper.dataset.tokenMint=mint;
+ const icon=document.createElement("span");icon.className="history-token-icon";icon.textContent="T";
  const labels=document.createElement("div");labels.className="history-token-labels";
- const primary=document.createElement("span");primary.className="history-token-primary";primary.textContent="Token name unavailable";primary.title="Token name unavailable";
- labels.append(primary);
- const copy=document.createElement("button");copy.type="button";copy.className="history-token-copy";copy.textContent="Copy";
+ const primary=document.createElement("span");primary.className="history-token-primary";primary.textContent="Token unavailable";
+ const secondary=document.createElement("span");secondary.className="history-token-secondary";secondary.textContent=historyShortAddress(mint);
+ labels.append(primary,secondary);
+ const copy=document.createElement("button");copy.type="button";copy.className="history-token-copy";copy.textContent="⧉";
  copy.title="Copy full token mint address";copy.setAttribute("aria-label","Copy full token mint address");
  copy.addEventListener("click",()=>copyHistoryTokenMint(mint,copy));
- wrapper.append(labels,copy);cell.append(wrapper);updateHistoryTokenCell(wrapper);
+ wrapper.append(icon,labels,copy);cell.append(wrapper);updateHistoryTokenCell(wrapper);
  return cell;
 }
 function makePaperTokenCell(mint){
@@ -774,13 +835,25 @@ async function loadTransactionHistory(){
   if(!transactions.length)historySetEmpty(tbody,7,d.error||"No activity matches these filters.");
   transactions.forEach(tx=>{
    const row=document.createElement("tr");
-   historyCell(row,historyDate(tx.observed_at));
-   const typeCell=document.createElement("td");typeCell.append(historyPill(historyLabelForClassification(tx.classification),historyClassificationKind(tx.classification)));row.append(typeCell);
+   const sideKind=historyClassificationKind(tx.classification);
+   if(sideKind==="buy")row.classList.add("observed-buy-row");
+   if(sideKind==="sell")row.classList.add("observed-sell-row");
+   const ageCell=historyCell(row,formatPaperAge(tx.observed_at),"history-age");
+   if(tx.observed_at){ageCell.dataset.createdAt=tx.observed_at;ageCell.title="Observed: "+historyDate(tx.observed_at);}
+   const typeCell=document.createElement("td");
+   const typePill=historyPill(historyLabelForClassification(tx.classification),sideKind);
+   typePill.title=String(tx.classification||"UNKNOWN").replaceAll("_"," ");
+   typeCell.append(typePill);row.append(typeCell);
    row.append(makeHistoryTokenCell(tx.token_mint));
    const amountCell=historyCell(row,historyAmount(tx.amount));
+   if(sideKind==="buy")amountCell.classList.add("activity-buy-value");
+   if(sideKind==="sell")amountCell.classList.add("activity-sell-value");
    if(tx.amount!==null&&tx.amount!==undefined)amountCell.title="Exact amount: "+String(tx.amount);
-   const walletCell=document.createElement("td");const wallet=document.createElement("span");wallet.className="history-main";wallet.textContent=historyShortAddress(tx.source_wallet_address);wallet.title=tx.source_wallet_address||"";walletCell.append(wallet);row.append(walletCell);
-   const statusCell=document.createElement("td");const status=String(tx.status||"unknown").toLowerCase();statusCell.append(historyPill(status.toUpperCase(),["confirmed","failed","pending","observed"].includes(status)?status:""));row.append(statusCell);
+   const walletCell=document.createElement("td");const wallet=document.createElement("span");
+   wallet.className="history-wallet-address";wallet.textContent=historyShortAddress(tx.source_wallet_address);
+   wallet.title=tx.source_wallet_address||"";walletCell.append(wallet);row.append(walletCell);
+   const statusCell=document.createElement("td");const status=String(tx.status||"unknown").toLowerCase();
+   statusCell.append(historyPill(status.toUpperCase(),["confirmed","failed","pending","observed"].includes(status)?status:""));row.append(statusCell);
    const actionCell=document.createElement("td");
    if(tx.signature){const link=document.createElement("a");link.className="history-link";link.href="https://solscan.io/tx/"+encodeURIComponent(tx.signature);link.target="_blank";link.rel="noopener noreferrer";link.textContent="View tx ↗";actionCell.append(link);const sig=document.createElement("small");sig.className="history-sub";sig.textContent=historyShortAddress(tx.signature);sig.title=tx.signature;actionCell.append(sig);}
    else actionCell.textContent="—";
@@ -832,7 +905,7 @@ function formatPaperAge(value){
  return Math.floor(hours/24)+"d ago";
 }
 function refreshPaperTradeAges(){
- document.querySelectorAll(".paper-age[data-created-at]").forEach(cell=>{
+ document.querySelectorAll(".paper-age[data-created-at],.history-age[data-created-at]").forEach(cell=>{
   cell.textContent=formatPaperAge(cell.dataset.createdAt);
  });
 }

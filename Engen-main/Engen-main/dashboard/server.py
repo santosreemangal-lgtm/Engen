@@ -33,7 +33,11 @@ from dashboard.monitor_service import MonitorService
 from engine.logger import redact
 from engine.pnl import MarketPrice, realized_pnl_from_fills
 from engine.market_data import fetch_market_price
-from engine.paper_copy_runner import (get_paper_simulator, MIN_PAPER_LIQUIDITY_USD, PAPER_SIMULATOR_LOCK as paper_simulator_lock)
+from engine.paper_copy_runner import (
+    get_paper_simulator, MIN_PAPER_LIQUIDITY_USD,
+    PAPER_LIQUIDITY_NOTIONAL_MULTIPLE, PAPER_SLIPPAGE_BPS, PAPER_FEE_BPS,
+    PAPER_SIMULATOR_LOCK as paper_simulator_lock,
+)
 from engine.paper_simulator import PaperSimulator
 from engine.solana_public import get_public_health, SolanaRPCError
 
@@ -1120,6 +1124,135 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/paper-simulation":
             action = payload.get("action")
+            if action == "sell-all-profile-positions":
+                if payload.get("confirmed") is not True:
+                    self.send_json(400, {"error": "Explicit confirmation is required before paper Sell All."})
+                    return
+                try:
+                    profile_id = canonical_profile_id(payload.get("profile_id"))
+                    profile = get_profile_record(profile_id)
+                    if profile is None:
+                        self.send_json(404, {"error": "Profile not found."})
+                        return
+                    outcomes = []
+                    skipped = []
+                    sold_mints = set()
+                    now = datetime.now(timezone.utc).isoformat()
+                    with paper_simulator_lock:
+                        simulator = get_profile_paper_simulator(profile_id)
+                        # Only assets with an actual filled BUY from the automatic copy
+                        # engine are eligible. Arbitrary/manual balances are never bulk-sold.
+                        copied_mints = {
+                            order.get("asset_mint")
+                            for order in simulator.orders.values()
+                            if order.get("side") == "BUY"
+                            and order.get("status") == "FILLED"
+                            and (order.get("details") or {}).get("origin") == "AUTOMATIC_WALLET_COPY"
+                        }
+                        for mint in sorted(copied_mints):
+                            try:
+                                quantity = Decimal(str(simulator.balances.get(mint, "0")))
+                            except Exception:
+                                quantity = Decimal("0")
+                            if not quantity.is_finite() or quantity <= 0:
+                                continue
+                            try:
+                                validate_public_address(mint, "token mint")
+                            except ValueError:
+                                skipped.append({"token": str(mint), "status": "SKIPPED", "reason": "Token mint is not a valid public Solana address."})
+                                continue
+                            try:
+                                market_price = fetch_market_price(mint)
+                            except Exception:
+                                market_price = None
+                            if (
+                                not isinstance(market_price, MarketPrice)
+                                or market_price.mint != mint
+                                or str(market_price.currency).upper() != "USD"
+                                or not market_price.is_fresh(max_age_seconds=60, now=now)
+                            ):
+                                skipped.append({"token": mint, "status": "SKIPPED", "reason": "A fresh verified USD price is unavailable."})
+                                continue
+                            if market_price.liquidity_usd is None:
+                                skipped.append({"token": mint, "status": "SKIPPED", "reason": "Pool liquidity data is unavailable."})
+                                continue
+                            if market_price.liquidity_age_seconds(now) > 60:
+                                skipped.append({"token": mint, "status": "SKIPPED", "reason": "Pool liquidity data is stale."})
+                                continue
+                            estimated_notional = quantity * market_price.price
+                            required_liquidity = max(
+                                MIN_PAPER_LIQUIDITY_USD,
+                                estimated_notional * PAPER_LIQUIDITY_NOTIONAL_MULTIPLE,
+                            )
+                            if market_price.liquidity_usd < required_liquidity:
+                                skipped.append({
+                                    "token": mint, "status": "SKIPPED",
+                                    "reason": "Pool liquidity is below the required USD minimum of $" + format(required_liquidity, "f") + ".",
+                                })
+                                continue
+                            order = simulator.create_order(
+                                signal_id="manual-paper-sell-all:" + profile_id + ":" + str(uuid.uuid4()),
+                                side="SELL",
+                                asset_mint=mint,
+                                quantity=format(quantity, "f"),
+                                quote_mint="USD",
+                                created_at=now,
+                                details={
+                                    "origin": "MANUAL_PAPER_SELL_ALL",
+                                    "profile_id": profile_id,
+                                    "paper_action": "SELL_ALL",
+                                    "execution_state": "AWAITING_VERIFIED_MARKET_DATA",
+                                    "real_trading": False,
+                                    "transaction_broadcast": False,
+                                },
+                            )
+                            if order.get("status") == "DUPLICATE":
+                                skipped.append({"token": mint, "status": "SKIPPED", "reason": "A duplicate paper Sell All order was detected."})
+                                continue
+                            try:
+                                result = simulator.execute_order(
+                                    order["order_id"],
+                                    market_price,
+                                    now=now,
+                                    max_price_age_seconds=60,
+                                    slippage_bps=PAPER_SLIPPAGE_BPS,
+                                    fee_bps=PAPER_FEE_BPS,
+                                    min_liquidity_usd=required_liquidity,
+                                    max_liquidity_age_seconds=60,
+                                    network_cost=0,
+                                    require_liquidity=True,
+                                )
+                            except Exception as exc:
+                                result = {"status": "EXECUTION_ERROR", "reason": "Paper execution failed validation (" + type(exc).__name__ + ")."}
+                            if result.get("status") == "FILLED":
+                                sold_mints.add(mint)
+                                outcomes.append({
+                                    "token": mint, "order_id": order["order_id"],
+                                    "status": "FILLED", "quantity": format(quantity, "f"),
+                                    "simulated": True,
+                                })
+                            else:
+                                skipped.append({
+                                    "token": mint, "status": result.get("status", "NOT_FILLED"),
+                                    "reason": result.get("reason") or "The paper simulator did not complete this fill.",
+                                })
+                    report = load_profile_paper_simulation_report(profile_id)
+                    self.send_json(200, {
+                        "profile_id": profile_id,
+                        "sold_positions": len(sold_mints),
+                        "outcomes": outcomes,
+                        "skipped": skipped,
+                        "simulated": True,
+                        "real_trading": False,
+                        "transaction_broadcast": False,
+                        "report": report,
+                    })
+                except ValueError as exc:
+                    status = 404 if str(exc) == "Profile not found." else 400
+                    self.send_json(status, {"error": str(exc)})
+                except (OSError, sqlite3.Error) as exc:
+                    self.send_json(503, {"error": "Paper simulation storage unavailable (" + type(exc).__name__ + ")."})
+                return
             if action == "initialize-profile-ledger":
                 try:
                     result = initialize_profile_paper_ledger(payload.get("profile_id"))

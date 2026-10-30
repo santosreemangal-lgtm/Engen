@@ -9,11 +9,15 @@ from urllib.request import Request, urlopen
 from unittest.mock import patch
 from pathlib import Path
 from urllib.parse import parse_qs
+from datetime import datetime, timezone
+from decimal import Decimal
 
 from dashboard import server as dashboard_server
 from dashboard import monitor_bridge
 from engine.profile_store import ProfileStore
 from engine.paper_trader import PaperTrader
+from engine.paper_simulator import PaperSimulator
+from engine.pnl import MarketPrice
 
 PUBLIC_WALLET = "11111111111111111111111111111111"
 TOKEN_MINT = "So11111111111111111111111111111111111111112"
@@ -213,6 +217,84 @@ class DashboardProfileApiTests(unittest.TestCase):
     def test_public_token_metadata_rejects_invalid_mint_addresses(self):
         with self.assertRaises(ValueError):
             dashboard_server.load_public_token_metadata(["not-a-valid-mint"])
+
+    def test_paper_sell_all_requires_confirmation_and_sells_only_copied_open_positions(self):
+        now = datetime.now(timezone.utc).isoformat()
+        simulator = PaperSimulator({"USD": "100"})
+        copied_buy = simulator.create_order(
+            "copy-buy-for-sell-all", "BUY", TOKEN_MINT, "2", "USD",
+            created_at=now,
+            details={"origin": "AUTOMATIC_WALLET_COPY", "source_wallet": PUBLIC_WALLET},
+        )
+        buy_price = MarketPrice(
+            TOKEN_MINT, Decimal("10"), "USD", "test-market", now,
+            liquidity_usd=Decimal("50000"), liquidity_source="test-market",
+            liquidity_observed_at=now,
+        )
+        simulator.execute_order(
+            copied_buy["order_id"], buy_price, now=now,
+            slippage_bps=0, fee_bps=0, network_cost=0,
+            min_liquidity_usd=1000,
+        )
+        simulator.balances["UNRELATED_PAPER_ASSET"] = Decimal("7")
+
+        sale_price = MarketPrice(
+            TOKEN_MINT, Decimal("12"), "USD", "test-market", now,
+            liquidity_usd=Decimal("50000"), liquidity_source="test-market",
+            liquidity_observed_at=now,
+        )
+        with patch.object(dashboard_server, "get_profile_paper_simulator", return_value=simulator), patch.object(
+            dashboard_server, "fetch_market_price", return_value=sale_price
+        ) as market_provider:
+            status, body = self._post_dashboard_api(
+                "/api/paper-simulation",
+                {"action": "sell-all-profile-positions", "profile_id": self.profile_id},
+            )
+            self.assertEqual(status, 400)
+            self.assertEqual(simulator.balances[TOKEN_MINT], Decimal("2"))
+            self.assertEqual(len(simulator.fills), 1)
+            market_provider.assert_not_called()
+
+            status, body = self._post_dashboard_api(
+                "/api/paper-simulation",
+                {"action": "sell-all-profile-positions", "profile_id": self.profile_id, "confirmed": True},
+            )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["sold_positions"], 1)
+        self.assertEqual(body["outcomes"][0]["status"], "FILLED")
+        self.assertEqual(simulator.balances[TOKEN_MINT], Decimal("0"))
+        self.assertEqual(simulator.balances["UNRELATED_PAPER_ASSET"], Decimal("7"))
+        self.assertFalse(body["real_trading"])
+        self.assertFalse(body["transaction_broadcast"])
+
+    def test_paper_sell_all_skips_position_without_fresh_public_market_data(self):
+        now = datetime.now(timezone.utc).isoformat()
+        simulator = PaperSimulator({"USD": "100"})
+        copied_buy = simulator.create_order(
+            "copy-buy-no-price", "BUY", TOKEN_MINT, "2", "USD",
+            created_at=now,
+            details={"origin": "AUTOMATIC_WALLET_COPY", "source_wallet": PUBLIC_WALLET},
+        )
+        buy_price = MarketPrice(
+            TOKEN_MINT, Decimal("10"), "USD", "test-market", now,
+            liquidity_usd=Decimal("50000"), liquidity_source="test-market",
+            liquidity_observed_at=now,
+        )
+        simulator.execute_order(copied_buy["order_id"], buy_price, now=now,
+                                 slippage_bps=0, fee_bps=0, network_cost=0)
+        with patch.object(dashboard_server, "get_profile_paper_simulator", return_value=simulator), patch.object(
+            dashboard_server, "fetch_market_price", return_value=None
+        ):
+            status, body = self._post_dashboard_api(
+                "/api/paper-simulation",
+                {"action": "sell-all-profile-positions", "profile_id": self.profile_id, "confirmed": True},
+            )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["sold_positions"], 0)
+        self.assertEqual(body["skipped"][0]["status"], "SKIPPED")
+        self.assertEqual(simulator.balances[TOKEN_MINT], Decimal("2"))
+        self.assertEqual(len(simulator.fills), 1)
 
     def test_transaction_history_is_bounded_and_paginated(self):
         for index in range(3):

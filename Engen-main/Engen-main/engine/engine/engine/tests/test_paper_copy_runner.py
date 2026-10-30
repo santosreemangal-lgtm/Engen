@@ -115,6 +115,28 @@ class PaperCopyRunnerTests(unittest.TestCase):
         order = next(iter(simulator.orders.values()))
         self.assertEqual(order["details"]["target_notional_usd"], "25")
 
+    def test_fixed_usd_amount_ignores_mirror_only_max_buy_cap(self):
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(
+            WALLET, [candidate_result()], simulator,
+            copy_settings={"sizing_mode": "FIXED_USD", "sizing_value": "25", "max_buy_usd": "5"},
+        )
+        self.assertEqual(len(queued), 1)
+        order = next(iter(simulator.orders.values()))
+        self.assertEqual(order["details"]["target_notional_usd"], "25")
+        self.assertIsNone(order["details"]["max_buy_usd"])
+
+    def test_mirror_amount_respects_max_buy_cap(self):
+        simulator = FakeSimulator()
+        queued = queue_paper_orders(
+            WALLET, [candidate_result()], simulator,
+            copy_settings={"sizing_mode": "MIRROR_AMOUNT", "sizing_value": "10", "max_buy_usd": "5"},
+        )
+        self.assertEqual(len(queued), 1)
+        order = next(iter(simulator.orders.values()))
+        self.assertEqual(queued[0]["target_notional_usd"], "5")
+        self.assertEqual(order["details"]["max_buy_usd"], "5")
+
     def test_aggregates_multiple_asset_accounts_for_one_swap(self):
         result = candidate_result()
         result["token_balance_changes"][0] = {

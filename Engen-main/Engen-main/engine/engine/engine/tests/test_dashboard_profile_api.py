@@ -108,6 +108,66 @@ class DashboardProfileApiTests(unittest.TestCase):
             self.assertTrue(fake.stopped)
             self.assertFalse(body["monitor"]["enabled"])
             self.assertEqual(json.loads(state_path.read_text(encoding="utf-8"))["profile_ids"], [])
+
+    def test_confirm_balance_starts_a_fresh_profile_session_and_stops_only_that_monitor(self):
+        second_profile = self.store.create_profile("Second paper profile")
+        first_simulator = dashboard_server.get_profile_paper_simulator(self.profile_id)
+        first_simulator.set_virtual_balance("1000", "USD")
+        first_simulator.create_order(
+            "profile-first-before-reset", "BUY", "TokenMintExample", "1", "USD",
+            created_at="2026-10-30T00:00:00+00:00",
+        )
+        second_simulator = dashboard_server.get_profile_paper_simulator(second_profile)
+        second_simulator.set_virtual_balance("500", "USD")
+
+        class FakeMonitorService:
+            def __init__(self):
+                self.stop_calls = 0
+
+            def stop_and_wait(self, timeout=15):
+                self.stop_calls += 1
+                return {"enabled": False, "worker_stopped": True}
+
+        first_monitor = FakeMonitorService()
+        second_monitor = FakeMonitorService()
+        state_path = Path(self.temp.name) / "monitoring_state.json"
+
+        with patch.object(dashboard_server, "MONITOR_STATE_FILE", state_path), patch.dict(
+            dashboard_server.profile_monitor_services,
+            {self.profile_id: first_monitor, second_profile: second_monitor},
+            clear=True,
+        ):
+            dashboard_server.set_profile_monitor_persistence(self.profile_id, True)
+            dashboard_server.set_profile_monitor_persistence(second_profile, True)
+
+            result = dashboard_server.reset_profile_paper_session(self.profile_id, "100")
+
+            self.assertEqual(result["amount"], "100")
+            self.assertTrue(result["fresh_paper_session"])
+            self.assertTrue(result["monitoring_stopped"])
+            self.assertEqual(first_monitor.stop_calls, 1)
+            self.assertEqual(second_monitor.stop_calls, 0)
+            self.assertEqual(
+                dashboard_server.load_monitor_state()["profile_ids"],
+                [second_profile],
+            )
+
+            first_report = dashboard_server.load_profile_paper_simulation_report(self.profile_id)
+            second_report = dashboard_server.load_profile_paper_simulation_report(second_profile)
+
+            self.assertEqual(first_report["initial_balance"], "100")
+            self.assertEqual(first_report["available_balance"], "100")
+            self.assertEqual(first_report["portfolio_value_usd"], "100")
+            self.assertEqual(first_report["realized_pnl_usd"], "0")
+            self.assertEqual(first_report["orders"][0]["history_source"], "ARCHIVED_SESSION")
+            self.assertEqual(first_report["orders"][0]["signal_id"], "profile-first-before-reset")
+            self.assertEqual(second_report["initial_balance"], "500")
+            self.assertEqual(second_report["available_balance"], "500")
+            self.assertEqual(len(second_report["orders"]), 0)
+
+        dashboard_server.profile_paper_simulators.pop(self.profile_id, None)
+        dashboard_server.profile_paper_simulators.pop(second_profile, None)
+
     def test_profile_report_includes_provenance_and_marks_observed_not_simulated(self):
         self.store.save_balance_snapshot(
             self.profile_id, PUBLIC_WALLET, TOKEN_MINT, "1250000", 6,

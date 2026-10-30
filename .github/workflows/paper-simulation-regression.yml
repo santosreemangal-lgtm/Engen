@@ -1,6 +1,9 @@
 name: Paper simulation regression
 
 on:
+  push:
+    branches:
+      - fix/fresh-paper-session-archive-20261030
   pull_request:
     branches:
       - feature/paper-balance-dashboard-refresh

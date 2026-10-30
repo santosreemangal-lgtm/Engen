@@ -2,6 +2,7 @@
 import json
 import sqlite3
 import uuid
+from datetime import datetime, timezone
 from contextlib import closing
 from decimal import Decimal
 from pathlib import Path
@@ -22,6 +23,7 @@ class PaperSimulator:
         self.orders = {}
         self.fills = []
         self.processed_signals = set()
+        self._archived_sessions = []
         self._initial_balance_value = None
         self._initial_balance_mint = None
         self._rebuild_pnl_ledger()
@@ -56,6 +58,10 @@ class PaperSimulator:
                     price_source TEXT NOT NULL, price_timestamp TEXT NOT NULL,
                     price_age_seconds INTEGER NOT NULL, slippage_bps INTEGER NOT NULL,
                     created_at TEXT NOT NULL)""")
+                db.execute("""CREATE TABLE IF NOT EXISTS simulator_session_archive(
+                    archive_id TEXT PRIMARY KEY, archived_at TEXT NOT NULL,
+                    initial_balance TEXT, orders_json TEXT NOT NULL,
+                    fills_json TEXT NOT NULL, pnl_events_json TEXT NOT NULL)""")
                 initialized = db.execute("SELECT value FROM simulator_meta WHERE key='initialized'").fetchone()
                 if initialized is None:
                     db.executemany("INSERT INTO simulator_balances VALUES(?,?)",
@@ -200,7 +206,7 @@ class PaperSimulator:
         }
 
     def reset_session(self, amount, mint="USD"):
-        """Start a fresh paper session with a new virtual deposit."""
+        """Archive the active paper session, then start a clean virtual session."""
         if not isinstance(mint, str) or not mint.strip() or len(mint.strip()) > 128:
             raise ValueError("A virtual balance currency is required.")
         mint = mint.strip()
@@ -208,12 +214,41 @@ class PaperSimulator:
         if value <= 0:
             raise ValueError("Initial virtual balance must be greater than zero.")
 
+        archive = {
+            "archive_id": str(uuid.uuid4()),
+            "archived_at": datetime.now(timezone.utc).isoformat(),
+            "initial_balance": self._stored_initial_balance() or self._initial_balance_value,
+            "orders": [dict(order) for order in self.orders.values()],
+            "fills": [dict(fill) for fill in self.fills],
+            "pnl_events": [dict(event) for event in self.pnl_events],
+        }
+        has_history = bool(archive["orders"] or archive["fills"])
+
         if self.db_path is not None:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
             with closing(self._connect()) as db:
                 db.execute("PRAGMA foreign_keys=ON")
                 with db:
-                    # Delete child rows first so the reset is safe with foreign keys enabled.
+                    db.execute("""CREATE TABLE IF NOT EXISTS simulator_session_archive(
+                        archive_id TEXT PRIMARY KEY, archived_at TEXT NOT NULL,
+                        initial_balance TEXT, orders_json TEXT NOT NULL,
+                        fills_json TEXT NOT NULL, pnl_events_json TEXT NOT NULL)""")
+                    if has_history:
+                        db.execute(
+                            """INSERT INTO simulator_session_archive(
+                                archive_id,archived_at,initial_balance,orders_json,fills_json,pnl_events_json
+                            ) VALUES(?,?,?,?,?,?)""",
+                            (
+                                archive["archive_id"], archive["archived_at"],
+                                archive["initial_balance"],
+                                json.dumps(archive["orders"], sort_keys=True),
+                                json.dumps(archive["fills"], sort_keys=True),
+                                json.dumps(archive["pnl_events"], sort_keys=True),
+                            ),
+                        )
+
+                    # Clear only active simulator rows. Archived orders/fills remain
+                    # in simulator_session_archive and are exposed in History.
                     db.execute("DELETE FROM simulated_fills")
                     db.execute("DELETE FROM simulated_orders")
                     db.execute("DELETE FROM simulator_balances")
@@ -231,20 +266,21 @@ class PaperSimulator:
                         (str(value),),
                     )
 
-                    # Remove rows from the previous profile-ledger implementation too.
+                    # Legacy paper trades are retained as history. Only their
+                    # current balance snapshot is refreshed for the new session.
                     tables = {
                         row[0] for row in db.execute(
                             "SELECT name FROM sqlite_master WHERE type='table'"
                         )
                     }
-                    if "paper_trades" in tables:
-                        db.execute("DELETE FROM paper_trades")
                     if "paper_balances" in tables:
                         db.execute("DELETE FROM paper_balances")
                         db.execute(
                             "INSERT INTO paper_balances(mint,amount) VALUES(?,?)",
                             (mint, str(value)),
                         )
+        elif has_history:
+            self._archived_sessions.append(archive)
 
         self.balances = {mint: value}
         self.orders = {}
@@ -258,6 +294,7 @@ class PaperSimulator:
             "initial_balance": str(value),
             "balance": str(value),
             "reset": True,
+            "archived_previous_session": has_history,
             "simulated": True,
             "real_trading": False,
             "transaction_broadcast": False,
@@ -473,6 +510,25 @@ class PaperSimulator:
             return None
 
     def report(self):
+        archived_sessions = [dict(session) for session in self._archived_sessions]
+        if self.db_path is not None:
+            with closing(self._connect()) as db:
+                rows = db.execute(
+                    """SELECT archive_id,archived_at,initial_balance,
+                              orders_json,fills_json,pnl_events_json
+                       FROM simulator_session_archive ORDER BY archived_at DESC"""
+                ).fetchall()
+            archived_sessions = [
+                {
+                    "archive_id": row[0],
+                    "archived_at": row[1],
+                    "initial_balance": row[2],
+                    "orders": json.loads(row[3]),
+                    "fills": json.loads(row[4]),
+                    "pnl_events": json.loads(row[5]),
+                }
+                for row in rows
+            ]
         return {"mode":"PAPER_SIMULATION","simulated":True,"real_wallet_balances_included":False,
                 "real_trading":False,"transaction_broadcast":False,
                 "balances":{mint:str(amount) for mint,amount in self.balances.items()},
@@ -480,4 +536,5 @@ class PaperSimulator:
                 "orders":[dict(order) for order in self.orders.values()],
                 "fills":[dict(fill) for fill in self.fills],
                 "pnl":self.pnl_summary(),
-                "pnl_events":[dict(event) for event in self.pnl_events]}
+                "pnl_events":[dict(event) for event in self.pnl_events],
+                "archived_sessions": archived_sessions}

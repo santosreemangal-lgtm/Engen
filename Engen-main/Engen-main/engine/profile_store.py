@@ -12,7 +12,7 @@ DEFAULT_DB_PATH = Path("data/profiles.db")
 MAX_WALLET_ACTIVITY_TRANSACTIONS = 1000
 LABELS = {"BUY_CANDIDATE", "SELL_CANDIDATE", "TRANSFER", "UNKNOWN",
           "FAILED_TRANSACTION", "RENT", "LIQUIDITY_OPERATION"}
-STATUSES = {"observed", "confirmed", "failed", "pending", "unknown"}
+STATUSES = {"observed", "confirmed", "failed", "pending", "needs_review", "unknown"}
 ADDRESS_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 

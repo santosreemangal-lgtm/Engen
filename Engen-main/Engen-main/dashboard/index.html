@@ -73,7 +73,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 #wallet-list .wallet{align-items:flex-start;border:1px solid #263852;background:#0d1727;border-radius:12px;padding:12px;display:grid;grid-template-columns:minmax(0,1fr);gap:9px}
 #wallet-list .address{font-size:11px;line-height:1.7;overflow-wrap:anywhere}
 #wallet-list .wallet-actions button{font-size:12px;padding:9px 11px;min-height:36px}
-.wallet-section-card .message{overflow-wrap:anywhere}.wallet-monitor-status{font-size:12px;color:var(--muted);line-height:1.5;overflow-wrap:anywhere}.wallet-monitor-status[data-state="error"]{color:var(--red)}.wallet-monitor-status[data-state="connected"]{color:var(--green)}
+.wallet-section-card .message{overflow-wrap:anywhere}.wallet-monitor-status{font-size:12px;color:var(--muted);line-height:1.5;overflow-wrap:anywhere}.wallet-monitor-status[data-state="error"],.wallet-monitor-status[data-quality="degraded"]{color:var(--red)}.wallet-monitor-status[data-state="connected"]{color:var(--green)}.wallet-monitor-status[data-quality="pending"]{color:#f0bd73}
 @media(max-width:760px){.wallet-layout{grid-template-columns:1fr}.wallet-top-actions{width:100%}.wallet-top-actions button{flex:1}}
 @media(max-width:520px){.wallet-top-actions{display:grid;grid-template-columns:1fr 1fr}.wallet-top-actions .status{grid-column:1/-1}.wallet-section-card{padding:14px}.wallet-top-actions button{width:100%;white-space:normal}}
 .amount-input-wrap{display:flex;align-items:center;gap:8px}.amount-input-wrap input{flex:1;min-width:0}.amount-suffix{min-width:54px;text-align:center;padding:11px 12px;font-weight:800;border:1px solid var(--line);border-radius:10px;background:#17243a;color:#cbd6eb}.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.virtual-balance-editor{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:16px;margin:16px 0 18px;border:1px solid #30415f;border-radius:15px;background:linear-gradient(145deg,#111e31,#0c1525)}.virtual-balance-editor h3{margin:0;font-size:15px}.virtual-balance-editor form{align-items:stretch}.virtual-balance-editor input{flex:1;min-width:0}.virtual-balance-editor .message{margin-top:0}.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.history-subpanel{min-width:0;padding:16px;border:1px solid #2a3a55;border-radius:14px;background:linear-gradient(145deg,#111c2d,#0c1422)}.history-subpanel h3{margin:0 0 5px}.history-subpanel .history-list{margin-top:12px}.history-subpanel a{color:#aebeff;font-size:13px;overflow-wrap:anywhere}.history-subpanel .history-item{min-width:0}@media(max-width:760px){.history-grid{grid-template-columns:1fr}}</style>
@@ -446,7 +446,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
    <option value="">All activity</option><option value="BUY_CANDIDATE">Buys</option><option value="SELL_CANDIDATE">Sells</option><option value="FAILED_TRANSACTION">Failed</option><option value="TRANSFER">Transfers</option><option value="LIQUIDITY_OPERATION">Liquidity</option><option value="UNKNOWN">Unknown</option>
   </select>
   <select id="history-status" aria-label="Filter by status">
-   <option value="">All statuses</option><option value="confirmed">Confirmed</option><option value="observed">Observed</option><option value="failed">Failed</option><option value="pending">Pending</option><option value="unknown">Unknown</option>
+   <option value="">All statuses</option><option value="confirmed">Confirmed</option><option value="observed">Observed</option><option value="failed">Failed</option><option value="pending">Pending</option><option value="needs_review">Needs review</option><option value="unknown">Unknown</option>
   </select>
   <input id="history-token-filter" type="text" placeholder="Token mint address" aria-label="Filter by token mint address" autocomplete="off">
   <button id="history-apply-filters" type="button">Apply</button>
@@ -630,8 +630,13 @@ function renderWallets(){
    const checked=monitor.last_successful_check?new Date(monitor.last_successful_check):null;
    const checkedLabel=checked&&!Number.isNaN(checked.getTime())?" · "+checked.toLocaleTimeString():"";
    const resultCount=Array.isArray(monitor.latest_results)?monitor.latest_results.length:0;
-   monitorStatus.textContent=state.replaceAll("_"," ")+checkedLabel+(resultCount?" · "+resultCount+" recent":"");
+   const quality=String(monitor.source_quality||"unknown").toLowerCase();
+   const qualityLabel=quality==="degraded"?" · metadata degraded":quality==="pending"?" · transactions pending":"";
+   const rpcErrors=Number(monitor.rpc_error_count||0);
+   monitorStatus.textContent=state.replaceAll("_"," ")+qualityLabel+(rpcErrors?" · "+rpcErrors+" RPC errors":"")+checkedLabel+(resultCount?" · "+resultCount+" recent":"");
    monitorStatus.dataset.state=state;
+   monitorStatus.dataset.quality=quality;
+   monitorStatus.title=monitor.last_error||"No monitor diagnostic details.";
   }
   const actions=document.createElement("div");actions.className="wallet-actions";
   const unassign=document.createElement("button");unassign.className="danger";unassign.textContent="Unassign";
@@ -679,12 +684,15 @@ async function loadMonitor(){
   currentMonitorWallets=observed;
   renderWallets();
   const failed=observed.find(x=>x.state==="error");
-  const connected=observed.filter(x=>x.state==="connected");
+  const degraded=observed.find(x=>x.source_quality==="degraded");
+  const pending=observed.find(x=>x.source_quality==="pending");
   const historyFailed=observed.some(x=>(x.latest_results||[]).some(tx=>tx.profile_history_status==="save_failed"));
   const queueFailed=observed.some(x=>(x.latest_results||[]).some(tx=>tx.paper_copy_error));
   if(historyFailed){say("monitor-message","Read-only scanning is active, but transaction-history storage failed for at least one observation. The history may be incomplete.");}
   else if(queueFailed){say("monitor-message","Read-only scanning is active, but a paper-order queue step failed. No real transaction was sent; check the paper-trade history and server logs.");}
   else if(failed){say("monitor-message","Monitoring is enabled, but a source-wallet scan failed. "+(failed.last_error||"Check the configured RPC connection."));}
+  else if(degraded){say("monitor-message","Wallet signature discovery is connected, but transaction details are failing. "+(degraded.last_error||"Check RPC transaction-version compatibility."));}
+  else if(pending){say("monitor-message","Wallet monitoring is connected, but some signatures are still awaiting confirmation or complete metadata. "+(pending.last_error||""));}
   else{say("monitor-message","");}
  }catch(e){currentMonitor=false;currentMonitorWallets=[];renderWallets();say("monitor-state","Status unavailable");$("monitor-state").dataset.state="error";$("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;say("monitor-message","Could not verify monitor status: "+e.message);}
 }
@@ -1171,7 +1179,7 @@ async function loadTransactionHistory(){
    wallet.className="history-wallet-address";wallet.textContent=historyShortAddress(tx.source_wallet_address);
    wallet.title=tx.source_wallet_address||"";walletCell.append(wallet);row.append(walletCell);
    const statusCell=document.createElement("td");const status=String(tx.status||"unknown").toLowerCase();
-   statusCell.append(historyPill(status.toUpperCase(),["confirmed","failed","pending","observed"].includes(status)?status:""));row.append(statusCell);
+   statusCell.append(historyPill(status.toUpperCase(),["confirmed","failed","pending","needs_review","observed"].includes(status)?status:""));row.append(statusCell);
    const actionCell=document.createElement("td");
    if(tx.signature){const link=document.createElement("a");link.className="history-link";link.href="https://solscan.io/tx/"+encodeURIComponent(tx.signature);link.target="_blank";link.rel="noopener noreferrer";link.textContent="View tx ↗";actionCell.append(link);const sig=document.createElement("small");sig.className="history-sub";sig.textContent=historyShortAddress(tx.signature);sig.title=tx.signature;actionCell.append(sig);}
    else actionCell.textContent="—";

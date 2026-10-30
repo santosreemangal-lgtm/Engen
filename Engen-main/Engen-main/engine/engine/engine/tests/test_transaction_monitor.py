@@ -330,7 +330,7 @@ class TransactionMonitorTests(unittest.TestCase):
 
     @patch("engine.transaction_monitor.get_signature_status")
     @patch("engine.transaction_monitor.process_transaction_signature")
-    def test_missing_confirmation_and_missing_status_stays_unknown(
+    def test_complete_confirmed_transaction_does_not_stay_pending_when_status_rpc_is_empty(
         self, mock_process, mock_status,
     ):
         wallet = "11111111111111111111111111111111"
@@ -356,9 +356,12 @@ class TransactionMonitorTests(unittest.TestCase):
             signatures=[{"signature": signature}], wallet_address=wallet,
         )[0]
 
-        self.assertEqual(result["trade_signal"]["classification"], "UNKNOWN")
-        self.assertFalse(result["confirmation_sufficient"])
-        self.assertTrue(result["retryable"])
+        self.assertEqual(
+            result["signature_observation"]["confirmation_status"], "confirmed",
+        )
+        self.assertTrue(result["confirmation_sufficient"])
+        self.assertEqual(result["trade_signal"]["classification"], "BUY_CANDIDATE")
+        self.assertNotIn("retryable", result)
 
     @patch("engine.transaction_monitor.process_transaction_signature")
     def test_unknown_when_monitored_wallet_is_not_a_signer(

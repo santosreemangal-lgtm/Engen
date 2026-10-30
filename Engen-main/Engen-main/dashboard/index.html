@@ -591,14 +591,20 @@ function renderPortfolioMetrics(report){
  const unrealized=numericValue(report&&report.unrealized_pnl_usd);
  const fills=Array.isArray(report&&report.fills)?report.fills:[];
  const hasPaperFills=fills.length>0;
- ["total-return","today-pnl","total-pnl"].forEach(id=>{
-  const metric=$(id).closest(".metric");
-  if(metric)metric.classList.toggle("hidden",!hasPaperFills);
- });
+ const balances=report&&report.balances&&typeof report.balances==="object"?report.balances:{};
+ const hasTokenHoldings=Object.entries(balances).some(([mint,amount])=>
+  mint!=="USD"&&numericValue(amount)!==null&&numericValue(amount)!==0
+ );
+ const reportedPortfolioValue=numericValue(report&&report.portfolio_value_usd);
+ const availableCash=numericValue(report&&(report.available_balance_usd??report.available_balance??balances.USD));
+ const currentCapital=reportedPortfolioValue!==null?reportedPortfolioValue:(!hasTokenHoldings?availableCash:null);
  const total=!hasPaperFills||realized===null||unrealized===null?null:realized+unrealized;
  const returnPercent=total===null||initial===null||initial<=0?null:(total/initial)*100;
  const today=hasPaperFills?todayRealizedPnl(report&&report.pnl_events):null;
- setMetricValue("initial-deposit",money(initial),"neutral");
+
+ // All four cards remain visible. Capital is an unsigned amount;
+ // only return and P&L metrics display positive/negative signs.
+ setMetricValue("initial-deposit",currentCapital===null?"$—":money(Math.abs(currentCapital)),"neutral");
  setMetricValue("total-return",hasPaperFills?signedPercent(returnPercent):"—",
   !hasPaperFills?"neutral":returnPercent>0?"positive":returnPercent<0?"negative":"neutral");
  setMetricValue("today-pnl",hasPaperFills?signedMoney(today):"—",
@@ -606,10 +612,11 @@ function renderPortfolioMetrics(report){
  setMetricValue("total-pnl",hasPaperFills?signedMoney(total):"—",
   !hasPaperFills?"neutral":total>0?"positive":total<0?"negative":"neutral");
  if(report&&report.error)say("portfolio-message",report.error);
- else if(!hasPaperFills)say("portfolio-message","Fresh paper session. P&L metrics will appear after the first completed paper fill.");
- else if(total===null)say("portfolio-message","Total P&L is unavailable until realized and unrealized P&L can both be verified.");
+ else if(!hasPaperFills)say("portfolio-message","Fresh $100 paper session. Return and P&L appear after the first completed paper fill.");
+ else if(total===null)say("portfolio-message","Total P&L is unavailable until realized and unrealized P&L can both be verified with fresh market prices.");
  else say("portfolio-message","");
 }
+
 async function loadPortfolio(){
  try{
   const data=await api("/api/paper-simulation"),r=data.report||data;

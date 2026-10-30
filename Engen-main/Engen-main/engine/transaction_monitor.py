@@ -84,6 +84,7 @@ def process_new_signatures(
             }, item))
             continue
         except SolanaRPCError as exc:
+            provider_code = getattr(exc, "code", None)
             error_result = {
                 "signature": signature,
                 "available": False,
@@ -92,16 +93,25 @@ def process_new_signatures(
                 "error": str(exc),
                 "retryable": True,
             }
+            if isinstance(provider_code, int) and not isinstance(provider_code, bool):
+                error_result["rpc_code"] = provider_code
             if (
                 wallet_address is not None
                 and store is not None
                 and is_valid_transaction_signature(signature)
             ):
+                failure_code = (
+                    "rpc_provider_" + str(provider_code)
+                    if isinstance(provider_code, int) and not isinstance(provider_code, bool)
+                    else type(exc).__name__
+                )
                 failure = store.record_failure(
                     wallet_address, signature, "rpc_fetch",
-                    "rpc_error", str(exc),
+                    failure_code, str(exc),
                 )
                 error_result["processing_status"] = failure["status"]
+                if failure["status"] == "needs_review":
+                    error_result["retryable"] = False
             results.append(_include_signature_observation(error_result, item))
             continue
         except Exception as exc:
@@ -123,6 +133,8 @@ def process_new_signatures(
                     type(exc).__name__, "Transaction interpretation failed.",
                 )
                 error_result["processing_status"] = failure["status"]
+                if failure["status"] == "needs_review":
+                    error_result["retryable"] = False
             results.append(_include_signature_observation(error_result, item))
             continue
 

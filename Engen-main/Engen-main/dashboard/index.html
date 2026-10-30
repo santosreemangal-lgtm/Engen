@@ -877,11 +877,14 @@ $("reset-paper-session").addEventListener("click",async()=>{
  if(!confirm(message))return;
  paperSessionResetInProgress=true;
  const button=$("reset-paper-session");button.disabled=true;
+ $("virtual-balance-value").disabled=true;
+ $("save-virtual-balance").disabled=true;
  say("portfolio-message","Resetting this profile's paper session…");
  try{
   await post("/api/paper-simulation",{
    action:"reset-profile-session",profile_id:selectedProfile,amount:"100",confirmed:true
   });
+  balanceInputDirty=false;
   await Promise.all([loadPortfolioForProfile(),loadMonitor()]);
   if($("history-details").open)await loadHistory();
   say("portfolio-message","Fresh $100 paper session started. Previous paper trades were archived and monitoring is OFF.");
@@ -890,6 +893,8 @@ $("reset-paper-session").addEventListener("click",async()=>{
   await loadMonitor();
  }finally{
   paperSessionResetInProgress=false;
+  $("virtual-balance-value").disabled=!selectedProfile;
+  $("save-virtual-balance").disabled=!selectedProfile||!balanceInputDirty;
   button.disabled=!selectedProfile;
  }
 });

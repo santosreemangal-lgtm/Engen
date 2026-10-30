@@ -95,3 +95,13 @@ jobs:
               engine.engine.engine.tests.test_market_data \
               engine.engine.engine.tests.test_paper_sell_ratio_regression -v
           done
+
+      - name: Run isolated end-to-end paper pipeline regressions ten times
+        working-directory: Engen-main/Engen-main
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run_number in {1..10}; do
+            echo "=== End-to-end paper pipeline run ${run_number}/10 ==="
+            python -m unittest engine.engine.engine.tests.test_paper_pipeline_e2e -v
+          done

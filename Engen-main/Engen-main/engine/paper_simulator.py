@@ -370,6 +370,7 @@ class PaperSimulator:
                                    timestamp=fill["created_at"])
                 event = ledger.sell(mint, quantity, price, fee=fee, network_fee=network,
                                     timestamp=fill["created_at"])
+            event["order_id"] = fill.get("order_id")
             events.append(event)
         self.pnl_ledger = ledger
         self.pnl_events = events
@@ -414,4 +415,4 @@ class PaperSimulator:
                 "initial_balance": self._stored_initial_balance(),
                 "orders":[dict(order) for order in self.orders.values()],
                 "fills":[dict(fill) for fill in self.fills],
-                "pnl":self.pnl_summary()}
+                "pnl":self.pnl_summary(),\n                "pnl_events":[dict(event) for event in self.pnl_events]}

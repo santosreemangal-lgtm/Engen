@@ -121,6 +121,31 @@ footer.hint{padding:10px 4px;line-height:1.7}
 #observed-history-panel,#paper-history-panel{min-width:0}
 @media(max-width:760px){.history-toolbar{align-items:stretch}.history-tabs{width:100%}.history-tab{flex:1}.history-filters{display:grid;grid-template-columns:1fr 1fr;width:100%}.history-filters select,.history-filters input{max-width:none;min-width:0;width:100%;box-sizing:border-box}.history-filters input{grid-column:1 / -1}.history-filters button{width:100%}.history-table th,.history-table td{padding:10px}.history-overview{align-items:flex-start}}
 </style>
+
+.paper-trades-table{min-width:930px}
+.paper-trades-table th{padding:11px 10px;font-size:10px}
+.paper-trades-table td{padding:9px 10px;font-size:12px;white-space:nowrap}
+.paper-trades-table tbody tr.paper-buy-row{background:linear-gradient(90deg,#102c2818,transparent 72%)}
+.paper-trades-table tbody tr.paper-sell-row{background:linear-gradient(90deg,#351f2918,transparent 72%)}
+.paper-trades-table tbody tr.paper-buy-row:hover{background:#12362d55}
+.paper-trades-table tbody tr.paper-sell-row:hover{background:#42232e55}
+.paper-type-cell{min-width:112px}
+.paper-order-state{display:block;margin-top:4px;color:#8296b2;font-size:9px;line-height:1.25;white-space:normal;max-width:120px}
+.paper-token-cell{display:flex;align-items:center;gap:8px;min-width:130px;max-width:190px}
+.paper-token-icon{width:27px;height:27px;flex:0 0 27px;display:grid;place-items:center;border-radius:50%;background:hsl(var(--token-hue,215) 38% 22%);border:1px solid hsl(var(--token-hue,215) 44% 43%);color:#e8f0ff;font-size:9px;font-weight:850;letter-spacing:.02em}
+.paper-token-labels{display:flex;flex-direction:column;gap:2px;min-width:0}
+.paper-token-primary{display:block;max-width:142px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e9f1ff;font-size:11px;font-weight:800}
+.paper-token-secondary{display:block;max-width:142px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#8196b3;font-size:9px}
+.paper-profit{font-variant-numeric:tabular-nums;font-weight:800}
+.paper-profit.positive{color:#72dfb7}
+.paper-profit.negative{color:#f3a0a8}
+.paper-profit.unknown{color:#8196b3}
+.paper-age{font-variant-numeric:tabular-nums;color:#b9c9df}
+.paper-share-btn{min-height:29px!important;padding:6px 9px!important;border-radius:8px!important;background:#172b43!important;border:1px solid #34506d!important;color:#c7dcfa!important;box-shadow:none!important;font-size:10px!important}
+.paper-share-btn:hover{border-color:#76a6e7!important;background:#203b59!important}
+.paper-share-btn.copied{background:#103029!important;border-color:#27705c!important;color:#77e0b8!important}
+@media(max-width:760px){.paper-trades-table td{padding:9px 8px}.paper-type-cell{min-width:98px}}
+
 </head>
 <body><main>
 <header><div class="brand">Paper trading · Read-only monitoring</div><h1>Solana Copy Engine</h1><p class="subtitle">A simple dashboard for tracked wallets and paper-copy settings.</p></header>
@@ -211,7 +236,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </section>
 <section id="paper-history-panel" class="history-subpanel hidden" role="tabpanel" aria-labelledby="paper-history-tab">
  <div class="history-overview"><div><strong id="paper-trade-total">—</strong><span>stored paper orders</span><small id="paper-fill-total">0 completed fills</small></div><p class="hint">Virtual simulation only. No wallet signing or blockchain transaction is performed.</p></div>
- <div class="history-table-wrap"><table class="history-table"><thead><tr><th>Created</th><th>Side</th><th>Token mint</th><th>Quantity</th><th>Notional / price</th><th>Execution state</th><th>Source transaction</th></tr></thead><tbody id="paper-trade-history-table"><tr><td colspan="7" class="history-empty">Select a profile to load paper trades.</td></tr></tbody></table></div>
+ <div class="history-table-wrap"><table class="history-table paper-trades-table"><thead><tr><th>Type</th><th>Token</th><th title="Market cap is shown only when a verified value is available.">MC</th><th>Amount</th><th>Total USD</th><th>Profit</th><th>Age</th><th title="Simulated network cost only; no on-chain gas is paid in paper mode.">Gas</th><th>Share</th></tr></thead><tbody id="paper-trade-history-table"><tr><td colspan="9" class="history-empty">Select a profile to load paper trades.</td></tr></tbody></table></div>
  <p id="paper-trade-history-message" class="message" role="status"></p>
 </section>
 </details>
@@ -520,8 +545,26 @@ function updateHistoryTokenCell(container){
  primary.textContent=display;
  primary.title=display;
 }
+function updatePaperTokenCell(container){
+ const mint=container.dataset.tokenMint||"";
+ const meta=historyTokenMetadataCache.get(mint);
+ const name=meta&&typeof meta.name==="string"?meta.name.trim():"";
+ const symbol=meta&&typeof meta.symbol==="string"?meta.symbol.trim():"";
+ const primary=container.querySelector(".paper-token-primary");
+ const secondary=container.querySelector(".paper-token-secondary");
+ const icon=container.querySelector(".paper-token-icon");
+ if(!primary||!secondary||!icon)return;
+ primary.textContent=symbol||name||"Token unavailable";
+ primary.title=name&&symbol?name+" · "+symbol:(name||symbol||"Token metadata unavailable");
+ secondary.textContent=name&&symbol?name:historyShortAddress(mint);
+ const initials=(symbol||name||"T").replace(/[^a-z0-9]/gi,"").slice(0,2).toUpperCase()||"T";
+ icon.textContent=initials;
+ let hue=0;for(const character of mint)hue=(hue*31+character.charCodeAt(0))%360;
+ icon.style.setProperty("--token-hue",String(hue));
+}
 function refreshHistoryTokenCells(){
  document.querySelectorAll(".history-token-cell").forEach(updateHistoryTokenCell);
+ document.querySelectorAll(".paper-token-cell").forEach(updatePaperTokenCell);
 }
 function makeHistoryTokenCell(mint){
  const cell=document.createElement("td");
@@ -534,6 +577,17 @@ function makeHistoryTokenCell(mint){
  copy.title="Copy full token mint address";copy.setAttribute("aria-label","Copy full token mint address");
  copy.addEventListener("click",()=>copyHistoryTokenMint(mint,copy));
  wrapper.append(labels,copy);cell.append(wrapper);updateHistoryTokenCell(wrapper);
+ return cell;
+}
+function makePaperTokenCell(mint){
+ const cell=document.createElement("td");
+ if(!mint){cell.textContent="Token unavailable";return cell;}
+ const wrapper=document.createElement("div");wrapper.className="paper-token-cell";wrapper.dataset.tokenMint=mint;
+ const icon=document.createElement("span");icon.className="paper-token-icon";icon.textContent="T";
+ const labels=document.createElement("div");labels.className="paper-token-labels";
+ const primary=document.createElement("span");primary.className="paper-token-primary";primary.textContent="Token unavailable";
+ const secondary=document.createElement("span");secondary.className="paper-token-secondary";secondary.textContent=historyShortAddress(mint);
+ labels.append(primary,secondary);wrapper.append(icon,labels);cell.append(wrapper);updatePaperTokenCell(wrapper);
  return cell;
 }
 async function copyHistoryTokenMint(mint,button){
@@ -661,76 +715,175 @@ async function loadTransactionHistory(){
   say("transaction-history-message",e.message);
  }
 }
+function paperOrderState(order,details,orders){
+ const sourceWallet=details.source_wallet;
+ if(order.status==="FILLED"||order.status==="COMPLETED")return "FILLED";
+ if(order.status==="REJECTED"||details.execution_state==="REJECTED")return "FAILED TO EXECUTE";
+ if(details.execution_state==="AWAITING_VIRTUAL_BALANCE")return "NEEDS PAPER BALANCE";
+ if(details.execution_state==="WAITING_FOR_LIQUIDITY")return "CHECKING LIQUIDITY";
+ if(details.execution_state==="AWAITING_VERIFIED_MARKET_DATA"||details.execution_state==="WAITING_FOR_MARKET_DATA")return "PREPARING TO EXECUTE";
+ if(details.execution_state==="WAITING_FOR_POSITION"){
+  const hasEarlierPendingBuy=orders.some(candidate=>{
+   const candidateDetails=candidate.details&&typeof candidate.details==="object"?candidate.details:{};
+   if(candidate.status!=="CREATED"||String(candidate.side||"").toUpperCase()!=="BUY"||candidate.asset_mint!==order.asset_mint)return false;
+   if(candidateDetails.origin!=="AUTOMATIC_WALLET_COPY"||candidateDetails.source_wallet!==sourceWallet)return false;
+   const hasSlots=Number.isSafeInteger(candidateDetails.source_slot)&&Number.isSafeInteger(details.source_slot);
+   if(hasSlots)return candidateDetails.source_slot<details.source_slot||(candidateDetails.source_slot===details.source_slot&&String(candidate.created_at||"")<=String(order.created_at||""));
+   return Boolean(candidate.created_at&&order.created_at&&String(candidate.created_at)<=String(order.created_at));
+  });
+  return hasEarlierPendingBuy?"PREPARING POSITION":"FAILED TO EXECUTE";
+ }
+ if(details.execution_state==="EXECUTION_ERROR")return "RETRYING EXECUTION";
+ if(order.status==="CREATED")return "PREPARING TO EXECUTE";
+ return String(order.status||"UNKNOWN").toUpperCase().replaceAll("_"," ");
+}
+function formatPaperAge(value){
+ const timestamp=Date.parse(value||"");
+ if(!Number.isFinite(timestamp))return "—";
+ const seconds=Math.max(0,Math.floor((Date.now()-timestamp)/1000));
+ if(seconds<60)return seconds+"s";
+ const minutes=Math.floor(seconds/60);
+ if(minutes<60)return minutes+"m ago";
+ const hours=Math.floor(minutes/60);
+ if(hours<24)return hours+"h ago";
+ return Math.floor(hours/24)+"d ago";
+}
+function refreshPaperTradeAges(){
+ document.querySelectorAll(".paper-age[data-created-at]").forEach(cell=>{
+  cell.textContent=formatPaperAge(cell.dataset.createdAt);
+ });
+}
+function formatPaperUsd(value,signed){
+ const amount=Number(value);
+ if(!Number.isFinite(amount))return "—";
+ const prefix=signed?(amount>0?"+":amount<0?"-":""):"";
+ return "$"+prefix+Math.abs(amount).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:4});
+}
+async function sharePaperTrade(order,fill,pnlEvent,button){
+ const mint=order.asset_mint||"";
+ const meta=historyTokenMetadataCache.get(mint);
+ const token=(meta&&(meta.symbol||meta.name))||historyShortAddress(mint);
+ const side=String(order.side||"ORDER").toUpperCase();
+ const amount=fill?.quantity??order.quantity;
+ const total=fill?formatPaperUsd(fill.gross_quote,false):"Not filled";
+ const profit=side==="SELL"&&pnlEvent&&pnlEvent.realized_pnl!==null&&pnlEvent.realized_pnl!==undefined
+  ?formatPaperUsd(pnlEvent.realized_pnl,true):"Unavailable";
+ const status=fill?"FILLED (paper simulation)":String(order.status||"CREATED").toUpperCase();
+ const text=["Solana Copy Engine · Paper trade",side+" · "+token,
+  "Amount: "+(amount===null||amount===undefined?"—":historyAmount(amount)),
+  "Total USD: "+total,"Profit: "+profit,"Status: "+status,
+  "Paper simulation only — no on-chain transaction was sent."].join("\n");
+ const original=button.textContent;
+ try{
+  if(typeof navigator.share==="function"){
+   await navigator.share({title:"Paper trade · "+token,text});
+   button.textContent="Shared";
+  }else if(navigator.clipboard&&typeof navigator.clipboard.writeText==="function"){
+   await navigator.clipboard.writeText(text);
+   button.textContent="Copied";
+  }else{
+   const field=document.createElement("textarea");field.value=text;field.setAttribute("readonly","");
+   field.style.position="fixed";field.style.left="-9999px";document.body.append(field);field.select();
+   const copied=document.execCommand("copy");field.remove();
+   if(!copied)throw new Error("Clipboard access is unavailable.");
+   button.textContent="Copied";
+  }
+  button.classList.add("copied");
+  setTimeout(()=>{if(button.isConnected){button.textContent=original;button.classList.remove("copied");}},1400);
+ }catch(error){
+  if(error&&error.name==="AbortError")return;
+  button.textContent="Retry";
+  button.title="Could not share or copy this trade summary.";
+  setTimeout(()=>{if(button.isConnected){button.textContent=original;button.title="Share or copy this paper trade summary";}},1600);
+ }
+}
 async function loadPaperTradeHistory(reportOverride){
  const tbody=$("paper-trade-history-table");
  if(!selectedProfile){
-  historySetEmpty(tbody,7,"Select a profile to view simulated paper trades.");
+  historySetEmpty(tbody,9,"Select a profile to view simulated paper trades.");
   $("paper-trade-total").textContent="—";$("paper-fill-total").textContent="0 completed fills";
   say("paper-trade-history-message","");return;
  }
  try{
   let r=reportOverride;
   if(!r){const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile));r=d.report||d;}
-  if(r.error){historySetEmpty(tbody,7,"Paper history unavailable: "+r.error);say("paper-trade-history-message",r.error);return;}
+  if(r.error){historySetEmpty(tbody,9,"Paper history unavailable: "+r.error);say("paper-trade-history-message",r.error);return;}
   const orders=Array.isArray(r.orders)?r.orders.slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||""))):[];
   const fills=Array.isArray(r.fills)?r.fills:[];
+  const pnlEvents=Array.isArray(r.pnl_events)?r.pnl_events:[];
+  const fillByOrder=new Map(fills.map(fill=>[fill.order_id,fill]));
+  const pnlByOrder=new Map(pnlEvents.filter(event=>event.order_id).map(event=>[event.order_id,event]));
   $("paper-trade-total").textContent=orders.length.toLocaleString();
   $("paper-fill-total").textContent=fills.length.toLocaleString()+" completed fill"+(fills.length===1?"":"s");
   tbody.replaceChildren();
-  if(!orders.length)historySetEmpty(tbody,7,"No Paper Orders have been queued yet. The first scan only establishes a baseline; older transactions are not replayed. A new confirmed BUY/SELL swap must be detected while monitoring is active.");
+  if(!orders.length)historySetEmpty(tbody,9,"No Paper Orders have been queued yet. The first scan only establishes a baseline; older transactions are not replayed. A new confirmed BUY/SELL swap must be detected while monitoring is active.");
   orders.forEach(order=>{
-   const row=document.createElement("tr"),details=order.details&&typeof order.details==="object"?order.details:{};
-   const fill=fills.find(x=>x.order_id===order.order_id);
-   historyCell(row,historyDate(fill?.created_at||order.created_at));
-   const side=String(order.side||"ORDER").toUpperCase(),sideCell=document.createElement("td");sideCell.append(historyPill(side,side==="BUY"?"buy":side==="SELL"?"sell":""));row.append(sideCell);
-   row.append(makeHistoryTokenCell(order.asset_mint));
-   const sourceWallet=details.source_wallet;
-   let quantity=fill?.quantity;
-   if(!quantity){
-    if(side==="SELL"&&details.source_sell_fraction)quantity="Source position × "+(Number(details.source_sell_fraction)*100).toFixed(2).replace(/\.00$/,"")+"%";
-    else if(details.target_notional_usd)quantity="Target $"+historyAmount(details.target_notional_usd);
-    else quantity=details.execution_state==="AWAITING_VIRTUAL_BALANCE"?"Needs paper balance":"Preparing order size";
-   }else quantity=historyAmount(quantity);
-   const quantityCell=historyCell(row,quantity);
-   const exactQuantity=fill?.quantity||((order.status==="FILLED"||order.status==="COMPLETED")?order.quantity:null);
-   if(exactQuantity!==null&&exactQuantity!==undefined)quantityCell.title="Exact quantity: "+String(exactQuantity);
-   const notionalCell=document.createElement("td");
-   if(fill){const gross=document.createElement("span");gross.className="history-main";gross.textContent="$"+historyAmount(fill.gross_quote);gross.title="Exact gross quote: "+String(fill.gross_quote);notionalCell.append(gross);const price=document.createElement("small");price.className="history-sub";price.textContent="Price $"+historyAmount(fill.execution_price);price.title="Exact execution price: "+String(fill.execution_price);notionalCell.append(price);}
-   else if(details.target_notional_usd){notionalCell.textContent="$"+historyAmount(details.target_notional_usd);notionalCell.title="Exact target: $"+String(details.target_notional_usd);}
-   else notionalCell.textContent="Pending";
-   row.append(notionalCell);
-   const stateCell=document.createElement("td");
-   let state=String(order.status||"UNKNOWN").toUpperCase();
-   if(fill)state="FILLED";
-   else if(order.status==="REJECTED"||details.execution_state==="REJECTED")state="FAILED TO EXECUTE";
-   else if(details.execution_state==="AWAITING_VIRTUAL_BALANCE")state="NEEDS PAPER BALANCE";
-   else if(details.execution_state==="WAITING_FOR_LIQUIDITY")state="CHECKING LIQUIDITY";
-   else if(details.execution_state==="AWAITING_VERIFIED_MARKET_DATA"||details.execution_state==="WAITING_FOR_MARKET_DATA")state="PREPARING TO EXECUTE";
-   else if(details.execution_state==="WAITING_FOR_POSITION"){
-    const hasEarlierPendingBuy=orders.some(candidate=>{
-     const candidateDetails=candidate.details&&typeof candidate.details==="object"?candidate.details:{};
-     if(candidate.status!=="CREATED"||String(candidate.side||"").toUpperCase()!=="BUY"||candidate.asset_mint!==order.asset_mint)return false;
-     if(candidateDetails.origin!=="AUTOMATIC_WALLET_COPY"||candidateDetails.source_wallet!==sourceWallet)return false;
-     const hasSlots=Number.isSafeInteger(candidateDetails.source_slot)&&Number.isSafeInteger(details.source_slot);
-     if(hasSlots)return candidateDetails.source_slot<details.source_slot||(candidateDetails.source_slot===details.source_slot&&String(candidate.created_at||"")<=String(order.created_at||""));
-     return Boolean(candidate.created_at&&order.created_at&&String(candidate.created_at)<=String(order.created_at));
-    });
-    state=hasEarlierPendingBuy?"PREPARING POSITION":"FAILED TO EXECUTE";
+   const details=order.details&&typeof order.details==="object"?order.details:{};
+   const side=String(order.side||"ORDER").toUpperCase();
+   const fill=fillByOrder.get(order.order_id)||null;
+   const pnlEvent=pnlByOrder.get(order.order_id)||null;
+   const state=paperOrderState(order,details,orders);
+   const row=document.createElement("tr");
+   if(side==="BUY")row.classList.add("paper-buy-row");
+   if(side==="SELL")row.classList.add("paper-sell-row");
+
+   const typeCell=document.createElement("td");typeCell.className="paper-type-cell";
+   const sidePill=historyPill(side,side==="BUY"?"buy":side==="SELL"?"sell":"");
+   const stateLabel=document.createElement("small");stateLabel.className="paper-order-state";stateLabel.textContent=state;
+   if(order.reason)stateLabel.title=order.reason;
+   typeCell.append(sidePill,stateLabel);row.append(typeCell);
+
+   row.append(makePaperTokenCell(order.asset_mint));
+
+   const marketCap=details.market_cap_usd??order.market_cap_usd;
+   const marketCapCell=historyCell(row,marketCap===null||marketCap===undefined?"—":"$"+historyAmount(marketCap));
+   if(marketCap===null||marketCap===undefined)marketCapCell.title="Market cap is not included in the current verified paper-simulation data.";
+
+   const quantity=fill?.quantity??order.quantity;
+   const amountCell=historyCell(row,quantity===null||quantity===undefined?"—":historyAmount(quantity));
+   if(quantity!==null&&quantity!==undefined)amountCell.title=(fill?"Filled":"Queued")+" token amount: "+String(quantity);
+
+   const totalCell=historyCell(row,fill?formatPaperUsd(fill.gross_quote,false):"—");
+   if(fill)totalCell.title="Simulated gross USD amount: "+String(fill.gross_quote);
+   else totalCell.title="No completed paper fill; no executed USD total is recorded.";
+
+   const profitCell=document.createElement("td");
+   if(side==="SELL"&&fill&&pnlEvent&&pnlEvent.realized_pnl!==null&&pnlEvent.realized_pnl!==undefined){
+    const value=Number(pnlEvent.realized_pnl);
+    const profit=document.createElement("span");profit.className="paper-profit "+(value>0?"positive":value<0?"negative":"unknown");
+    profit.textContent=formatPaperUsd(pnlEvent.realized_pnl,true);
+    profit.title="Realized paper P&L for this exact SELL order.";
+    profitCell.append(profit);
+   }else{
+    profitCell.textContent="—";
+    profitCell.className="paper-profit unknown";
+    if(side==="SELL"&&fill)profitCell.title="P&L unavailable because the simulator cannot verify the cost basis.";
    }
-   else if(details.execution_state==="EXECUTION_ERROR")state="RETRYING EXECUTION";
-   else if(order.status==="CREATED")state="PREPARING TO EXECUTE";
-   const kind=state==="FILLED"?"filled":state==="FAILED TO EXECUTE"?"failed":["PREPARING TO EXECUTE","CHECKING LIQUIDITY","PREPARING POSITION","NEEDS PAPER BALANCE","RETRYING EXECUTION"].includes(state)?"pending":state==="REJECTED"?"rejected":"";
-   const pill=historyPill(state,kind);if(order.reason)pill.title=order.reason;stateCell.append(pill);
-   if(order.reason){const reason=document.createElement("small");reason.className="history-sub";reason.textContent=order.reason;stateCell.append(reason);}
-   row.append(stateCell);
-   const sourceCell=document.createElement("td");
-   if(details.source_signature){const link=document.createElement("a");link.className="history-link";link.href="https://solscan.io/tx/"+encodeURIComponent(details.source_signature);link.target="_blank";link.rel="noopener noreferrer";link.textContent="View source ↗";sourceCell.append(link);}
-   else sourceCell.textContent="—";
-   row.append(sourceCell);tbody.append(row);
+   row.append(profitCell);
+
+   const ageCell=historyCell(row,formatPaperAge(order.created_at),"paper-age");
+   if(order.created_at){ageCell.dataset.createdAt=order.created_at;ageCell.title="Order created: "+historyDate(order.created_at);}
+
+   const networkCost=fill?.network_cost;
+   const gasCell=historyCell(row,networkCost===null||networkCost===undefined?"—":(Number(networkCost)===0?"0":formatPaperUsd(networkCost,false)));
+   gasCell.title="Simulated network-cost assumption only. Paper mode does not pay Solana gas or submit a transaction.";
+
+   const shareCell=document.createElement("td");
+   const shareButton=document.createElement("button");shareButton.type="button";shareButton.className="paper-share-btn";shareButton.textContent="Share";
+   shareButton.title="Share or copy this paper trade summary";
+   shareButton.addEventListener("click",()=>sharePaperTrade(order,fill,pnlEvent,shareButton));
+   shareCell.append(shareButton);row.append(shareCell);
+   tbody.append(row);
   });
   void loadHistoryTokenMetadata(orders.map(order=>order.asset_mint));
-  say("paper-trade-history-message",orders.length?"Showing "+orders.length+" stored paper order(s); scroll inside the table to review them. "+fills.length+" have simulated fills. Only FILLED means a simulated execution completed.":"Paper orders are shown only when the copy engine queues them. On-chain transaction rows are kept separate.");
- }catch(e){historySetEmpty(tbody,7,e.message||"Unable to load paper history.");say("paper-trade-history-message",e.message);}
+  refreshPaperTradeAges();
+  say("paper-trade-history-message",orders.length
+   ?"Showing "+orders.length+" paper order(s). Buy/Sell colors identify the side; Age updates every second. Total USD, Profit and simulated Gas are shown only when a fill exists. Market cap is shown only when verified data is available."
+   :"Paper orders appear after the copy engine queues them. Wallet Activity remains separate from simulated paper trades.");
+ }catch(e){
+  historySetEmpty(tbody,9,e.message||"Unable to load paper history.");
+  say("paper-trade-history-message",e.message);
+ }
 }
 async function loadHistory(){await Promise.all([loadTransactionHistory(),loadPaperTradeHistory(null)]);}
 $("history-details").addEventListener("toggle",()=>{if($("history-details").open)loadHistory();});
@@ -783,4 +936,5 @@ setInterval(async()=> {
   finally { refreshInProgress = false; }
 },15000);
 setInterval(loadRpcHealth,30000);
+setInterval(refreshPaperTradeAges,1000);
 </script></body></html>

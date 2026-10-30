@@ -461,7 +461,7 @@ def load_profile_paper_simulation_report(profile_id):
         "mode": "PAPER_SIMULATION", "simulated": True,
         "real_wallet_balances_included": False, "real_trading": False,
         "transaction_broadcast": False, "profile_id": profile_id,
-        "database_available": False, "balances": {}, "orders": [], "fills": [],
+        "database_available": False, "balances": {}, "orders": [], "fills": [], "pnl_events": [],
         "available_balance": None, "available_balance_usd": None,
         "initial_balance": None, "portfolio_value_usd": None,
         "realized_pnl_usd": None, "unrealized_pnl_usd": None,
@@ -489,6 +489,7 @@ def load_profile_paper_simulation_report(profile_id):
             sim_balances = dict(simulator_report.get("balances", {}))
             sim_orders = list(simulator_report.get("orders", []))
             sim_fills = list(simulator_report.get("fills", []))
+            sim_pnl_events = list(simulator_report.get("pnl_events", []))
         # Keep the older PaperTrader ledger visible while the dashboard and
         # monitor use PaperSimulator. Do not fabricate missing quote amounts.
         legacy_balances = {}
@@ -535,6 +536,7 @@ def load_profile_paper_simulation_report(profile_id):
             key=lambda item: str(item.get("created_at") or ""), reverse=True
         )[:100]
         base["fills"] = sim_fills
+        base["pnl_events"] = sim_pnl_events
         base["pnl"] = simulator_report.get("pnl", base["pnl"])
         realized = base["pnl"].get("realized_by_mint", {})
         if not realized:

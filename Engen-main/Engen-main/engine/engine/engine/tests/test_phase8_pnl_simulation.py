@@ -276,6 +276,10 @@ class PaperSimulatorTests(unittest.TestCase):
                                     slippage_bps=0, fee_bps=0, network_cost="0")
             summary = simulator.pnl_summary()
             self.assertEqual(Decimal(summary["realized_by_mint"][MINT]["pnl"]), Decimal("5"))
+            report = simulator.report()
+            events_by_order = {event["order_id"]: event for event in report["pnl_events"]}
+            self.assertEqual(events_by_order[buy["order_id"]]["realized_pnl"], "0")
+            self.assertEqual(events_by_order[sell["order_id"]]["realized_pnl"], "5")
             self.assertEqual(summary["realized_by_mint"][MINT]["status"], "calculated")
             self.assertIn("unavailable", summary["unrealized_status"])
 
@@ -283,6 +287,8 @@ class PaperSimulatorTests(unittest.TestCase):
             restarted_summary = restarted.pnl_summary()
             self.assertEqual(restarted_summary, summary)
             self.assertEqual(len(restarted.fills), 2)
+            restarted_events = {event["order_id"]: event for event in restarted.report()["pnl_events"]}
+            self.assertEqual(restarted_events[sell["order_id"]]["realized_pnl"], "5")
 
     def test_virtual_funding_is_persisted_and_additive(self):
         with tempfile.TemporaryDirectory() as directory:

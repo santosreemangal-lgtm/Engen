@@ -105,7 +105,10 @@ class PaperSellRatioRegressionTests(unittest.TestCase):
         outcomes = execute_pending_paper_orders(
             WALLET, simulator, price_provider=fresh_market_price
         )
-        self.assertEqual(outcomes[0]["status"], "WAITING_FOR_POSITION")
+        self.assertEqual(outcomes[0]["status"], "REJECTED")
+        order = simulator.report()["orders"][0]
+        self.assertEqual(order["status"], "REJECTED")
+        self.assertIn("no position", order["reason"].lower())
         self.assertEqual(simulator.report()["fills"], [])
         self.assertFalse(simulator.report()["real_trading"])
         self.assertFalse(simulator.report()["transaction_broadcast"])

@@ -359,9 +359,9 @@ class TransactionMonitorTests(unittest.TestCase):
         self.assertEqual(
             result["signature_observation"]["confirmation_status"], "confirmed",
         )
-        self.assertTrue(result["confirmation_sufficient"])
         self.assertEqual(result["trade_signal"]["classification"], "BUY_CANDIDATE")
         self.assertNotIn("retryable", result)
+        self.assertNotIn("confirmation_sufficient", result)
 
     @patch("engine.transaction_monitor.process_transaction_signature")
     def test_unknown_when_monitored_wallet_is_not_a_signer(

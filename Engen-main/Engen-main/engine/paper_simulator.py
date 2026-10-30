@@ -199,6 +199,70 @@ class PaperSimulator:
             "transaction_broadcast": False,
         }
 
+    def reset_session(self, amount, mint="USD"):
+        """Start a fresh paper session with a new virtual deposit."""
+        if not isinstance(mint, str) or not mint.strip() or len(mint.strip()) > 128:
+            raise ValueError("A virtual balance currency is required.")
+        mint = mint.strip()
+        value = decimal_value(amount, "Initial virtual balance")
+        if value <= 0:
+            raise ValueError("Initial virtual balance must be greater than zero.")
+
+        if self.db_path is not None:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            with closing(self._connect()) as db:
+                db.execute("PRAGMA foreign_keys=ON")
+                with db:
+                    # Delete child rows first so the reset is safe with foreign keys enabled.
+                    db.execute("DELETE FROM simulated_fills")
+                    db.execute("DELETE FROM simulated_orders")
+                    db.execute("DELETE FROM simulator_balances")
+                    db.execute(
+                        "INSERT INTO simulator_balances(mint,amount) VALUES(?,?)",
+                        (mint, str(value)),
+                    )
+                    db.execute(
+                        """INSERT INTO simulator_meta(key,value) VALUES('initialized','1')
+                        ON CONFLICT(key) DO UPDATE SET value=excluded.value"""
+                    )
+                    db.execute(
+                        """INSERT INTO simulator_meta(key,value) VALUES('initial_balance',?)
+                        ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                        (str(value),),
+                    )
+
+                    # Remove rows from the previous profile-ledger implementation too.
+                    tables = {
+                        row[0] for row in db.execute(
+                            "SELECT name FROM sqlite_master WHERE type='table'"
+                        )
+                    }
+                    if "paper_trades" in tables:
+                        db.execute("DELETE FROM paper_trades")
+                    if "paper_balances" in tables:
+                        db.execute("DELETE FROM paper_balances")
+                        db.execute(
+                            "INSERT INTO paper_balances(mint,amount) VALUES(?,?)",
+                            (mint, str(value)),
+                        )
+
+        self.balances = {mint: value}
+        self.orders = {}
+        self.fills = []
+        self.processed_signals = set()
+        self._initial_balance_value = str(value)
+        self._initial_balance_mint = mint
+        self._rebuild_pnl_ledger()
+        return {
+            "mint": mint,
+            "initial_balance": str(value),
+            "balance": str(value),
+            "reset": True,
+            "simulated": True,
+            "real_trading": False,
+            "transaction_broadcast": False,
+        }
+
     def add_virtual_balance(self, mint, amount):
         """Add explicitly virtual funds to one paper token balance; never touches a real wallet."""
         if not isinstance(mint, str) or not mint.strip() or len(mint.strip()) > 128:

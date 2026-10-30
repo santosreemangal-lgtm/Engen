@@ -36,7 +36,7 @@ PAPER_EXECUTION_COST_MULTIPLIER = (
 
 
 def _save_order_reason(simulator, order, reason, execution_state=None):
-    """Persist a visible blocker so the dashboard explains why an order is waiting."""
+    """Persist a visible blocker so the dashboard explains the order state."""
     order["reason"] = reason
     details = dict(order.get("details") or {})
     if execution_state:
@@ -48,6 +48,48 @@ def _save_order_reason(simulator, order, reason, execution_state=None):
     orders = getattr(simulator, "orders", None)
     if isinstance(orders, dict) and order.get("order_id"):
         orders[order["order_id"]] = order
+
+
+def _has_pending_prior_buy(simulator, sell_order):
+    """Return True only when an earlier source BUY may still create this paper position."""
+    orders = getattr(simulator, "orders", None)
+    if not isinstance(orders, dict):
+        return False
+    sell_details = sell_order.get("details") or {}
+    sell_wallet = sell_details.get("source_wallet")
+    sell_slot = sell_details.get("source_slot")
+    sell_created = str(sell_order.get("created_at") or "")
+
+    for candidate in orders.values():
+        if candidate is sell_order:
+            continue
+        if (
+            candidate.get("status") != "CREATED"
+            or candidate.get("side") != "BUY"
+            or candidate.get("asset_mint") != sell_order.get("asset_mint")
+        ):
+            continue
+        buy_details = candidate.get("details") or {}
+        if (
+            buy_details.get("origin") != "AUTOMATIC_WALLET_COPY"
+            or buy_details.get("source_wallet") != sell_wallet
+        ):
+            continue
+
+        buy_slot = buy_details.get("source_slot")
+        buy_created = str(candidate.get("created_at") or "")
+        if (
+            isinstance(buy_slot, int) and not isinstance(buy_slot, bool)
+            and isinstance(sell_slot, int) and not isinstance(sell_slot, bool)
+        ):
+            precedes = buy_slot < sell_slot or (
+                buy_slot == sell_slot and buy_created <= sell_created
+            )
+        else:
+            precedes = bool(buy_created and sell_created and buy_created <= sell_created)
+        if precedes:
+            return True
+    return False
 
 
 def get_paper_simulator():
@@ -254,24 +296,44 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                 sell_fraction = Decimal("0")
             owned_quantity = Decimal(str(simulator.balances.get(order.get("asset_mint"), "0")))
             if not sell_fraction.is_finite() or sell_fraction <= 0 or sell_fraction > 1:
-                reason = "Source sell fraction is unavailable or invalid; no paper sell was executed."
-                _save_order_reason(simulator, order, reason, "WAITING_FOR_POSITION")
+                reason = (
+                    "The source SELL fraction is missing or invalid; this paper order "
+                    "failed validation and was closed without a simulated fill."
+                )
+                failure = simulator._reject(order, reason)
                 outcomes.append({
                     "order_id": order.get("order_id"),
                     "signal_id": order.get("signal_id"),
-                    "status": "WAITING_FOR_POSITION",
+                    "status": failure.get("status", "REJECTED"),
                     "reason": reason,
                 })
                 continue
             if owned_quantity <= 0:
-                reason = "No copied token position is currently held; sell remains queued."
-                _save_order_reason(simulator, order, reason, "WAITING_FOR_POSITION")
-                outcomes.append({
-                    "order_id": order.get("order_id"),
-                    "signal_id": order.get("signal_id"),
-                    "status": "WAITING_FOR_POSITION",
-                    "reason": reason,
-                })
+                if _has_pending_prior_buy(simulator, order):
+                    reason = (
+                        "An earlier copied BUY for this token is still unresolved; "
+                        "this SELL will retry after that BUY is either filled or rejected."
+                    )
+                    _save_order_reason(simulator, order, reason, "WAITING_FOR_POSITION")
+                    outcomes.append({
+                        "order_id": order.get("order_id"),
+                        "signal_id": order.get("signal_id"),
+                        "status": "WAITING_FOR_POSITION",
+                        "reason": reason,
+                    })
+                else:
+                    reason = (
+                        "No earlier pending or filled copied BUY exists for this token; "
+                        "the SELL failed because the paper account has no position. "
+                        "No simulated fill was created."
+                    )
+                    failure = simulator._reject(order, reason)
+                    outcomes.append({
+                        "order_id": order.get("order_id"),
+                        "signal_id": order.get("signal_id"),
+                        "status": failure.get("status", "REJECTED"),
+                        "reason": reason,
+                    })
                 continue
             order["quantity"] = str(owned_quantity * sell_fraction)
             simulator._persist(order)

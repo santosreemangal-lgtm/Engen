@@ -387,6 +387,8 @@ footer.hint{padding:10px 4px;line-height:1.7}
  .portfolio-head-actions{flex-wrap:wrap;gap:7px}
  .portfolio-head-actions .status-group{flex-wrap:wrap;justify-content:flex-end}
  .portfolio-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .virtual-balance-compact{gap:8px}
+ .virtual-balance-compact form{min-width:100%}
 }
 
 .portfolio-summary .portfolio-head{justify-content:space-between;align-items:center;gap:12px}
@@ -402,6 +404,11 @@ footer.hint{padding:10px 4px;line-height:1.7}
  <div class="metric"><div class="label">Total P&amp;L</div><p id="total-pnl" class="value">$—</p></div>
 </div>
 <p id="portfolio-message" class="message" role="status"></p>
+</section>
+<section class="virtual-balance-compact">
+ <h3>Virtual USD Balance</h3>
+ <form id="virtual-balance-form" class="row"><label class="sr-only" for="virtual-balance-value">Virtual USD balance</label><input id="virtual-balance-value" type="number" min="0.01" max="1000000000" step="0.01" placeholder="Enter amount in USD" required disabled><button id="save-virtual-balance" type="submit" disabled>Confirm Balance</button></form>
+ <p id="virtual-balance-message" class="message" role="status"></p>
 </section>
 
 <section class="panel wallet-workspace">
@@ -484,7 +491,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </main>
 <script>
 const $ = id => document.getElementById(id);
-let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, currentMonitorWallets = [], paperSessionResetInProgress = false;
+let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, currentMonitorWallets = [], balanceInputDirty = false, paperSessionResetInProgress = false;
 let pendingSellAllPreview = null, sellAllInProgress = false;
 const headers = {"Content-Type":"application/json"};
 function apiRequestHeaders(extra={}) {
@@ -723,7 +730,8 @@ function renderProfileCards(){
   state.textContent=active?"ACTIVE":"INACTIVE";state.dataset.state=active?"active":"inactive";
   card.append(name,state);
   card.addEventListener("click",async()=>{
-   selectedProfile=p.profile_id;$("profile-select").value=selectedProfile;
+   if(balanceInputDirty&&selectedProfile!==p.profile_id&&!confirm("Discard the unsaved virtual balance change before switching profiles?"))return;
+   balanceInputDirty=false;selectedProfile=p.profile_id;$("profile-select").value=selectedProfile;
    await loadProfiles();if($("history-details").open)await loadHistory();
   });
   host.append(card);
@@ -762,13 +770,19 @@ function renderDirectionFromProfile(){
 }
 async function loadPortfolioForProfile(){
  const resetButton=$("reset-paper-session");
+ const input=$("virtual-balance-value");
+ const save=$("save-virtual-balance");
  if(!selectedProfile){
   resetButton.disabled=true;
+  input.value="";input.disabled=true;save.disabled=true;
+  balanceInputDirty=false;
   renderPortfolioMetrics({});
+  say("virtual-balance-message","");
   await loadPaperTradeHistory(null);
   return;
  }
  resetButton.disabled=paperSessionResetInProgress;
+ if(!balanceInputDirty){input.disabled=true;save.disabled=true;}
  try{
   const path="/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile);
   let d=await api(path),r=d.report||d;
@@ -776,12 +790,21 @@ async function loadPortfolioForProfile(){
    await post("/api/paper-simulation",{action:"initialize-profile-ledger",profile_id:selectedProfile});
    d=await api(path);r=d.report||d;
   }
+  const balance=r.available_balance_usd??r.available_balance??r.balances?.USD??null;
+  if(!balanceInputDirty)input.value=balance===null||balance===undefined?"":String(balance);
+  input.disabled=paperSessionResetInProgress;
+  save.disabled=!selectedProfile||!balanceInputDirty||paperSessionResetInProgress;
   renderPortfolioMetrics(r);
   resetButton.disabled=paperSessionResetInProgress;
+  say("virtual-balance-message",r.error||"");
   await loadPaperTradeHistory(r);
  }catch(e){
+  if(!balanceInputDirty)input.value="";
+  input.disabled=paperSessionResetInProgress;
+  save.disabled=!selectedProfile||!balanceInputDirty||paperSessionResetInProgress;
   renderPortfolioMetrics({});
   say("portfolio-message","Could not load this profile's portfolio metrics: "+e.message);
+  say("virtual-balance-message","Balance data unavailable.");
   resetButton.disabled=paperSessionResetInProgress;
   await loadPaperTradeHistory(null);
  }
@@ -806,6 +829,46 @@ $("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const ad
 $("create-profile").addEventListener("click",()=>{if(profiles.length>=3){say("profile-card-message","You can create up to 3 paper profiles.");return;} $("profile-form").classList.toggle("hidden");});$("cancel-create-profile").addEventListener("click",()=>$("profile-form").classList.add("hidden"));
 $("profile-form").addEventListener("submit",async e=>{e.preventDefault();if(profiles.length>=3){say("wallet-message","Maximum of 3 paper profiles reached.");return;}try{const d=await post("/api/profiles",{action:"create",name:$("profile-name").value.trim(),destination_public_address:null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"FIXED_USD",sizing_value:"3"}}});selectedProfile=d.profile.profile_id;$("profile-name").value="";$("profile-form").classList.add("hidden");say("wallet-message","Paper profile created. Activate it, then start read-only monitoring when ready.");await loadProfiles();$("profile-select").value=selectedProfile;}catch(err){say("wallet-message",err.message);}});
 $("profile-select").addEventListener("change",async()=>{selectedProfile=$("profile-select").value;renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();if($("history-details").open)loadHistory();renderWallets();});
+
+$("virtual-balance-value").addEventListener("input",()=>{
+ balanceInputDirty=true;
+ say("virtual-balance-message","Unsaved amount. Confirm Balance starts a new paper session with this amount.");
+ $("save-virtual-balance").disabled=!selectedProfile||paperSessionResetInProgress;
+});
+$("virtual-balance-form").addEventListener("submit",async event=>{
+ event.preventDefault();
+ if(paperSessionResetInProgress)return;
+ if(!selectedProfile){say("virtual-balance-message","Select a paper profile first.");return;}
+ const raw=$("virtual-balance-value").value.trim(),amount=Number(raw);
+ if(!raw||!Number.isFinite(amount)||amount<=0||amount>1000000000){
+  say("virtual-balance-message","Enter an amount greater than $0 and no more than $1,000,000,000.");return;
+ }
+ const profileId=selectedProfile;
+ const profileName=selected()?.name||"selected profile";
+ const message="Start a fresh paper session for "+profileName+" with "+formatPaperUsd(amount,false)+"?\n\nPrevious paper orders, fills and P&L will be archived in History, not deleted. Monitoring will stop for this profile only. Saved source wallets, settings and observed wallet activity will remain unchanged. No real funds or blockchain transactions are involved.";
+ if(!confirm(message))return;
+ paperSessionResetInProgress=true;
+ $("reset-paper-session").disabled=true;
+ $("virtual-balance-value").disabled=true;
+ $("save-virtual-balance").disabled=true;
+ try{
+  await post("/api/paper-simulation",{
+   action:"reset-profile-session",profile_id:profileId,amount:String(amount),confirmed:true
+  });
+  balanceInputDirty=false;
+  await Promise.all([loadPortfolioForProfile(),loadMonitor()]);
+  if($("history-details").open)await loadHistory();
+  say("virtual-balance-message","Fresh paper session started with "+formatPaperUsd(amount,false)+". Previous paper trades were archived.");
+ }catch(err){
+  say("virtual-balance-message","Paper session was not reset: "+err.message);
+  await loadMonitor();
+ }finally{
+  paperSessionResetInProgress=false;
+  $("virtual-balance-value").disabled=!selectedProfile;
+  $("save-virtual-balance").disabled=!selectedProfile||!balanceInputDirty;
+  $("reset-paper-session").disabled=!selectedProfile;
+ }
+});
 $("reset-paper-session").addEventListener("click",async()=>{
  if(paperSessionResetInProgress)return;
  if(!selectedProfile){say("portfolio-message","Select a paper profile before resetting its paper session.");return;}

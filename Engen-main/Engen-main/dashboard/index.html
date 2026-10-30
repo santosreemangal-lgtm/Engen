@@ -366,12 +366,13 @@ footer.hint{padding:10px 4px;line-height:1.7}
  <div class="sell-all-confirmation-actions"><button id="confirm-paper-sell-all" class="sell-all-confirm-btn" type="button">Confirm Paper Sell All</button><button id="cancel-paper-sell-all" class="secondary" type="button">Cancel</button></div>
 </div>
 <p id="sell-all-message" class="message" role="status"></p>
-<div class="field"><label>BUY Sizing Mode</label><div class="choice-row two">
-<label class="choice"><input type="radio" name="sizing" value="FIXED_USD" checked> Fixed amount (USD)</label>
+<div class="field"><label>BUY Sizing Mode</label><div class="choice-row">
+<label class="choice"><input type="radio" name="sizing" value="FIXED_USD" checked> Fixed Amount (USD)</label>
+<label class="choice"><input type="radio" name="sizing" value="SOURCE_PERCENT"> Fixed Percentage</label>
 <label class="choice"><input type="radio" name="sizing" value="MIRROR_AMOUNT"> Mirror Buy &amp; Sell Amount</label>
-</div><p class="hint">Fixed amount is used for each copied BUY. Mirror mode follows the source BUY size, subject to the maximum BUY cap.</p></div>
-<div class="field" id="amount-field"><label id="amount-label" for="amount-value">Fixed BUY amount (USD)</label><div class="amount-input-wrap"><input id="amount-value" type="number" min="0.01" max="1000000" step="0.01" value="3" required><span id="amount-suffix" class="amount-suffix">$</span></div><p class="hint" id="amount-hint">Enter the USD amount to use for each BUY.</p></div>
-<div class="field hidden" id="max-buy-field"><label for="max-buy-amount">Maximum Buy Amount (USD)</label><div class="amount-input-wrap"><input id="max-buy-amount" type="number" min="0.01" max="1000000" step="0.01" value="400"><span class="amount-suffix">$ max</span></div><p class="hint">Mirror BUY size will not exceed this USD amount.</p></div>
+</div></div>
+<div class="field" id="amount-field"><label id="amount-label" for="amount-value">Fixed BUY amount (USD)</label><div class="amount-input-wrap"><input id="amount-value" type="number" min="0.01" max="1000000" step="0.01" value="3" required><span id="amount-suffix" class="amount-suffix">$</span></div></div>
+<div class="field hidden" id="max-buy-field"><label for="max-buy-amount">Maximum Buy Amount (USD)</label><div class="amount-input-wrap"><input id="max-buy-amount" type="number" min="0.01" max="1000000" step="0.01" value="400"><span class="amount-suffix">$ max</span></div></div>
 <button id="confirm-settings" class="confirm" type="button">Confirm Settings</button><p id="settings-message" class="message" role="status"></p>
 </section>
 
@@ -584,10 +585,11 @@ function hideSellAllConfirmation(){
 }
 function renderDirectionFromProfile(){
  const s=settingsOf(selected());
- const sizing=s.sizing_mode==="MIRROR_AMOUNT"?"MIRROR_AMOUNT":"FIXED_USD";
- const amount=Number(s.sizing_value??3);
- document.querySelectorAll('input[name="sizing"]').forEach(x=>x.checked=x.value===sizing);
- $("amount-value").value=String(Number.isFinite(amount)&&amount>0?amount:3);
+ const savedMode=["FIXED_USD","SOURCE_PERCENT","MIRROR_AMOUNT"].includes(s.sizing_mode)?s.sizing_mode:"FIXED_USD";
+ const fallbackAmount=savedMode==="SOURCE_PERCENT"?5:3;
+ const amount=Number(s.sizing_value??fallbackAmount);
+ document.querySelectorAll('input[name="sizing"]').forEach(x=>x.checked=x.value===savedMode);
+ $("amount-value").value=String(Number.isFinite(amount)&&amount>0?amount:fallbackAmount);
  $("max-buy-amount").value=String(s.max_buy_usd??400);
  $("sell-all-trigger").disabled=!selectedProfile||sellAllInProgress;
  hideSellAllConfirmation();
@@ -633,12 +635,14 @@ async function loadPortfolioForProfile(){
 function updateAmountLabel(){
  const mode=document.querySelector('input[name="sizing"]:checked')?.value||"FIXED_USD";
  const mirror=mode==="MIRROR_AMOUNT";
+ const percent=mode==="SOURCE_PERCENT";
  $("amount-field").classList.toggle("hidden",mirror);
  $("amount-value").required=!mirror;
- $("amount-value").min="0.01";$("amount-value").max="1000000";
- $("amount-label").textContent="Fixed BUY amount (USD)";
- $("amount-suffix").textContent="$";
- $("amount-hint").textContent="Enter the USD amount to use for each BUY.";
+ $("amount-value").min="0.01";
+ $("amount-value").max=percent?"99.99":"1000000";
+ $("amount-value").step="0.01";
+ $("amount-label").textContent=percent?"Fixed Percentage of Virtual Balance":"Fixed BUY Amount (USD)";
+ $("amount-suffix").textContent=percent?"%":"$";
  $("max-buy-field").classList.toggle("hidden",!mirror);
  $("max-buy-amount").required=mirror;
 }
@@ -678,6 +682,9 @@ $("confirm-settings").addEventListener("click",async()=>{
  const maxRaw=$("max-buy-amount").value.trim(),maxBuy=Number(maxRaw);
  if(mode==="FIXED_USD"&&(!amountRaw||!Number.isFinite(amount)||amount<=0||amount>1000000)){
   say("settings-message","Enter a fixed BUY amount greater than $0 and no more than $1,000,000.");return;
+ }
+ if(mode==="SOURCE_PERCENT"&&(!amountRaw||!Number.isFinite(amount)||amount<=0||amount>=100)){
+  say("settings-message","Enter a fixed percentage greater than 0 and less than 100.");return;
  }
  if(mode==="MIRROR_AMOUNT"&&(!maxRaw||!Number.isFinite(maxBuy)||maxBuy<=0||maxBuy>1000000)){
   say("settings-message","Enter a maximum BUY amount greater than $0 and no more than $1,000,000.");return;
@@ -735,7 +742,7 @@ $("sell-all-trigger").addEventListener("click",async()=>{
 });
 $("cancel-paper-sell-all").addEventListener("click",()=>{
  hideSellAllConfirmation();
- say("sell-all-message","Sell All cancelled. No paper position was changed.");
+ say("sell-all-message","");
 });
 $("confirm-paper-sell-all").addEventListener("click",async()=>{
  const preview=pendingSellAllPreview;

@@ -52,6 +52,16 @@ jobs:
             python -m unittest discover -s engine/engine/engine/tests -v
           done
 
+      - name: Run latency measurement regressions ten times
+        working-directory: Engen-main/Engen-main
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run_number in {1..10}; do
+            echo "=== Latency regression run ${run_number}/10 ==="
+            python -m unittest engine.engine.engine.tests.test_latency -v
+          done
+
       - name: Run SQLite atomicity and recovery regressions ten times
         working-directory: Engen-main/Engen-main
         shell: bash

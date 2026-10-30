@@ -328,7 +328,7 @@ class PaperSimulator:
         """Keep transient provider/data failures retryable; never fabricate a fill."""
         waiting_state = (
             "WAITING_FOR_LIQUIDITY"
-            if "liquidity" in str(reason).lower()
+            if "below the configured USD minimum" in str(reason).lower()
             else "WAITING_FOR_MARKET_DATA"
         )
         updated = dict(order, status="CREATED", reason=reason,

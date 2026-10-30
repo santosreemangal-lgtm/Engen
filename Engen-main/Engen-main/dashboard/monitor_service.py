@@ -23,7 +23,7 @@ class MonitorService:
         self._websocket_endpoint = (
             websocket_endpoint
             if websocket_endpoint is not None
-            else os.environ.get("ENGEN_WS_URL", "wss://api.mainnet-beta.solana.com").strip()
+            else os.environ.get("ENGEN_WS_URL", "").strip()
         )
         self._websocket_listener_factory = websocket_listener_factory
         self._lock = threading.RLock()

@@ -108,6 +108,46 @@ class MonitorServiceTests(unittest.TestCase):
         self.assertEqual(state["state"], "stale")
         service.stop()
 
+    def test_active_scan_is_not_reported_stale(self):
+        service = MonitorService(lambda address: [], interval=30)
+        old = (datetime.now(timezone.utc) - timedelta(seconds=90)).isoformat()
+        state = service._status_details({
+            "state": "scanning",
+            "last_successful_check": old,
+            "last_error": None,
+            "latest_results": [],
+        })
+        self.assertEqual(state["state"], "scanning")
+        service.stop()
+
+    def test_transaction_rpc_errors_report_degraded_source_quality(self):
+        scan_started = threading.Event()
+
+        def degraded_scan(address):
+            scan_started.set()
+            return [{
+                "signature": "test_signature",
+                "metadata_status": "rpc_error",
+                "rpc_code": -32015,
+                "retryable": True,
+            }]
+
+        service = MonitorService(degraded_scan, interval=30)
+        try:
+            service.start(["11111111111111111111111111111111"])
+            self.assertTrue(scan_started.wait(timeout=3))
+            deadline = time.monotonic() + 3
+            wallet = service.status()["wallets"][0]
+            while time.monotonic() < deadline and wallet["state"] != "connected":
+                time.sleep(0.01)
+                wallet = service.status()["wallets"][0]
+            self.assertEqual(wallet["state"], "connected")
+            self.assertEqual(wallet["source_quality"], "degraded")
+            self.assertEqual(wallet["rpc_error_count"], 1)
+            self.assertIn("-32015", wallet["last_error"])
+        finally:
+            service.stop_and_wait(timeout=3)
+
     def test_scan_error_is_recorded(self):
         scan_started = threading.Event()
 
@@ -138,7 +178,7 @@ class MonitorServiceTests(unittest.TestCase):
             self.assertEqual(wallet["state"], "error")
             self.assertEqual(
                 wallet["last_error"],
-                "Monitoring scan failed; sensitive error details are hidden.",
+                "Monitoring scan failed (RuntimeError).",
             )
             self.assertIsNotNone(wallet["last_scan"])
 

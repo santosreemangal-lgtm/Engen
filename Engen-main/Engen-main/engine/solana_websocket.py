@@ -12,9 +12,7 @@ from collections import OrderedDict
 from engine.solana_public import is_valid_transaction_signature
 
 
-DEFAULT_WS_URL = os.environ.get(
-    "ENGEN_WS_URL", "wss://api.mainnet-beta.solana.com"
-).strip() or "wss://api.mainnet-beta.solana.com"
+DEFAULT_WS_URL = os.environ.get("ENGEN_WS_URL", "").strip()
 
 
 class SolanaLogsWebSocket:

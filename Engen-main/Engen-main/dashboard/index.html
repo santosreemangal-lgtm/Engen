@@ -122,6 +122,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 @media(max-width:760px){.history-toolbar{align-items:stretch}.history-tabs{width:100%}.history-tab{flex:1}.history-filters{display:grid;grid-template-columns:1fr 1fr;width:100%}.history-filters select,.history-filters input{max-width:none;min-width:0;width:100%;box-sizing:border-box}.history-filters input{grid-column:1 / -1}.history-filters button{width:100%}.history-table th,.history-table td{padding:10px}.history-overview{align-items:flex-start}}
 </style>
 
+<style>
 .paper-trades-table{min-width:930px}
 .paper-trades-table th{padding:11px 10px;font-size:10px}
 .paper-trades-table td{padding:9px 10px;font-size:12px;white-space:nowrap}
@@ -145,11 +146,9 @@ footer.hint{padding:10px 4px;line-height:1.7}
 .paper-share-btn:hover{border-color:#76a6e7!important;background:#203b59!important}
 .paper-share-btn.copied{background:#103029!important;border-color:#27705c!important;color:#77e0b8!important}
 @media(max-width:760px){.paper-trades-table td{padding:9px 8px}.paper-type-cell{min-width:98px}}
-
+</style>
 </head>
 <body><main>
-<header><div class="brand">Paper trading · Read-only monitoring</div><h1>Solana Copy Engine</h1><p class="subtitle">A simple dashboard for tracked wallets and paper-copy settings.</p></header>
-
 <section class="panel"><div class="panel-head"><h2>Portfolio</h2><div class="status-group"><span class="status"><span id="engine-dot" class="dot"></span><span id="engine-state">Connecting…</span></span><span id="rpc-health-status" class="status" title="Read-only public Solana RPC health"><span id="rpc-health-dot" class="dot"></span><span id="rpc-health-state">RPC checking…</span></span></div></div>
 <div class="virtual-balance-editor">
 <div><h3>Virtual USD Balance</h3><p class="hint">Set or change your paper cash balance. This is simulated money only; no wallet is funded.</p></div>

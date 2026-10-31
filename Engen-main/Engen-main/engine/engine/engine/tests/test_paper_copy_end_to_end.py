@@ -33,6 +33,7 @@ class PaperCopyEndToEndTests(unittest.TestCase):
             profile_store.associate_source_wallet(profile_id, WALLET)
 
             signature_store = SignatureStore(signatures_db)
+            signature_store.save(WALLET, SIGNATURE, slot=123456)
             simulator = PaperSimulator(db_path=paper_db)
             simulator.set_initial_virtual_balance("1000", "USD")
 

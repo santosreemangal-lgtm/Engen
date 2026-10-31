@@ -713,7 +713,24 @@ def _classify_non_swap_activity(instructions):
         parsed_type = str(item.get("parsed_type") or "").lower().replace("_", "").replace("-", "")
         normalized.append((program, program_id, parsed_type))
 
+    liquidity_actions = {
+        "addliquidity", "removeliquidity", "depositliquidity",
+        "withdrawliquidity", "initializepool", "createpool",
+    }
+    liquidity_programs = ("raydium", "orca", "meteora", "lifinity")
+    if any(
+        parsed_type in liquidity_actions
+        and any(marker in program for marker in liquidity_programs)
+        for program, _program_id, parsed_type in normalized
+    ):
+        return {
+            "classification": "LIQUIDITY_OPERATION",
+            "activity_type": "LIQUIDITY_OPERATION",
+            "reason": "A recognized liquidity-pool instruction was found; this is not a BUY/SELL swap candidate.",
+        }
+
     # A recognized swap/DEX context takes precedence over inner token transfers.
+    # A parsed liquidity action is handled above before the DEX program marker.
     swap_markers = (
         "swap", "jupiter", "raydium", "orca", "lifinity",
         "meteora", "phoenix", "openbook", "pumpfun",
@@ -739,22 +756,6 @@ def _classify_non_swap_activity(instructions):
             "classification": "UNKNOWN",
             "activity_type": "STAKING",
             "reason": "A parsed stake-program instruction was found; this is not classified as a token swap.",
-        }
-
-    liquidity_actions = {
-        "addliquidity", "removeliquidity", "depositliquidity",
-        "withdrawliquidity", "initializepool", "createpool",
-    }
-    liquidity_programs = ("raydium", "orca", "meteora", "lifinity")
-    if any(
-        parsed_type in liquidity_actions
-        and any(marker in program for marker in liquidity_programs)
-        for program, _program_id, parsed_type in normalized
-    ):
-        return {
-            "classification": "LIQUIDITY_OPERATION",
-            "activity_type": "LIQUIDITY_OPERATION",
-            "reason": "A recognized liquidity-pool instruction was found; this is not a BUY/SELL swap candidate.",
         }
 
     known_non_swap_programs = {
@@ -785,10 +786,7 @@ def _classify_non_swap_activity(instructions):
         for program, _program_id, parsed_type in normalized
     ):
         return {
-            "classification": "RENT" if any(
-                parsed_type == "createaccount" and program == "system"
-                for program, _program_id, parsed_type in normalized
-            ) else "UNKNOWN",
+            "classification": "UNKNOWN",
             "activity_type": "ACCOUNT_ACTIVITY",
             "reason": "Parsed account creation or token-account lifecycle instructions were found; this is not classified as a swap.",
         }
@@ -1061,6 +1059,17 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
                 "asset_mints": [],
                 "quote_mints": [],
             }
+            has_native_sol_delta = any(
+                item.get("source") == NATIVE_SOL_SOURCE
+                and item.get("raw_delta_amount") not in (None, "0", 0)
+                for item in owned_changes
+            )
+            if non_swap.get("activity_type") == "TRANSFER" and has_native_sol_delta:
+                # Native SOL movement can be a transfer, rent, or account
+                # funding. Retain the descriptive activity tag but do not
+                # elevate it to a definitive transfer classification.
+                signal["classification"] = "UNKNOWN"
+                signal["reason"] += " Native SOL movement is ambiguous and remains UNKNOWN."
 
     signal.update({
         "confidence": "medium" if candidate else "low",

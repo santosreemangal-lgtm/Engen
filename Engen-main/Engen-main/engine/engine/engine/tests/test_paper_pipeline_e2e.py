@@ -117,7 +117,8 @@ class PaperPipelineEndToEndTests(unittest.TestCase):
             def synthetic_price_provider(mint):
                 return fresh_market_price(mint, next(prices))
 
-            scan = create_scan_function(
+            simulator_lock = threading.RLock()
+            scan_options = dict(
                 side_getter=lambda: "BOTH",
                 settings_getter=lambda: {
                     "sizing_mode": "FIXED_USD",
@@ -125,7 +126,7 @@ class PaperPipelineEndToEndTests(unittest.TestCase):
                     "max_buy_usd": "10",
                 },
                 simulator_getter=lambda: simulator,
-                simulator_lock_getter=lambda: threading.RLock(),
+                simulator_lock_getter=lambda: simulator_lock,
                 profile_id=profile_id,
                 profile_store=profile_store,
                 latency_recorder=latency,
@@ -140,6 +141,11 @@ class PaperPipelineEndToEndTests(unittest.TestCase):
                 patch("dashboard.monitor_bridge.SignatureStore", return_value=signature_store),
                 patch("dashboard.monitor_bridge.monitor_wallet", side_effect=observations),
             ):
+                # Construct the bridge only after patching its persistent store,
+                # so this test never creates or modifies the repository data/ DB.
+                scan = create_scan_function(
+                    **scan_options
+                )
                 buy_result = scan(WALLET)
                 sell_result = scan(WALLET)
 

@@ -98,6 +98,29 @@ class MonitorServiceTests(unittest.TestCase):
         finally:
             service.stop_and_wait(timeout=3)
 
+    def test_completed_scan_publishes_dashboard_event(self):
+        scan_finished = threading.Event()
+
+        def fake_scan(address):
+            time.sleep(0.02)
+            scan_finished.set()
+            return [{"signature": "paper-event-test", "available": True}]
+
+        service = MonitorService(fake_scan, interval=30)
+        subscriber = service.subscribe_events()
+        try:
+            service.start(["11111111111111111111111111111111"])
+            event = subscriber.get(timeout=3)
+            self.assertTrue(scan_finished.is_set())
+            self.assertEqual(event["type"], "wallet_scan_complete")
+            self.assertEqual(event["wallet_address"], "11111111111111111111111111111111")
+            self.assertEqual(event["source"], "polling")
+            self.assertEqual(event["result_count"], 1)
+            self.assertGreaterEqual(event["scan_duration_ms"], 0.0)
+        finally:
+            service.unsubscribe_events(subscriber)
+            service.stop_and_wait(timeout=3)
+
     def test_stale_monitor_is_reported_from_last_successful_check(self):
         service = MonitorService(lambda address: [], interval=30)
         old = (datetime.now(timezone.utc) - timedelta(seconds=90)).isoformat()

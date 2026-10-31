@@ -238,6 +238,21 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertEqual(report["error"], "SolanaRPCError")
         self.assertFalse(report["transaction_broadcast"])
 
+    def test_uninitialized_virtual_cash_does_not_appear_as_zero_portfolio(self):
+        dashboard_server.profile_paper_simulators.pop(self.profile_id, None)
+        try:
+            dashboard_server.get_profile_paper_simulator(self.profile_id)
+            report = dashboard_server.load_profile_paper_simulation_report(self.profile_id)
+
+            self.assertTrue(report["database_available"])
+            self.assertIsNone(report["available_balance"])
+            self.assertIsNone(report["available_balance_usd"])
+            self.assertIsNone(report["portfolio_value_usd"])
+            self.assertEqual(report["realized_pnl_usd"], "0")
+            self.assertEqual(report["unrealized_pnl_usd"], "0")
+        finally:
+            dashboard_server.profile_paper_simulators.pop(self.profile_id, None)
+
     def test_virtual_usd_balance_can_be_changed_and_survives_reload(self):
         first = dashboard_server.set_profile_virtual_balance(self.profile_id, "1250.50")
         self.assertEqual(first["mint"], "USD")

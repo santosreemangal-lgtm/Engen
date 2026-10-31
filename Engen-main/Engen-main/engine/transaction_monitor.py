@@ -402,6 +402,10 @@ def monitor_wallet(
         signature_options["latency_recorder"] = latency_recorder
     pending_signatures = get_and_store_new_wallet_signatures(**signature_options)
     scan_progress = store.get_scan_progress(wallet_address)
+    # Treat only the concrete persisted row returned by SignatureStore as
+    # pagination state; test doubles/older adapters may expose dynamic mocks.
+    if not isinstance(scan_progress, dict):
+        scan_progress = None
     pagination_incomplete = scan_progress is not None
 
     monitor_options = {

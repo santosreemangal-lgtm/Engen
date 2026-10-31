@@ -699,6 +699,101 @@ def _pumpfun_instruction_context(transaction):
         "quote_mint": pumpfun_instructions[0]["quote_mint"],
     }
 
+def _classify_non_swap_activity(instructions):
+    """Identify only explicit, parsed non-swap activity; never infer trades from it."""
+    if not isinstance(instructions, list) or not instructions:
+        return None
+
+    normalized = []
+    for item in instructions:
+        if not isinstance(item, Mapping):
+            continue
+        program = str(item.get("program") or "").lower().replace("_", "").replace("-", "")
+        program_id = str(item.get("program_id") or "")
+        parsed_type = str(item.get("parsed_type") or "").lower().replace("_", "").replace("-", "")
+        normalized.append((program, program_id, parsed_type))
+
+    # A recognized swap/DEX context takes precedence over inner token transfers.
+    swap_markers = (
+        "swap", "jupiter", "raydium", "orca", "lifinity",
+        "meteora", "phoenix", "openbook", "pumpfun",
+    )
+    if any(
+        marker in program or marker in parsed_type
+        for program, _program_id, parsed_type in normalized
+        for marker in swap_markers
+    ):
+        return None
+
+    stake_program_id = "Stake11111111111111111111111111111111111111"
+    stake_actions = {
+        "delegate", "deactivate", "withdraw", "split", "merge",
+        "authorize", "initialize", "authorizechecked",
+    }
+    if any(
+        (program == "stake" or program_id == stake_program_id)
+        and parsed_type in stake_actions
+        for program, program_id, parsed_type in normalized
+    ):
+        return {
+            "classification": "UNKNOWN",
+            "activity_type": "STAKING",
+            "reason": "A parsed stake-program instruction was found; this is not classified as a token swap.",
+        }
+
+    liquidity_actions = {
+        "addliquidity", "removeliquidity", "depositliquidity",
+        "withdrawliquidity", "initializepool", "createpool",
+    }
+    liquidity_programs = ("raydium", "orca", "meteora", "lifinity")
+    if any(
+        parsed_type in liquidity_actions
+        and any(marker in program for marker in liquidity_programs)
+        for program, _program_id, parsed_type in normalized
+    ):
+        return {
+            "classification": "LIQUIDITY_OPERATION",
+            "activity_type": "LIQUIDITY_OPERATION",
+            "reason": "A recognized liquidity-pool instruction was found; this is not a BUY/SELL swap candidate.",
+        }
+
+    account_lifecycle = {
+        "createaccount", "createidempotent", "initializeaccount",
+        "initializeaccount2", "initializeaccount3", "closeaccount",
+        "syncnative", "recovernested",
+    }
+    if any(parsed_type in account_lifecycle for _program, _program_id, parsed_type in normalized):
+        return {
+            "classification": "RENT" if any(
+                parsed_type == "createaccount" and program == "system"
+                for program, _program_id, parsed_type in normalized
+            ) else "UNKNOWN",
+            "activity_type": "ACCOUNT_ACTIVITY",
+            "reason": "Parsed account creation or token-account lifecycle instructions were found; this is not classified as a swap.",
+        }
+
+    transfer_types = {"transfer", "transferchecked", "transfercheckedwithfee"}
+    token_program_ids = {
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+    }
+    if any(
+        parsed_type in transfer_types
+        and (
+            program in {"system", "spltoken", "token", "spltoken2022"}
+            or program_id in token_program_ids
+        )
+        for program, program_id, parsed_type in normalized
+    ):
+        return {
+            "classification": "TRANSFER",
+            "activity_type": "TRANSFER",
+            "reason": "A parsed System or SPL Token transfer was found without a recognized swap instruction.",
+        }
+
+    return None
+
+
 def classify_transaction(transaction, wallet_address, balance_changes=None):
     """Classify conservatively and return auditable evidence and confidence.
 
@@ -932,9 +1027,21 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
             }
             candidate = False
 
+    if not candidate:
+        non_swap = _classify_non_swap_activity(instructions)
+        if non_swap is not None:
+            signal = {
+                **signal,
+                **non_swap,
+                "asset_mints": [],
+                "quote_mints": [],
+            }
+
     signal.update({
         "confidence": "medium" if candidate else "low",
+        "activity_type": signal.get("activity_type", signal.get("classification", "UNKNOWN")),
         "evidence": {
+            "activity_type": signal.get("activity_type", signal.get("classification", "UNKNOWN")),
             "wallet_address": wallet_address,
             "wallet_balance_changes": owned_changes,
             "instruction_context": instructions,

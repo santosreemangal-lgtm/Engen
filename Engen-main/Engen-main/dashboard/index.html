@@ -1397,7 +1397,7 @@ function setPaperSoundEnabled(enabled){
   if(AudioContextClass){
    try{
     if(!paperAudioContext)paperAudioContext=new AudioContextClass();
-    if(paperAudioContext.state==="suspended")void paperAudioContext.resume();
+    if(paperAudioContext.state==="suspended")void paperAudioContext.resume().catch(()=>{});
    }catch{paperAudioContext=null;}
   }
  }
@@ -1447,6 +1447,17 @@ $("paper-sound-toggle").addEventListener("click",()=>{
  }
 });
 updatePaperSoundToggle();
+function resumePaperAudioOnGesture(){
+ if(!paperSoundEnabled)return;
+ const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+ if(!AudioContextClass)return;
+ try{
+  if(!paperAudioContext)paperAudioContext=new AudioContextClass();
+  if(paperAudioContext.state==="suspended")void paperAudioContext.resume().catch(()=>{});
+ }catch{paperAudioContext=null;}
+}
+document.addEventListener("pointerdown",resumePaperAudioOnGesture,{once:true,capture:true});
+document.addEventListener("keydown",resumePaperAudioOnGesture,{once:true,capture:true});
 
 async function loadPaperTradeHistory(reportOverride){
  const tbody=$("paper-trade-history-table");

@@ -51,6 +51,7 @@ def process_new_signatures(
     store=None,
     defer_processed=False,
     latency_recorder=None,
+    advance_position=True,
 ):
     """Analyze signatures and update persistent processing status."""
 
@@ -362,7 +363,9 @@ def process_new_signatures(
             and not defer_processed
         ):
             if result.get("retryable") is not True:
-                store.mark_processed(wallet_address, signature)
+                store.mark_processed(
+                    wallet_address, signature, advance_position=advance_position
+                )
 
         results.append(result)
 
@@ -377,6 +380,7 @@ def monitor_wallet(
     timeout=10,
     defer_processed=False,
     latency_recorder=None,
+    max_pages=100,
 ):
     """Monitor a public wallet and retry pending transactions."""
 
@@ -392,10 +396,13 @@ def monitor_wallet(
         "limit": limit,
         "rpc_url": rpc_url,
         "timeout": timeout,
+        "max_pages": max_pages,
     }
     if latency_recorder is not None:
         signature_options["latency_recorder"] = latency_recorder
     pending_signatures = get_and_store_new_wallet_signatures(**signature_options)
+    scan_progress = store.get_scan_progress(wallet_address)
+    pagination_incomplete = scan_progress is not None
 
     monitor_options = {
         "signatures": pending_signatures,
@@ -404,10 +411,21 @@ def monitor_wallet(
         "wallet_address": wallet_address,
         "store": store,
         "defer_processed": defer_processed,
+        "advance_position": not pagination_incomplete,
     }
     if latency_recorder is not None:
         monitor_options["latency_recorder"] = latency_recorder
-    return process_new_signatures(**monitor_options)
+    results = process_new_signatures(**monitor_options)
+    if pagination_incomplete:
+        results.append({
+            "scan_incomplete": True,
+            "pagination_mode": scan_progress.get("mode"),
+            "pagination_pages_scanned": scan_progress.get("pages_scanned", 0),
+            "pagination_error": scan_progress.get("error") or (
+                "Wallet history is still being backfilled; the saved checkpoint has not been reached."
+            ),
+        })
+    return results
 
 
 if __name__ == "__main__":

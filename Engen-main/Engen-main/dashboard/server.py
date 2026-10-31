@@ -596,11 +596,21 @@ def load_profile_paper_simulation_report(profile_id):
             unrealized_values.append(
                 quantity * market_price.price - Decimal(ledger_position["cost_basis"])
             )
-        cash_value = Decimal(str(base["available_balance"] or "0"))
-        if all(value is not None for value in token_values):
-            base["portfolio_value_usd"] = format(cash_value + sum(token_values, Decimal("0")), "f")
+        # A missing virtual cash balance is unknown, not a real zero-dollar
+        # balance. Never publish a total portfolio value until cash is known
+        # and every non-cash holding has a fresh, verified USD valuation.
+        if (
+            base["available_balance"] is not None
+            and all(value is not None for value in token_values)
+        ):
+            cash_value = Decimal(str(base["available_balance"]))
+            base["portfolio_value_usd"] = format(
+                cash_value + sum(token_values, Decimal("0")), "f"
+            )
         else:
             base["portfolio_value_usd"] = None
+            if base["available_balance"] is None:
+                valuation_notes.append("virtual_cash_balance_unavailable")
         if all(value is not None for value in unrealized_values):
             base["unrealized_pnl_usd"] = format(sum(unrealized_values, Decimal("0")), "f")
             base["pnl"]["unrealized_status"] = "calculated"

@@ -148,6 +148,35 @@ class MonitorServiceTests(unittest.TestCase):
         finally:
             service.stop_and_wait(timeout=3)
 
+    def test_incomplete_pagination_is_not_reported_healthy(self):
+        scan_started = threading.Event()
+
+        def incomplete_scan(address):
+            scan_started.set()
+            return [{
+                "scan_incomplete": True,
+                "pagination_mode": "catchup",
+                "pagination_pages_scanned": 125,
+                "pagination_error": "Saved checkpoint has not been reached.",
+            }]
+
+        service = MonitorService(incomplete_scan, interval=30)
+        try:
+            service.start(["11111111111111111111111111111111"])
+            self.assertTrue(scan_started.wait(timeout=3))
+            deadline = time.monotonic() + 3
+            wallet = service.status()["wallets"][0]
+            while time.monotonic() < deadline and wallet["state"] != "connected":
+                time.sleep(0.01)
+                wallet = service.status()["wallets"][0]
+            self.assertEqual(wallet["state"], "connected")
+            self.assertEqual(wallet["source_quality"], "incomplete")
+            self.assertTrue(wallet["pagination_incomplete"])
+            self.assertEqual(wallet["pagination_pages_scanned"], 125)
+            self.assertIn("checkpoint", wallet["last_error"])
+        finally:
+            service.stop_and_wait(timeout=3)
+
     def test_scan_error_is_recorded(self):
         scan_started = threading.Event()
 

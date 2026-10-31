@@ -589,7 +589,7 @@ function renderPortfolioMetrics(report){
 
  // All four cards remain visible. Capital is an unsigned amount;
  // only return and P&L metrics display positive/negative signs.
- setMetricValue("initial-deposit",currentCapital===null?"$—":money(Math.abs(currentCapital)),"neutral");
+ setMetricValue("initial-deposit",initial===null?"$—":money(Math.abs(initial)),"neutral");
  setMetricValue("total-return",hasPaperFills?signedPercent(returnPercent):"—",
   !hasPaperFills?"neutral":returnPercent>0?"positive":returnPercent<0?"negative":"neutral");
  setMetricValue("today-pnl",hasPaperFills?signedMoney(today):"—",

@@ -210,6 +210,15 @@ class ProfileStore:
             + stale + ")",
             (profile_id, profile_id, limit),
         )
+        # A transaction shared with another profile remains there. Delete only
+        # rows that no profile can see after this profile's retention pass.
+        db.execute("""
+            DELETE FROM transactions
+            WHERE NOT EXISTS (
+                SELECT 1 FROM profile_transactions p
+                WHERE p.signature=transactions.signature
+            )
+        """)
         return db.total_changes - before
 
     def _compact_after_retention(self):

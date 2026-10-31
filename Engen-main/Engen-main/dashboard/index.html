@@ -410,7 +410,10 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <form id="profile-form" class="hidden field"><label for="profile-name">Profile name</label><div class="row"><input id="profile-name" maxlength="80" placeholder="e.g. Paper Test 1" required><button type="submit">Create Profile</button></div><button id="cancel-create-profile" type="button" class="secondary">Cancel</button><p class="hint">This creates a paper-trading profile, not a blockchain wallet.</p></form>
 <div id="selected-profile-detail" class="profile-detail">
 <div class="panel-head selected-profile-head"><div><h3 id="detail-profile-title">Choose a paper profile</h3></div><span id="detail-profile-status" class="status">No selection</span></div>
-<button id="activate-profile" class="secondary profile-activate-button" type="button" disabled>Activate Profile</button>
+<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+ <button id="activate-profile" class="secondary profile-activate-button" type="button" disabled>Activate Profile</button>
+ <button id="delete-profile" class="danger" type="button" disabled style="font-size:11px;padding:7px 10px;min-height:32px">Delete Profile</button>
+</div>
 </div>
 </section>
 <section class="wallet-section-card">
@@ -445,6 +448,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
  <div class="history-tabs" role="tablist" aria-label="History type">
   <button id="observed-history-tab" class="history-tab active" type="button" role="tab" aria-selected="true">Wallet Activity</button>
   <button id="paper-history-tab" class="history-tab" type="button" role="tab" aria-selected="false">Paper Trades</button>
+  <button id="paper-sound-toggle" class="secondary" type="button" aria-pressed="false" title="Play a soft tone only when a new paper fill is recorded">Paper sound: Off</button>
  </div>
  <div class="history-filters">
   <select id="history-classification" aria-label="Filter by trade type">
@@ -478,6 +482,10 @@ footer.hint{padding:10px 4px;line-height:1.7}
 const $ = id => document.getElementById(id);
 let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, currentMonitorWallets = [], paperSessionResetInProgress = false;
 let pendingSellAllPreview = null, sellAllInProgress = false;
+let paperSoundEnabled = false;
+let paperAudioContext = null;
+const paperFillSoundStateByProfile = new Map();
+try { paperSoundEnabled = localStorage.getItem("paper-fill-sound-enabled") === "true"; } catch {}
 const headers = {"Content-Type":"application/json"};
 function apiRequestHeaders(extra={}) {
   let token = "";
@@ -761,6 +769,8 @@ function renderProfileCards(){
  $("selected-profile-detail").classList.toggle("hidden",!p);
  $("activate-profile").classList.toggle("hidden",!p||active);
  $("activate-profile").disabled=!p||active;
+ $("delete-profile").classList.toggle("hidden",!p);
+ $("delete-profile").disabled=!p;
  renderWallets();
 }
 function selected(){return profiles.find(p=>p.profile_id===selectedProfile);}
@@ -830,6 +840,30 @@ $("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const ad
 $("create-profile").addEventListener("click",()=>{if(profiles.length>=3){say("profile-card-message","You can create up to 3 paper profiles.");return;} $("profile-form").classList.toggle("hidden");});$("cancel-create-profile").addEventListener("click",()=>$("profile-form").classList.add("hidden"));
 $("profile-form").addEventListener("submit",async e=>{e.preventDefault();if(profiles.length>=3){say("wallet-message","Maximum of 3 paper profiles reached.");return;}try{const d=await post("/api/profiles",{action:"create",name:$("profile-name").value.trim(),destination_public_address:null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"FIXED_USD",sizing_value:"3"}}});selectedProfile=d.profile.profile_id;$("profile-name").value="";$("profile-form").classList.add("hidden");say("wallet-message","Paper profile created. Activate it, then start read-only monitoring when ready.");await loadProfiles();$("profile-select").value=selectedProfile;}catch(err){say("wallet-message",err.message);}});
 $("profile-select").addEventListener("change",async()=>{selectedProfile=$("profile-select").value;renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();if($("history-details").open)loadHistory();renderWallets();});
+
+$("delete-profile").addEventListener("click",async()=>{
+ if(!selectedProfile)return;
+ const profile=selected();
+ if(!profile)return;
+ const profileId=selectedProfile;
+ const confirmed=confirm(
+  "Delete profile '"+String(profile.name||"Paper profile")+"'?\n\nMonitoring for this profile will stop. The profile will be archived and removed from the selectable profile list. Wallet activity, paper orders, fills and stored history will be preserved. Other profiles will not be changed."
+ );
+ if(!confirmed)return;
+ const button=$("delete-profile");
+ button.disabled=true;
+ say("profile-card-message","Archiving profile and stopping its monitor…");
+ try{
+  const result=await post("/api/profiles",{action:"delete",profile_id:profileId});
+  if(result.deleted!==true||result.history_preserved!==true)throw new Error("The server did not confirm that the profile was archived with history preserved.");
+  if(selectedProfile===profileId)selectedProfile="";
+  await loadProfiles();
+  say("profile-card-message","Profile archived. Its history was preserved and it is no longer selectable.");
+ }catch(error){
+  say("profile-card-message","Profile was not deleted: "+error.message);
+  button.disabled=false;
+ }
+});
 
 $("reset-paper-session").addEventListener("click",async()=>{
  if(paperSessionResetInProgress)return;

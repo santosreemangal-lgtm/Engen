@@ -638,7 +638,7 @@ function renderWallets(){
    const quality=String(monitor.source_quality||"unknown").toLowerCase();
    const qualityLabel=quality==="degraded"?" · metadata degraded":quality==="pending"?" · transactions pending":"";
    const rpcErrors=Number(monitor.rpc_error_count||0);
-   const scanDuration=Number.isFinite(Number(monitor.scan_duration_ms))?Number(monitor.scan_duration_ms):null;
+   const scanDuration=monitor.scan_duration_ms!==null&&monitor.scan_duration_ms!==undefined&&Number.isFinite(Number(monitor.scan_duration_ms))?Number(monitor.scan_duration_ms):null;
    const scanLabel=scanDuration===null?"":" · "+scanDuration.toFixed(1)+" ms";
    const scanCount=Number(monitor.scan_count||0);
    monitorStatus.textContent=state.replaceAll("_"," ")+qualityLabel+(rpcErrors?" · "+rpcErrors+" RPC errors":"")+scanLabel+(scanCount?" · "+scanCount+" scans":"")+checkedLabel+(resultCount?" · "+resultCount+" recent":"");
@@ -702,11 +702,14 @@ async function loadMonitor(){
    return value&&Number.isFinite(Number(value.p95_ms))?Number(value.p95_ms).toFixed(1)+" ms p95":null;
   };
   const performanceParts=[];
-  if(Number.isFinite(Number(report.last_cycle_duration_ms)))performanceParts.push("Cycle "+Number(report.last_cycle_duration_ms).toFixed(1)+" ms");
+  if(report.last_cycle_duration_ms!==null&&report.last_cycle_duration_ms!==undefined&&Number.isFinite(Number(report.last_cycle_duration_ms)))performanceParts.push("Cycle "+Number(report.last_cycle_duration_ms).toFixed(1)+" ms");
   if(Number.isFinite(Number(report.last_cycle_wallet_count)))performanceParts.push((Number(report.last_cycle_wallet_count)||0)+" wallets / "+(Number(report.scan_workers)||1)+" workers");
   if(Number.isFinite(Number(report.rpc_timeout_seconds)))performanceParts.push("RPC timeout "+Number(report.rpc_timeout_seconds).toFixed(1)+" s");
   const signatureLatency=latencyLabel("wallet.signature_fetch");if(signatureLatency)performanceParts.push("Signature RPC "+signatureLatency);
   const transactionLatency=latencyLabel("transaction.rpc_fetch");if(transactionLatency)performanceParts.push("Transaction RPC "+transactionLatency);
+  const analysisLatency=latencyLabel("transaction.local_analysis");if(analysisLatency)performanceParts.push("Local analysis "+analysisLatency);
+  const historyLatency=latencyLabel("dashboard.transaction_history_persist");if(historyLatency)performanceParts.push("History save "+historyLatency);
+  const queueLatency=latencyLabel("dashboard.paper_order_queue");if(queueLatency)performanceParts.push("Order queue "+queueLatency);
   const paperLatency=latencyLabel("dashboard.paper_simulation");if(paperLatency)performanceParts.push("Paper simulation "+paperLatency);
   const marketLatency=latencyLabel("dashboard.paper_market_data_fetch");if(marketLatency)performanceParts.push("Market data "+marketLatency);
   const lockLatency=latencyLabel("dashboard.paper_lock_wait");if(lockLatency)performanceParts.push("Simulator lock wait "+lockLatency);

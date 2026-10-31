@@ -133,7 +133,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     if isinstance(raw_change, bool) or not isinstance(raw_change, (str, int)):
                         continue
                     raw_text = str(raw_change)
-                    if re.fullmatch(r"-?\\d+", raw_text) is None:
+                    if re.fullmatch(r"-?\d+", raw_text) is None:
                         continue
                     decimals_seen.add(decimals)
                     matching_deltas.append(int(raw_text))

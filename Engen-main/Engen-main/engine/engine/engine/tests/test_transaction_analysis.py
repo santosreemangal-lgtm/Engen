@@ -988,5 +988,79 @@ class TransactionAnalysisTests(unittest.TestCase):
         self.assertEqual(result["classification"], "UNKNOWN")
         self.assertNotEqual(result["activity_type"], "TRANSFER")
 
+    def test_known_mainnet_swap_program_ids_preserve_balance_based_candidates(self):
+        from engine.transaction_analysis import classify_transaction
+
+        wallet = "WALLET_A"
+        recognized_program_ids = (
+            "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+            "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+            "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+            "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+            "routeUGWgWzqBWFcrCfv8tritsqukccJPu3q5GPP3xS",
+            "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+        )
+        changes = [
+            {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "1000", "decimals": 6},
+            {
+                "owner": wallet,
+                "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                "delta_amount": "-500",
+                "decimals": 6,
+            },
+        ]
+        for program_id in recognized_program_ids:
+            with self.subTest(program_id=program_id):
+                transaction = {
+                    "transaction": {
+                        "message": {
+                            "instructions": [
+                                {"programId": program_id},
+                                {
+                                    "program": "spl-token",
+                                    "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                                    "parsed": {"type": "transferChecked", "info": {}},
+                                },
+                            ],
+                        },
+                    },
+                    "meta": {"err": None, "fee": 5000},
+                }
+                result = classify_transaction(transaction, wallet, changes)
+                self.assertEqual(result["classification"], "BUY_CANDIDATE")
+                self.assertEqual(result["asset_mints"], ["TOKEN_A"])
+
+    def test_unrecognized_program_does_not_become_a_swap_from_transfer_deltas(self):
+        from engine.transaction_analysis import classify_transaction
+
+        wallet = "WALLET_A"
+        transaction = {
+            "transaction": {
+                "message": {
+                    "instructions": [
+                        {"programId": "UnrecognizedSwapProgram111111111111111111111"},
+                        {
+                            "program": "spl-token",
+                            "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                            "parsed": {"type": "transferChecked", "info": {}},
+                        },
+                    ],
+                },
+            },
+            "meta": {"err": None, "fee": 5000},
+        }
+        changes = [
+            {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "1000", "decimals": 6},
+            {
+                "owner": wallet,
+                "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                "delta_amount": "-500",
+                "decimals": 6,
+            },
+        ]
+        result = classify_transaction(transaction, wallet, changes)
+        self.assertEqual(result["classification"], "UNKNOWN")
+
+
 if __name__ == "__main__":
     unittest.main()

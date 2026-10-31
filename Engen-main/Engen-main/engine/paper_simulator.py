@@ -588,9 +588,12 @@ class PaperSimulator:
 
     def _wait(self, order, reason, diagnostic_code="MARKET_DATA_UNAVAILABLE", next_step=None):
         """Keep transient data failures retryable and persist a machine-readable explanation."""
+        # Preserve the public status contract: only insufficient liquidity
+        # has its own WAITING_FOR_LIQUIDITY status. Missing/stale snapshots
+        # remain WAITING_FOR_MARKET_DATA but carry their specific diagnostic code.
         waiting_state = (
             "WAITING_FOR_LIQUIDITY"
-            if str(diagnostic_code).startswith("LIQUIDITY_")
+            if diagnostic_code == "LIQUIDITY_BELOW_REQUIRED_MINIMUM"
             else "WAITING_FOR_MARKET_DATA"
         )
         details = {

@@ -2,7 +2,7 @@ import unittest
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders
+from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders, source_trade_is_fresh
 from engine.paper_simulator import PaperSimulator
 from engine.pnl import MarketPrice
 
@@ -47,7 +47,7 @@ def candidate_result(*, confirmation="finalized", classification="BUY_CANDIDATE"
         "signature_observation": {
             "confirmation_status": confirmation,
             "slot": 123,
-            "block_time": 1700000000,
+            "block_time": int(datetime.now(timezone.utc).timestamp()),
         },
         "trade_signal": {
             "classification": classification,
@@ -233,6 +233,22 @@ class PaperCopyRunnerTests(unittest.TestCase):
                 WALLET, [candidate_result()], FakeSimulator(),
                 copy_settings={"sizing_mode": "UNSUPPORTED", "sizing_value": 10},
             )
+
+    def test_source_trade_must_have_block_time_and_be_at_most_60_seconds_old(self):
+        fresh = candidate_result()
+        stale = candidate_result()
+        stale["signature_observation"]["block_time"] = 138
+        missing_time = candidate_result()
+        missing_time["signature_observation"].pop("block_time")
+
+        self.assertTrue(source_trade_is_fresh({"signature_observation": {"block_time": 140}}, now=200))
+        self.assertFalse(source_trade_is_fresh({"signature_observation": {"block_time": 139}}, now=200))
+        self.assertFalse(source_trade_is_fresh({"signature_observation": {}}, now=200))
+        self.assertFalse(source_trade_is_fresh({"signature_observation": {"block_time": 201}}, now=200))
+
+        simulator = FakeSimulator()
+        self.assertEqual(queue_paper_orders(WALLET, [stale, missing_time], simulator), [])
+        self.assertEqual(simulator.orders, {})
 
     def test_unconfirmed_or_unknown_transaction_is_not_copied(self):
         simulator = FakeSimulator()

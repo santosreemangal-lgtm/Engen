@@ -1569,7 +1569,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if action == "delete":
                     service = profile_monitor_services.get(profile_id)
                     if service is not None:
-                        service.stop_and_wait(timeout=15)
+                        stopped = service.stop_and_wait(timeout=15)
+                        if stopped.get("worker_stopped") is not True:
+                            # Do not archive a profile while one of its scanner
+                            # threads may still be writing its history/ledger.
+                            set_profile_monitor_persistence(profile_id, False)
+                            self.send_json(
+                                409,
+                                {
+                                    "error": "Profile monitoring is still stopping. The profile was not archived; retry after the monitor has stopped.",
+                                    "deleted": False,
+                                    "profile_id": profile_id,
+                                    "worker_stopped": False,
+                                },
+                            )
+                            return
                         profile_monitor_services.pop(profile_id, None)
                     set_profile_monitor_persistence(profile_id, False)
                     store.delete_profile(profile_id)

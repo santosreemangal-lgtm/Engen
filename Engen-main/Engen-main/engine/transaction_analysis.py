@@ -757,12 +757,26 @@ def _classify_non_swap_activity(instructions):
             "reason": "A recognized liquidity-pool instruction was found; this is not a BUY/SELL swap candidate.",
         }
 
+    known_non_swap_programs = {
+        "system", "spltoken", "token", "spltoken2022",
+        "splassociatedtokenaccount", "computebudget", "memo",
+    }
+    known_non_swap_program_ids = {
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    }
+    lifecycle_context_is_unambiguous = all(
+        program in known_non_swap_programs
+        or program_id in known_non_swap_program_ids
+        for program, program_id, _parsed_type in normalized
+    )
     account_lifecycle = {
         "createaccount", "createidempotent", "initializeaccount",
         "initializeaccount2", "initializeaccount3", "closeaccount",
         "syncnative", "recovernested",
     }
-    if any(
+    if lifecycle_context_is_unambiguous and any(
         parsed_type in account_lifecycle
         or (
             "associatedtoken" in program
@@ -783,10 +797,6 @@ def _classify_non_swap_activity(instructions):
     token_program_ids = {
         "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
         "11111111111111111111111111111111",
-    }
-    known_non_swap_programs = {
-        "system", "spltoken", "token", "spltoken2022",
-        "splassociatedtokenaccount", "computebudget", "memo",
     }
     transfer_context_is_unambiguous = all(
         program in known_non_swap_programs or program_id in token_program_ids

@@ -188,6 +188,52 @@ class ProfileStoreTests(unittest.TestCase):
         self.assertEqual(restored.current_balances(p)[0]["raw_amount"], "0")
         self.assertEqual(restored.get_profile(p)["name"], "Backup")
 
+    def test_source_trade_refs_survive_profile_transaction_history_pruning(self):
+        profile = self.store.create_profile("Reference retention")
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        source_signature = "1" * 64
+        saved = self.store.save_source_trade_ref(
+            profile, "paper-order-1", PUBLIC_ADDRESS, source_signature,
+            "BUY", PUBLIC_ADDRESS, source_slot=123, source_block_time=1700000000,
+        )
+        self.assertTrue(saved)
+        self.assertFalse(self.store.save_source_trade_ref(
+            profile, "paper-order-1", PUBLIC_ADDRESS, source_signature,
+            "BUY", PUBLIC_ADDRESS, source_slot=123, source_block_time=1700000000,
+        ))
+
+        # Force the ordinary transaction-history retention path to prune old rows.
+        for index in range(1002):
+            self.store.save_transaction(
+                "history-signature-" + str(index), PUBLIC_ADDRESS,
+                classification="UNKNOWN", status="observed", profile_ids=(profile,),
+            )
+
+        refs = self.store.list_source_trade_refs(profile)
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0]["order_id"], "paper-order-1")
+        self.assertEqual(refs[0]["source_signature"], source_signature)
+        self.assertEqual(refs[0]["source_slot"], 123)
+        self.assertIsNone(self.store.get_transaction(source_signature, profile))
+
+    def test_source_trade_ref_rejects_invalid_identity_and_metadata(self):
+        profile = self.store.create_profile("Reference validation")
+        with self.assertRaises(ValueError):
+            self.store.save_source_trade_ref(
+                profile, "order", PUBLIC_ADDRESS, "not-a-signature",
+                "BUY", PUBLIC_ADDRESS,
+            )
+        with self.assertRaises(ValueError):
+            self.store.save_source_trade_ref(
+                profile, "order", PUBLIC_ADDRESS, "1" * 64,
+                "HOLD", PUBLIC_ADDRESS,
+            )
+        with self.assertRaises(ValueError):
+            self.store.save_source_trade_ref(
+                profile, "order", PUBLIC_ADDRESS, "1" * 64,
+                "BUY", PUBLIC_ADDRESS, source_slot=-1,
+            )
+
     def test_invalid_public_address_and_timezone_are_rejected(self):
         with self.assertRaises(ValueError):
             self.store.create_profile("Invalid", destination_public_address="not-an-address")

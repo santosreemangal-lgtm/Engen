@@ -8,6 +8,18 @@ WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112"
 PUMP_FUN_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 NATIVE_SOL_SOURCE = "native_sol"
 
+# Mainnet swap programs whose instructions may contain inner SPL transfers.
+# Match exact program IDs as well as parsed program names: jsonParsed RPC
+# responses do not always supply a human-readable program name.
+RECOGNIZED_SWAP_PROGRAM_IDS = frozenset({
+    "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",  # Jupiter v6
+    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",  # Raydium AMM v4
+    "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",  # Raydium CPMM
+    "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",  # Raydium CLMM
+    "routeUGWgWzqBWFcrCfv8tritsqukccJPu3q5GPP3xS",  # Raydium router
+    "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",  # Orca Whirlpools
+})
+
 # Recognized SPL quote-token mints.
 QUOTE_TOKEN_MINTS = frozenset({
     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
@@ -1017,11 +1029,23 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
             )
             if value is not None
         )
-        explicit_swap_context = pumpfun_action in ("BUY", "SELL") or any(
-            marker in instruction_text
-            for marker in (
-                "swap", "jupiter", "raydium", "orca", "lifinity",
-                "meteora", "phoenix", "openbook",
+        instruction_program_ids = {
+            instruction.get("program_id")
+            for instruction in instructions
+            if isinstance(instruction.get("program_id"), str)
+        }
+        recognized_swap_program = bool(
+            instruction_program_ids & RECOGNIZED_SWAP_PROGRAM_IDS
+        )
+        explicit_swap_context = (
+            pumpfun_action in ("BUY", "SELL")
+            or recognized_swap_program
+            or any(
+                marker in instruction_text
+                for marker in (
+                    "swap", "jupiter", "raydium", "orca", "lifinity",
+                    "meteora", "phoenix", "openbook",
+                )
             )
         )
         lifecycle_context = any(

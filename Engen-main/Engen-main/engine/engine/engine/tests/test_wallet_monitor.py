@@ -213,8 +213,8 @@ class WalletMonitorTests(unittest.TestCase):
 
     @patch("engine.wallet_monitor.get_wallet_signatures")
     def test_pagination_continues_beyond_five_pages_until_anchor(self, mock_get_signatures):
-        anchor = "9" * 64
-        new_signatures = ["2" * 63 + str(index) for index in range(3, 9)]
+        anchor = "1" * 63 + "9"
+        new_signatures = ["1" * 63 + str(index) for index in range(2, 8)]
         self.store.mark_baseline(self.wallet)
         self.store.save(self.wallet, anchor, slot=100)
         self.store.mark_processed(self.wallet, anchor)

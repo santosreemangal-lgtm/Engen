@@ -762,7 +762,14 @@ def _classify_non_swap_activity(instructions):
         "initializeaccount2", "initializeaccount3", "closeaccount",
         "syncnative", "recovernested",
     }
-    if any(parsed_type in account_lifecycle for _program, _program_id, parsed_type in normalized):
+    if any(
+        parsed_type in account_lifecycle
+        or (
+            "associatedtoken" in program
+            and parsed_type in {"create", "createidempotent"}
+        )
+        for program, _program_id, parsed_type in normalized
+    ):
         return {
             "classification": "RENT" if any(
                 parsed_type == "createaccount" and program == "system"

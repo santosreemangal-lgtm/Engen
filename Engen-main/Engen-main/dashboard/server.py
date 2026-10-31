@@ -46,6 +46,15 @@ PAPER_SIMULATOR_DB = Path(os.environ.get("PAPER_SIMULATOR_DB", str(PROJECT_ROOT 
 PROFILE_STORE_DB = Path(os.environ.get("PROFILE_STORE_DB", str(PROJECT_ROOT / "data" / "profiles.db")))
 PROFILE_DATA_DIR = Path(os.environ.get("PROFILE_DATA_DIR", str(PROFILE_STORE_DB.parent / "profiles")))
 MAX_HISTORY_PAGE_SIZE = 100
+try:
+    MONITOR_RPC_TIMEOUT_SECONDS = float(os.environ.get("MONITOR_RPC_TIMEOUT_SECONDS", "10"))
+    MONITOR_SCAN_WORKERS = int(os.environ.get("MONITOR_SCAN_WORKERS", "4"))
+except (TypeError, ValueError) as exc:
+    raise RuntimeError("Monitor timeout/workers configuration must be numeric.") from exc
+if not 1 <= MONITOR_RPC_TIMEOUT_SECONDS <= 60:
+    raise RuntimeError("MONITOR_RPC_TIMEOUT_SECONDS must be between 1 and 60.")
+if not 1 <= MONITOR_SCAN_WORKERS <= 16:
+    raise RuntimeError("MONITOR_SCAN_WORKERS must be between 1 and 16.")
 HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT = int(os.environ.get("PORT", "8000"))
 TRUST_PROXY = os.environ.get("DASHBOARD_TRUST_PROXY", "").strip().lower() == "true"
@@ -253,7 +262,11 @@ def is_valid_solana_address(value):
 
 
 # Creating services does not start monitoring or make RPC requests.
-monitor_service = MonitorService(create_scan_function(), interval=15)
+monitor_service = MonitorService(
+    create_scan_function(timeout=MONITOR_RPC_TIMEOUT_SECONDS),
+    interval=15,
+    max_workers=MONITOR_SCAN_WORKERS,
+)
 # Each saved profile gets its own in-memory monitor lifecycle. The saved source
 # wallet list remains profile-scoped in ProfileStore.
 profile_monitor_services = {}
@@ -884,6 +897,7 @@ def get_profile_monitor_service(profile_id):
     if canonical not in profile_monitor_services:
         profile_monitor_services[canonical] = MonitorService(
             create_scan_function(
+                timeout=MONITOR_RPC_TIMEOUT_SECONDS,
                 side_getter=lambda: profile_copy_side(canonical),
                 settings_getter=lambda: profile_paper_settings(canonical),
                 simulator_getter=lambda: get_profile_paper_simulator(canonical),
@@ -891,6 +905,7 @@ def get_profile_monitor_service(profile_id):
                 profile_store=ProfileStore(PROFILE_STORE_DB),
             ),
             interval=15,
+            max_workers=MONITOR_SCAN_WORKERS,
         )
     return profile_monitor_services[canonical]
 
@@ -905,7 +920,12 @@ def profile_monitor_report(profile_id):
     status = service.status() if service is not None else {
         "enabled": False, "interval_seconds": 15, "wallets": [],
     }
-    return {"profile_id": canonical, "profile_status": profile["status"], "monitor": status}
+    return {
+        "profile_id": canonical,
+        "profile_status": profile["status"],
+        "rpc_timeout_seconds": MONITOR_RPC_TIMEOUT_SECONDS,
+        "monitor": status,
+    }
 
 
 def load_profile_transactions(query):

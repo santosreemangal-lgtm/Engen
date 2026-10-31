@@ -118,9 +118,16 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             report = reporter()
         except Exception:
             return 0
-        orders = report.get("orders", []) if isinstance(report, dict) else []
+        orders = list(report.get("orders", [])) if isinstance(report, dict) and isinstance(report.get("orders"), list) else []
+        archives = report.get("archived_sessions", []) if isinstance(report, dict) else []
+        # Session resets archive orders before clearing the active simulator list.
+        # Reconcile those orders too, so a restart/reset cannot erase the source link.
+        if isinstance(archives, list):
+            for archive in archives:
+                if isinstance(archive, dict) and isinstance(archive.get("orders"), list):
+                    orders.extend(archive["orders"])
         saved = 0
-        for order in orders if isinstance(orders, list) else []:
+        for order in orders:
             if not isinstance(order, dict):
                 continue
             details = order.get("details")

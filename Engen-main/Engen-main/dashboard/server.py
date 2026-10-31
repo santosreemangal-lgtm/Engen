@@ -565,7 +565,8 @@ def load_profile_paper_simulation_report(profile_id):
         "archived_sessions": [],
         "available_balance": None, "available_balance_usd": None,
         "initial_balance": None, "portfolio_value_usd": None,
-        "realized_pnl_usd": None, "unrealized_pnl_usd": None,
+        "realized_pnl_usd": None, "realized_pnl_status": "no_sell_fills",
+        "realized_sell_fill_count": 0, "unrealized_pnl_usd": None,
         "pnl": {"cost_basis_method": "average_cost", "currency": "USD",
                 "realized_by_mint": {},
                 "unrealized_status": "unavailable_no_verified_fresh_market_price"},
@@ -641,15 +642,26 @@ def load_profile_paper_simulation_report(profile_id):
         base["fills"] = sim_fills
         base["pnl_events"] = sim_pnl_events
         base["pnl"] = simulator_report.get("pnl", base["pnl"])
+        base["realized_sell_fill_count"] = sum(
+            1 for fill in sim_fills
+            if isinstance(fill, dict) and str(fill.get("side", "")).upper() == "SELL"
+        )
         realized = base["pnl"].get("realized_by_mint", {})
         if not realized:
             base["realized_pnl_usd"] = "0"
+            base["realized_pnl_status"] = (
+                "no_sell_fills"
+                if base["realized_sell_fill_count"] == 0
+                else "unavailable_missing_sell_pnl"
+            )
         elif all(item.get("status") == "calculated" and item.get("pnl") is not None
                  for item in realized.values()):
             base["realized_pnl_usd"] = format(
                 sum((Decimal(item["pnl"]) for item in realized.values()), Decimal("0")), "f")
+            base["realized_pnl_status"] = "calculated"
         else:
             base["realized_pnl_usd"] = None
+            base["realized_pnl_status"] = "unknown_cost_basis"
         # Value non-cash holdings only from verified, fresh public market snapshots.
         # Portfolio value may be known even when cost basis is unknown; in that
         # case unrealized P&L stays unavailable rather than being guessed.

@@ -613,12 +613,21 @@ class PaperSimulator:
             "transaction_broadcast": False,
         }
 
-    def _reject(self, order, reason):
-        updated = dict(order, status="REJECTED", reason=reason,
-                       details={**order["details"], "execution_state":"REJECTED"})
+    def _reject(self, order, reason, diagnostic_code=None, next_step=None):
+        details = {**order.get("details", {}), "execution_state": "REJECTED"}
+        if diagnostic_code:
+            details["diagnostic_code"] = str(diagnostic_code)[:80]
+        if next_step:
+            details["diagnostic_next_step"] = str(next_step)[:240]
+        updated = dict(order, status="REJECTED", reason=reason, details=details)
         self._persist(updated)
         self.orders[order["order_id"]] = updated
-        return {"status":"REJECTED","reason":reason,"real_trading":False,"transaction_broadcast":False}
+        return {
+            "status": "REJECTED", "reason": reason,
+            "diagnostic_code": details.get("diagnostic_code"),
+            "next_step": details.get("diagnostic_next_step"),
+            "real_trading": False, "transaction_broadcast": False,
+        }
 
     def _rebuild_pnl_ledger(self):
         """Recalculate realized P&L from persisted fills in stable order."""

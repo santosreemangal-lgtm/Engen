@@ -210,8 +210,8 @@ footer.hint{padding:10px 4px;line-height:1.7}
  <p id="transaction-history-message" class="message" role="status"></p>
 </section>
 <section id="paper-history-panel" class="history-subpanel hidden" role="tabpanel" aria-labelledby="paper-history-tab">
- <div class="history-overview"><div><strong id="paper-trade-total">—</strong><span>stored paper orders</span><small id="paper-fill-total">0 completed fills</small></div><p class="hint">Virtual simulation only. No wallet signing or blockchain transaction is performed.</p></div>
- <div class="history-table-wrap"><table class="history-table"><thead><tr><th>Created</th><th>Side</th><th>Token mint</th><th>Quantity</th><th>Notional / price</th><th>Execution state</th><th>Source transaction</th></tr></thead><tbody id="paper-trade-history-table"><tr><td colspan="7" class="history-empty">Select a profile to load paper trades.</td></tr></tbody></table></div>
+ <div class="history-overview"><div><strong id="paper-trade-total">—</strong><span>completed paper trades</span><small id="paper-fill-total">0 completed fills</small></div><p class="hint">Virtual simulation only. No wallet signing or blockchain transaction is performed.</p></div>
+ <div class="history-table-wrap"><table class="history-table"><thead><tr><th>Filled at</th><th>Side</th><th>Token mint</th><th>Quantity</th><th>Cash flow / price</th><th>Fill status</th><th>Source transaction</th></tr></thead><tbody id="paper-trade-history-table"><tr><td colspan="7" class="history-empty">Select a profile to load paper trades.</td></tr></tbody></table></div>
  <p id="paper-trade-history-message" class="message" role="status"></p>
 </section>
 </details>
@@ -289,9 +289,10 @@ function say(id,text){$(id).textContent=text;}
 function ordersForFillLookup(orders,fill){return Array.isArray(orders)?orders.find(order=>order.order_id===fill.order_id)||{}:{};}
 function notifyTradeExecution(fill,order){
  const notice=$("trade-notification");
- const side=String(order?.side||"TRADE").toUpperCase();
- const amount=fill?.gross_quote!==undefined?" · $"+historyAmount(fill.gross_quote):"";
- notice.textContent=side+" paper trade executed"+amount;
+ const side=String(fill?.side||order?.side||"TRADE").toUpperCase();
+ const amount=fill?.net_quote??fill?.gross_quote;
+ const amountText=amount===undefined||amount===null?"": " · "+(side==="BUY"?"Spent $":"Received $")+exactHistoryAmount(amount);
+ notice.textContent=side+" paper trade filled"+amountText;
  notice.hidden=false;
 }
 function post(path,payload){return api(path,{method:"POST",body:JSON.stringify(payload)});}
@@ -401,7 +402,7 @@ function handleProfileMonitorEvent(event, profileId) {
  void Promise.allSettled([
   loadMonitor(),
   loadTransactionHistory(),
-  loadPaperTradeHistory(null),
+  // loadPortfolioForProfile also refreshes Paper Trades from the same report.
   loadPortfolioForProfile()
  ]);
 }
@@ -493,10 +494,12 @@ async function loadPortfolioForProfile(){
   $("realized").textContent=money(null);$("unrealized").textContent=money(null);
   say("virtual-balance-message","Select a paper profile to set its virtual balance.");
   say("portfolio-message","Select a paper profile to view its portfolio.");
-  await loadPaperTradeHistory(null);return;
+  await loadPaperTradeHistory();return;
  }
  const preserveDraft=balanceInputDirty;
  if(!preserveDraft){input.disabled=true;save.disabled=true;}
+ // Load the persisted fill ledger immediately; public price valuation runs separately.
+ void loadPaperTradeHistory();
  try{
   const path="/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile);
   let d=await api(path),r=d.report||d;
@@ -515,11 +518,9 @@ async function loadPortfolioForProfile(){
   else if(balance===null||balance===undefined){say("portfolio-message","No virtual USD balance is set for this profile yet. Enter an amount above and confirm it.");}
   else if(r.portfolio_value_usd===null||r.portfolio_value_usd===undefined){say("portfolio-message","Available cash is shown in USD. Portfolio value is unavailable while token holdings lack a verified fresh market price.");}
   else{say("portfolio-message","Portfolio value currently reflects virtual USD cash; token holdings are included only when reliably valued.");}
-  await loadPaperTradeHistory(r);
  }catch(e){
   if(!balanceInputDirty){input.disabled=false;save.disabled=!selectedProfile||balanceSaveInProgress;}
   say("portfolio-message",e.message);say("virtual-balance-message","Could not load this profile's virtual balance.");
-  await loadPaperTradeHistory(null);
  }
 }
 function updateAmountLabel(){
@@ -595,6 +596,15 @@ function historyDate(value){
  const date=new Date(value);return Number.isNaN(date.getTime())?String(value):date.toLocaleString();
 }
 function historyAmount(value){return compactNumber(value);}
+function exactHistoryAmount(value){
+ if(value===null||value===undefined||value==="")return "—";
+ const raw=String(value).trim();
+ const match=raw.match(/^([+-]?)(\d+)(?:\.(\d+))?$/);
+ if(!match)return raw;
+ const whole=match[2].replace(/\B(?=(\d{3})+(?!\d))/g,",");
+ const fraction=(match[3]||"").replace(/0+$/,"");
+ return match[1]+whole+(fraction?"."+fraction:"");
+}
 function historyShortAddress(value){
  if(!value)return "—";const text=String(value);
  return text.length>16?text.slice(0,7)+"…"+text.slice(-6):text;
@@ -705,7 +715,7 @@ function setHistoryTab(mode){
  $("paper-history-tab").classList.toggle("active",!observed);
  $("observed-history-tab").setAttribute("aria-selected",observed?"true":"false");
  $("paper-history-tab").setAttribute("aria-selected",observed?"false":"true");
- if(observed)loadTransactionHistory();else loadPaperTradeHistory(null);
+ if(observed)loadTransactionHistory();else loadPaperTradeHistory();
 }
 async function loadTransactionHistory(){
  const tbody=$("transaction-history-table");
@@ -756,19 +766,27 @@ async function loadTransactionHistory(){
   say("transaction-history-message",e.message);
  }
 }
-async function loadPaperTradeHistory(reportOverride){
+async function loadPaperTradeHistory(){
  const tbody=$("paper-trade-history-table");
  if(!selectedProfile){
-  historySetEmpty(tbody,7,"Select a profile to view simulated paper trades.");
+  historySetEmpty(tbody,7,"Select a profile to view completed paper trades.");
   $("paper-trade-total").textContent="—";$("paper-fill-total").textContent="0 completed fills";
   say("paper-trade-history-message","");return;
  }
  try{
-  let r=reportOverride;
-  if(!r){const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile));r=d.report||d;}
+  const r=await api("/api/profile-paper-history?profile_id="+encodeURIComponent(selectedProfile));
   if(r.error){historySetEmpty(tbody,7,"Paper history unavailable: "+r.error);say("paper-trade-history-message",r.error);return;}
-  const orders=Array.isArray(r.orders)?r.orders.slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||""))):[];
-  const fills=Array.isArray(r.fills)?r.fills:[];
+  const orders=Array.isArray(r.orders)?r.orders:[];
+  // A queued order is not an executed trade. Render only persisted fills.
+  const fills=(Array.isArray(r.fills)?r.fills:[])
+   .filter(fill=>fill&&typeof fill==="object"&&
+    ["BUY","SELL"].includes(String(fill.side||"").toUpperCase())&&
+    typeof fill.order_id==="string"&&fill.order_id.length>0&&
+    typeof fill.asset_mint==="string"&&fill.asset_mint.length>0&&
+    fill.quantity!==null&&fill.quantity!==undefined&&
+    fill.execution_price!==null&&fill.execution_price!==undefined&&
+    fill.gross_quote!==null&&fill.gross_quote!==undefined)
+   .slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
   if(fillsBaselineProfile!==selectedProfile){
    fillsBaselineProfile=selectedProfile;
    knownFillIds=new Set(fills.map(fill=>String(fill.order_id||fill.fill_id||"")).filter(Boolean));
@@ -779,57 +797,54 @@ async function loadPaperTradeHistory(reportOverride){
    });
    fills.forEach(fill=>{const id=String(fill.order_id||fill.fill_id||"");if(id)knownFillIds.add(id);});
    if(newFills.length){
-    const latest=newFills[newFills.length-1];
-    const order=ordersForFillLookup(r.orders,latest);
+    const latest=newFills[0];
+    const order=ordersForFillLookup(orders,latest);
     notifyTradeExecution(latest,order);
    }
   }
-  $("paper-trade-total").textContent=orders.length.toLocaleString();
+  $("paper-trade-total").textContent=fills.length.toLocaleString();
   $("paper-fill-total").textContent=fills.length.toLocaleString()+" completed fill"+(fills.length===1?"":"s");
   tbody.replaceChildren();
-  if(!orders.length)historySetEmpty(tbody,7,"No Paper Orders have been queued yet. The first scan only establishes a baseline; older transactions are not replayed. A new confirmed BUY/SELL swap must be detected while monitoring is active.");
-  orders.forEach(order=>{
-   const row=document.createElement("tr"),details=order.details&&typeof order.details==="object"?order.details:{};
-   const fill=fills.find(x=>x.order_id===order.order_id);
-   historyCell(row,historyDate(fill?.created_at||order.created_at));
-   const side=String(order.side||"ORDER").toUpperCase(),sideCell=document.createElement("td");sideCell.append(historyPill(side,side==="BUY"?"buy":side==="SELL"?"sell":""));row.append(sideCell);
-   row.append(makeHistoryTokenCell(order.asset_mint));
-   const sourceWallet=details.source_wallet;
-   let quantity=fill?.quantity;
-   if(!quantity){
-    if(side==="SELL"&&details.source_sell_fraction)quantity="Source position × "+(Number(details.source_sell_fraction)*100).toFixed(2).replace(/\.00$/,"")+"%";
-    else if(details.target_notional_usd)quantity="Target $"+historyAmount(details.target_notional_usd);
-    else quantity=details.execution_state==="AWAITING_VIRTUAL_BALANCE"?"Waiting for virtual balance":"Waiting for verified sizing";
-   }else quantity=historyAmount(quantity);
-   const quantityCell=historyCell(row,quantity);
-   const exactQuantity=fill?.quantity||((order.status==="FILLED"||order.status==="COMPLETED")?order.quantity:null);
-   if(exactQuantity!==null&&exactQuantity!==undefined)quantityCell.title="Exact quantity: "+String(exactQuantity);
+  if(!fills.length)historySetEmpty(tbody,7,"No successfully completed paper trades yet. This table shows only simulated fills after the execution and ledger update succeed. On-chain wallet observations are listed separately in Wallet Activity.");
+  fills.forEach(fill=>{
+   const order=ordersForFillLookup(orders,fill);
+   const details=order.details&&typeof order.details==="object"?order.details:{};
+   const row=document.createElement("tr");
+   historyCell(row,historyDate(fill.created_at||order.created_at));
+   const side=String(fill.side||order.side||"").toUpperCase();
+   const sideCell=document.createElement("td");
+   sideCell.append(historyPill(side,side==="BUY"?"buy":"sell"));row.append(sideCell);
+   row.append(makeHistoryTokenCell(fill.asset_mint));
+   const quantityCell=historyCell(row,exactHistoryAmount(fill.quantity));
+   quantityCell.title="Exact filled quantity: "+String(fill.quantity);
    const notionalCell=document.createElement("td");
-   if(fill){const gross=document.createElement("span");gross.className="history-main";gross.textContent="$"+historyAmount(fill.gross_quote);gross.title="Exact gross quote: "+String(fill.gross_quote);notionalCell.append(gross);const price=document.createElement("small");price.className="history-sub";price.textContent="Price $"+historyAmount(fill.execution_price);price.title="Exact execution price: "+String(fill.execution_price);notionalCell.append(price);}
-   else if(details.target_notional_usd){notionalCell.textContent="$"+historyAmount(details.target_notional_usd);notionalCell.title="Exact target: $"+String(details.target_notional_usd);}
-   else notionalCell.textContent="Pending";
-   row.append(notionalCell);
+   const cashFlow=fill.net_quote===null||fill.net_quote===undefined?fill.gross_quote:fill.net_quote;
+   const gross=document.createElement("span");gross.className="history-main";
+   gross.textContent=(side==="BUY"?"Spent $":"Received $")+exactHistoryAmount(cashFlow);
+   gross.title=(side==="BUY"?"Exact simulated cash debit: $":"Exact simulated cash credit: $")+String(cashFlow);
+   const price=document.createElement("small");price.className="history-sub";
+   const costDetails=[];
+   if(fill.fee!==null&&fill.fee!==undefined)costDetails.push("Fee $"+exactHistoryAmount(fill.fee));
+   if(fill.network_cost!==null&&fill.network_cost!==undefined)costDetails.push("Network $"+exactHistoryAmount(fill.network_cost));
+   price.textContent="Gross $"+exactHistoryAmount(fill.gross_quote)+" · Price $"+exactHistoryAmount(fill.execution_price)+(costDetails.length?" · "+costDetails.join(" · "):"");
+   price.title="Gross quote: "+String(fill.gross_quote)+"; execution price: "+String(fill.execution_price);
+   notionalCell.append(gross,price);row.append(notionalCell);
    const stateCell=document.createElement("td");
-   let state=String(order.status||"UNKNOWN").toUpperCase();
-   if(fill)state="FILLED";
-   else if(details.execution_state==="AWAITING_VIRTUAL_BALANCE")state="WAITING BALANCE";
-   else if(details.execution_state==="AWAITING_VERIFIED_MARKET_DATA"||details.execution_state==="WAITING_FOR_MARKET_DATA")state="WAITING PRICE";
-   else if(details.execution_state==="WAITING_FOR_POSITION")state="WAITING POSITION";
-   else if(details.execution_state==="EXECUTION_ERROR")state="EXECUTION ERROR";
-   const kind=state==="FILLED"?"filled":state.includes("WAITING")||state==="CREATED"?"waiting":state==="REJECTED"?"rejected":"";
-   const pill=historyPill(state,kind);if(order.reason)pill.title=order.reason;stateCell.append(pill);
-   if(order.reason){const reason=document.createElement("small");reason.className="history-sub";reason.textContent=order.reason;stateCell.append(reason);}
-   row.append(stateCell);
+   stateCell.append(historyPill("FILLED","filled"));row.append(stateCell);
    const sourceCell=document.createElement("td");
-   if(details.source_signature){const link=document.createElement("a");link.className="history-link";link.href="https://solscan.io/tx/"+encodeURIComponent(details.source_signature);link.target="_blank";link.rel="noopener noreferrer";link.textContent="View source ↗";sourceCell.append(link);}
-   else sourceCell.textContent="—";
+   if(details.source_signature){
+    const link=document.createElement("a");link.className="history-link";
+    link.href="https://solscan.io/tx/"+encodeURIComponent(details.source_signature);
+    link.target="_blank";link.rel="noopener noreferrer";link.textContent="View source ↗";
+    sourceCell.append(link);
+   }else sourceCell.textContent="—";
    row.append(sourceCell);tbody.append(row);
   });
-  void loadHistoryTokenMetadata(orders.map(order=>order.asset_mint));
-  say("paper-trade-history-message",orders.length?"Showing the latest "+orders.length+" stored paper order(s); "+fills.length+" have simulated fills.":"Paper orders are shown only when the copy engine queues them. On-chain transaction rows are kept separate.");
- }catch(e){historySetEmpty(tbody,7,e.message||"Unable to load paper history.");say("paper-trade-history-message",e.message);}
+  void loadHistoryTokenMetadata(fills.map(fill=>fill.asset_mint));
+  say("paper-trade-history-message",fills.length?"Showing "+fills.length.toLocaleString()+" successfully completed simulated fill(s). Unexecuted orders are not counted as trades.":"No completed paper fills are stored for this profile yet.");
+ }catch(e){historySetEmpty(tbody,7,e.message||"Unable to load completed paper trades.");say("paper-trade-history-message",e.message);}
 }
-async function loadHistory(){await Promise.all([loadTransactionHistory(),loadPaperTradeHistory(null)]);}
+async function loadHistory(){await Promise.all([loadTransactionHistory(),loadPaperTradeHistory()]);}
 $("history-details").addEventListener("toggle",()=>{if($("history-details").open)loadHistory();});
 $("observed-history-tab").addEventListener("click",()=>setHistoryTab("observed"));
 $("paper-history-tab").addEventListener("click",()=>setHistoryTab("paper"));
@@ -877,7 +892,7 @@ let refreshInProgress = false;
 setInterval(async()=> {
   if(!backendReady || refreshInProgress) return;
   refreshInProgress = true;
-  try { await Promise.all([loadMonitor(), loadTransactionHistory(), loadPaperTradeHistory(null)]); }
+  try { await Promise.all([loadMonitor(), loadTransactionHistory(), loadPaperTradeHistory()]); }
   finally { refreshInProgress = false; }
 },60000);
 setInterval(loadRpcHealth,30000);

@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime, timezone
 from decimal import Decimal
+from unittest.mock import patch
 
 from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders
 from engine.paper_simulator import PaperSimulator
@@ -403,6 +404,31 @@ class PaperCopyRunnerTests(unittest.TestCase):
     def test_invalid_copy_direction_is_rejected(self):
         with self.assertRaises(ValueError):
             queue_paper_orders(WALLET, [], FakeSimulator(), allowed_sides="SOMETHING")
+
+    def test_automatic_price_lookup_is_bounded_and_keeps_order_unfilled_on_miss(self):
+        simulator = PaperSimulator()
+        simulator.add_virtual_balance("USD", "1000")
+        queued = queue_paper_orders(WALLET, [candidate_result()], simulator)
+        self.assertEqual(len(queued), 1)
+
+        with patch(
+            "engine.paper_copy_runner.fetch_market_price",
+            return_value=None,
+        ) as mocked_price:
+            outcomes = execute_pending_paper_orders(WALLET, simulator)
+
+        mocked_price.assert_called_once_with(
+            ASSET,
+            timeout=3.0,
+            max_attempts=1,
+        )
+        self.assertEqual(outcomes[0]["status"], "WAITING_FOR_MARKET_DATA")
+        report = simulator.report()
+        self.assertEqual(report["orders"][0]["status"], "CREATED")
+        self.assertEqual(report["balances"]["USD"], "1000")
+        self.assertEqual(report["fills"], [])
+        self.assertFalse(report["real_trading"])
+        self.assertFalse(report["transaction_broadcast"])
 
     def test_pending_copy_order_fills_only_with_fresh_liquid_market_data(self):
         simulator = PaperSimulator()

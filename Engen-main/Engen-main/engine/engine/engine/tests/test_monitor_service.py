@@ -100,7 +100,7 @@ class MonitorServiceTests(unittest.TestCase):
         scan_finished = threading.Event()
 
         def measured_scan(address):
-            time.sleep(0.02)
+            time.sleep(0.03)
             scan_finished.set()
             return [{"signature": "sig-a"}, {"signature": "sig-b"}]
 
@@ -109,12 +109,15 @@ class MonitorServiceTests(unittest.TestCase):
             service.start(["11111111111111111111111111111111"])
             self.assertTrue(scan_finished.wait(timeout=3))
             deadline = time.monotonic() + 3
-            wallet = service.status()["wallets"][0]
-            while time.monotonic() < deadline and wallet["scan_count"] < 1:
-                time.sleep(0.01)
-                wallet = service.status()["wallets"][0]
             status = service.status()
             wallet = status["wallets"][0]
+            while time.monotonic() < deadline and (
+                wallet["scan_count"] < 1
+                or status["last_cycle_duration_seconds"] is None
+            ):
+                time.sleep(0.01)
+                status = service.status()
+                wallet = status["wallets"][0]
             self.assertEqual(wallet["scan_count"], 1)
             self.assertEqual(wallet["last_result_count"], 2)
             self.assertGreaterEqual(wallet["last_scan_duration_seconds"], 0.02)

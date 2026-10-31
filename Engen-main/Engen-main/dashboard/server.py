@@ -1033,7 +1033,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         event = subscriber.get(timeout=15)
                         payload = json.dumps(event, separators=(",", ":"))
                         self.wfile.write(
-                            ("event: monitor\\ndata: " + payload + "\\n\\n").encode("utf-8")
+                            ("event: monitor\ndata: " + payload + "\n\n").encode("utf-8")
                         )
                     except queue.Empty:
                         self.wfile.write(b": keep-alive\n\n")

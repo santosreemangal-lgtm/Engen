@@ -438,6 +438,9 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
     for result in results:
         if not isinstance(result, dict):
             continue
+        # First-run history is informational only and must never create an order.
+        if result.get("historical_baseline") is True:
+            continue
         signature = result.get("signature")
         observation = result.get("signature_observation")
         signal = result.get("trade_signal")

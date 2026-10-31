@@ -412,7 +412,7 @@ function stopProfileEventStream() {
 }
 async function startProfileEventStream() {
  const profileId=selectedProfile;
- if(!backendReady||!profileId) {
+ if(!backendReady||!profileId||!currentMonitor) {
   stopProfileEventStream();
   return;
  }
@@ -570,8 +570,8 @@ $("confirm-settings").addEventListener("click",async()=>{
  catch(err){say("settings-message","Settings were not saved: "+err.message);}
  finally{$("confirm-settings").disabled=false;}
 });
-$("start-monitoring").addEventListener("click",async()=>{const p=selected();if(!p){say("monitor-message","Select a profile first.");return;}if(String(p.status||"").toLowerCase()!=="active"){say("monitor-message","Activate this profile before starting monitoring.");return;}if(!Array.isArray(p.source_wallets)||!p.source_wallets.length){say("monitor-message","Add at least one source wallet to this profile first.");return;}if(!confirm("Start read-only monitoring for this profile's selected source wallets only? No signing or real trades will occur."))return;try{await post("/api/profile-monitor",{action:"start",profile_id:selectedProfile});say("monitor-message","Monitoring enabled; checking the first read-only scan status.");await loadMonitor();}catch(e){say("monitor-message",e.message);}});
-$("stop-monitoring").addEventListener("click",async()=>{if(!selectedProfile){say("monitor-message","Select a profile first.");return;}try{await post("/api/profile-monitor",{action:"stop",profile_id:selectedProfile});say("monitor-message","Stop requested for this profile.");await loadMonitor();}catch(e){say("monitor-message",e.message);}});
+$("start-monitoring").addEventListener("click",async()=>{const p=selected();if(!p){say("monitor-message","Select a profile first.");return;}if(String(p.status||"").toLowerCase()!=="active"){say("monitor-message","Activate this profile before starting monitoring.");return;}if(!Array.isArray(p.source_wallets)||!p.source_wallets.length){say("monitor-message","Add at least one source wallet to this profile first.");return;}if(!confirm("Start read-only monitoring for this profile's selected source wallets only? No signing or real trades will occur."))return;try{await post("/api/profile-monitor",{action:"start",profile_id:selectedProfile});say("monitor-message","Monitoring enabled; checking the first read-only scan status.");await loadMonitor();void startProfileEventStream();}catch(e){say("monitor-message",e.message);}});
+$("stop-monitoring").addEventListener("click",async()=>{if(!selectedProfile){say("monitor-message","Select a profile first.");return;}try{await post("/api/profile-monitor",{action:"stop",profile_id:selectedProfile});say("monitor-message","Stop requested for this profile.");await loadMonitor();void startProfileEventStream();}catch(e){say("monitor-message",e.message);}});
 $("wallet-search").addEventListener("input",()=>renderWallets());
 $("activate-profile").addEventListener("click",async()=>{if(!selectedProfile){say("wallet-message","Create or select a profile first.");return;}try{await post("/api/profiles",{action:"update",profile_id:selectedProfile,status:"active"});say("wallet-message","Paper profile activated. Monitoring remains stopped until you start it.");await loadProfiles();await loadMonitor();}catch(e){say("wallet-message",e.message);}});
 function appendHistoryField(card,label,value){const p=document.createElement("p");p.className="hint";p.textContent=label+": "+(value===null||value===undefined||value===""?"unavailable":String(value));card.append(p);}

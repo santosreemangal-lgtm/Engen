@@ -150,7 +150,7 @@ class ProfileStoreTests(unittest.TestCase):
         self.assertEqual(latest_a_link, 1)
         self.assertEqual(earliest_b_link, 1)
         self.assertEqual(newest_b_link, 1)
-        self.assertEqual(old_transaction_still_exists, 1)
+        self.assertEqual(old_transaction_still_exists, 0)
         self.assertEqual(len(self.store.list_transactions(profile)), 1000)
 
     def test_pruning_one_profile_does_not_unlink_shared_history_from_another(self):

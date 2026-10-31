@@ -138,18 +138,35 @@ def get_and_store_new_wallet_signatures(
         options["latency_recorder"] = latency_recorder
     signatures = get_wallet_signatures(**options)
 
-    # The first scan is historical baseline only; never create trade signals.
+    # The first scan seeds a historical baseline. Keep entries pending so
+    # they can be analyzed and shown in History, but persist a flag that
+    # prevents them from creating paper-copy orders.
     if not store.has_baseline(wallet_address):
+        baseline_records = {}
         for item in signatures:
             if not isinstance(item, dict):
                 continue
             signature = item.get("signature")
             if not is_valid_transaction_signature(signature):
                 continue
-            store.save(wallet_address, signature, slot=item.get("slot"))
-            store.mark_processed(wallet_address, signature)
+            store.save(
+                wallet_address, signature, slot=item.get("slot"),
+                historical_baseline=True,
+            )
+            baseline_records[signature] = item
         store.mark_baseline(wallet_address)
-        return []
+        pending = store.get_pending_signatures(wallet_address, limit=limit)
+        return [
+            {
+                **baseline_records.get(signature, {"signature": signature}),
+                **(
+                    {"historical_baseline": True}
+                    if store.is_historical_baseline(wallet_address, signature)
+                    else {}
+                ),
+            }
+            for signature in pending
+        ]
 
     # Poll newest-first and page backwards until the last successfully
     # processed signature is found. The page cap bounds provider load while
@@ -157,10 +174,9 @@ def get_and_store_new_wallet_signatures(
     position = store.get_position(wallet_address)
     anchor_signature = position.get("signature") if position else None
     records_by_signature = {}
-    pages = 0
     page = signatures
+    seen_cursors = set()
     while True:
-        pages += 1
         anchor_found = False
         for item in page:
             if not isinstance(item, dict):
@@ -173,11 +189,16 @@ def get_and_store_new_wallet_signatures(
             if anchor_signature and signature == anchor_signature:
                 anchor_found = True
                 break
-        if anchor_found or len(page) < limit or pages >= 5 or not page:
+        if anchor_found or len(page) < limit or not page:
             break
         next_before = page[-1].get("signature") if isinstance(page[-1], dict) else None
-        if not is_valid_transaction_signature(next_before):
+        if (
+            not is_valid_transaction_signature(next_before)
+            or next_before in seen_cursors
+        ):
+            # Protect against providers that repeat a page/cursor indefinitely.
             break
+        seen_cursors.add(next_before)
         page_options = {
             "wallet_address": wallet_address,
             "limit": limit,
@@ -193,7 +214,14 @@ def get_and_store_new_wallet_signatures(
         wallet_address, limit=limit
     )
     return [
-        records_by_signature.get(signature, {"signature": signature})
+        {
+            **records_by_signature.get(signature, {"signature": signature}),
+            **(
+                {"historical_baseline": True}
+                if store.is_historical_baseline(wallet_address, signature)
+                else {}
+            ),
+        }
         for signature in pending_signatures
     ]
 

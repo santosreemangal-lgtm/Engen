@@ -1,5 +1,7 @@
 """Monitor public Solana wallet transactions without submitting trades."""
 
+from concurrent.futures import ThreadPoolExecutor
+
 from engine.solana_public import DEFAULT_RPC_URL, SolanaRPCError, get_signature_status
 from engine.signature_store import SignatureStore
 from engine.solana_validation import is_valid_solana_address, is_valid_transaction_signature
@@ -56,7 +58,36 @@ def process_new_signatures(
 
     results = []
 
-    for item in signatures:
+    # Fetch transaction payloads concurrently, then apply all SignatureStore
+    # mutations in the original order on this calling thread. getTransaction
+    # accepts one signature per RPC request, so this overlaps bounded requests
+    # rather than relying on provider-specific JSON-RPC batch support.
+    fetch_futures = {}
+    fetchable = [
+        (index, item) for index, item in enumerate(signatures)
+        if isinstance(item, dict)
+        and isinstance(item.get("signature"), str)
+        and item.get("signature", "").strip()
+    ]
+    if fetchable:
+        with ThreadPoolExecutor(
+            max_workers=min(4, len(fetchable)),
+            thread_name_prefix="solana-transaction-fetch",
+        ) as executor:
+            for index, item in fetchable:
+                signature = item["signature"]
+                processor_options = {
+                    "signature": signature,
+                    "rpc_url": rpc_url,
+                    "timeout": timeout,
+                }
+                if latency_recorder is not None:
+                    processor_options["latency_recorder"] = latency_recorder
+                fetch_futures[index] = executor.submit(
+                    process_transaction_signature, **processor_options
+                )
+
+    for index, item in enumerate(signatures):
         if not isinstance(item, dict):
             continue
 
@@ -66,14 +97,7 @@ def process_new_signatures(
             continue
 
         try:
-            processor_options = {
-                "signature": signature,
-                "rpc_url": rpc_url,
-                "timeout": timeout,
-            }
-            if latency_recorder is not None:
-                processor_options["latency_recorder"] = latency_recorder
-            result = process_transaction_signature(**processor_options)
+            result = fetch_futures[index].result()
         except ValueError:
             # Invalid signatures are rejected before any transaction RPC call.
             results.append(_include_signature_observation({
@@ -193,9 +217,15 @@ def process_new_signatures(
             and item.get("confirmationStatus") not in ("confirmed", "finalized")
         ):
             try:
-                resolved_status = get_signature_status(
-                    signature, rpc_url=rpc_url, timeout=timeout
+                status_timer = (
+                    latency_recorder.measure("transaction.signature_status_rpc")
+                    if latency_recorder is not None
+                    else nullcontext()
                 )
+                with status_timer:
+                    resolved_status = get_signature_status(
+                        signature, rpc_url=rpc_url, timeout=timeout
+                    )
             except SolanaRPCError:
                 resolved_status = None
             if isinstance(resolved_status, dict):

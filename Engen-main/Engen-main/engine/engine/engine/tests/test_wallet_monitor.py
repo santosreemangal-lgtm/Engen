@@ -140,19 +140,18 @@ class WalletMonitorTests(unittest.TestCase):
             store=self.store,
         )
 
-        self.assertEqual(result, [])
+        expected = {
+            "1111111111111111111111111111111111111111111111111111111111111113",
+            "1111111111111111111111111111111111111111111111111111111111111114",
+        }
+        self.assertEqual({item["signature"] for item in result}, expected)
+        self.assertTrue(all(item.get("historical_baseline") is True for item in result))
         self.assertTrue(self.store.has_baseline(self.wallet))
-        self.assertTrue(self.store.has_seen(self.wallet, "1111111111111111111111111111111111111111111111111111111111111113"))
-        self.assertTrue(self.store.has_seen(self.wallet, "1111111111111111111111111111111111111111111111111111111111111114"))
-
-        self.assertEqual(
-            self.store.get_status(self.wallet, "1111111111111111111111111111111111111111111111111111111111111113"),
-            "processed",
-        )
-        self.assertEqual(
-            self.store.get_status(self.wallet, "1111111111111111111111111111111111111111111111111111111111111114"),
-            "processed",
-        )
+        for signature in expected:
+            self.assertTrue(self.store.has_seen(self.wallet, signature))
+            self.assertTrue(self.store.is_historical_baseline(self.wallet, signature))
+            # Keep the first-run records pending until metadata has been analyzed.
+            self.assertEqual(self.store.get_status(self.wallet, signature), "pending")
 
     @patch("engine.wallet_monitor.get_wallet_signatures")
     def test_recovers_new_signatures_across_pages_until_processed_anchor(
@@ -190,6 +189,48 @@ class WalletMonitorTests(unittest.TestCase):
             mock_get_signatures.call_args_list[1].kwargs["before"],
             new_b,
         )
+
+    @patch("engine.wallet_monitor.get_wallet_signatures")
+    def test_historical_baseline_flag_survives_a_later_retry(self, mock_get_signatures):
+        first = "1" * 63 + "3"
+        second = "1" * 63 + "4"
+        mock_get_signatures.return_value = [
+            {"signature": first, "slot": 102},
+            {"signature": second, "slot": 101},
+        ]
+
+        initial = get_and_store_new_wallet_signatures(
+            wallet_address=self.wallet, store=self.store,
+        )
+        self.assertEqual(len(initial), 2)
+        self.store.mark_processed(self.wallet, first)
+
+        retried = get_and_store_new_wallet_signatures(
+            wallet_address=self.wallet, store=self.store,
+        )
+        self.assertEqual([item["signature"] for item in retried], [second])
+        self.assertTrue(retried[0].get("historical_baseline"))
+
+    @patch("engine.wallet_monitor.get_wallet_signatures")
+    def test_pagination_continues_beyond_five_pages_until_anchor(self, mock_get_signatures):
+        anchor = "9" * 64
+        new_signatures = ["2" * 63 + str(index) for index in range(3, 9)]
+        self.store.mark_baseline(self.wallet)
+        self.store.save(self.wallet, anchor, slot=100)
+        self.store.mark_processed(self.wallet, anchor)
+        mock_get_signatures.side_effect = [
+            [{"signature": signature, "slot": 110 - index}]
+            for index, signature in enumerate(new_signatures)
+        ] + [[{"signature": anchor, "slot": 100}]]
+
+        results = get_and_store_new_wallet_signatures(
+            wallet_address=self.wallet, store=self.store, limit=1,
+        )
+
+        self.assertEqual(mock_get_signatures.call_count, 7)
+        self.assertEqual(len(results), 1)
+        for signature in new_signatures:
+            self.assertTrue(self.store.has_seen(self.wallet, signature))
 
     @patch("engine.wallet_monitor.get_wallet_signatures")
     def test_repeated_scan_does_not_return_saved_signatures(

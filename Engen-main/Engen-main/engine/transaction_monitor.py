@@ -320,7 +320,10 @@ def process_new_signatures(
             and store is not None
             and not defer_processed
         ):
-            if result.get("retryable") is not True:
+            if (
+                result.get("retryable") is not True
+                and result.get("processing_status") != "needs_review"
+            ):
                 store.mark_processed(wallet_address, signature)
 
         results.append(result)

@@ -89,6 +89,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 "confirmation_status": confirmation,
                 "classification_reason": str(signal.get("reason", ""))[:400],
                 "confidence": str(signal.get("confidence", "unknown"))[:40],
+                "historical_baseline": item.get("historical_baseline") is True,
                 "monitored_wallet_is_signer": address in item.get("signers", []) if isinstance(item.get("signers"), list) else False,
                 "real_trading": False,
                 "transaction_broadcast": False,
@@ -148,6 +149,10 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     or item.get("retryable") is True
                     or item.get("processing_status") == "needs_review"
                 ):
+                    continue
+                if item.get("historical_baseline") is True:
+                    # Historical observations are recorded in History, never copied.
+                    store.mark_processed(address, signature)
                     continue
                 signal = item.get("trade_signal")
                 classification = signal.get("classification") if isinstance(signal, dict) else None
@@ -215,7 +220,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 if (
                     isinstance(signature, str)
                     and item.get("retryable") is not True
-                    and not is_candidate
+                    and (not is_candidate or item.get("historical_baseline") is True)
                 ):
                     store.mark_processed(address, signature)
             results = [

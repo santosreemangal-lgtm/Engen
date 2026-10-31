@@ -611,7 +611,9 @@ function updateHistoryTokenCell(container){
  const symbol=meta&&typeof meta.symbol==="string"?meta.symbol.trim():"";
  // Never display a mint address here, even when public token metadata is missing.
  const unavailable=meta&&["unavailable","service_error"].includes(meta.status);
- const display=name||symbol||(unavailable?"Token metadata service unavailable":"Token name unavailable");
+ const shortMint=mint.length>16?mint.slice(0,7)+"…"+mint.slice(-6):mint;
+ const display=(name&&symbol)?name+" ("+symbol+")":
+  name||symbol||(unavailable?"Metadata unavailable · "+shortMint:"Unknown token · "+shortMint);
  primary.textContent=display;
  primary.title=display;
 }

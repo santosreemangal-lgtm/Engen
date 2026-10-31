@@ -326,11 +326,15 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                     "The source SELL fraction is missing or invalid; this paper order "
                     "failed validation and was closed without a simulated fill."
                 )
-                failure = simulator._reject(order, reason)
+                failure = simulator._reject(
+                    order, reason, "INVALID_SOURCE_SELL_FRACTION",
+                    "The source transaction's asset reduction could not be converted into a valid fraction; review the source balance metadata.",
+                )
                 outcomes.append({
                     "order_id": order.get("order_id"),
                     "signal_id": order.get("signal_id"),
                     "status": failure.get("status", "REJECTED"),
+                    "diagnostic_code": failure.get("diagnostic_code"),
                     "reason": reason,
                 })
                 continue
@@ -357,11 +361,15 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                         "the SELL failed because the paper account has no position. "
                         "No simulated fill was created."
                     )
-                    failure = simulator._reject(order, reason)
+                    failure = simulator._reject(
+                        order, reason, "NO_SIMULATED_POSITION",
+                        "A SELL can only be simulated against an existing virtual token balance. A prior copied BUY must fill first, or the profile must already contain a verified simulated position.",
+                    )
                     outcomes.append({
                         "order_id": order.get("order_id"),
                         "signal_id": order.get("signal_id"),
                         "status": failure.get("status", "REJECTED"),
+                        "diagnostic_code": failure.get("diagnostic_code"),
                         "reason": reason,
                     })
                 continue

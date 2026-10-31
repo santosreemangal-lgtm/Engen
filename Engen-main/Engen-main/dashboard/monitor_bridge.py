@@ -149,6 +149,13 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             isinstance(item, dict) and item.get("scan_incomplete") is True
             for item in results
         )
+
+        def mark_signature_processed(signature):
+            if pagination_incomplete:
+                store.mark_processed(address, signature, advance_position=False)
+            else:
+                store.mark_processed(wallet_address=address, signature=signature)
+
         with latency_recorder.measure("dashboard.transaction_history_persist"):
             results = persist_observed_transactions(address, results)
         try:
@@ -255,7 +262,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                         continue
                     if item.get("historical_baseline") is True:
                         # Historical observations are recorded in History, never copied.
-                        store.mark_processed(address, signature, advance_position=not pagination_incomplete)
+                        mark_signature_processed(signature)
                         continue
                     signal = item.get("trade_signal")
                     classification = signal.get("classification") if isinstance(signal, dict) else None
@@ -279,7 +286,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                             "Eligible swap was not queued; signature remains pending for retry."
                         )
                         continue
-                    store.mark_processed(address, signature)
+                    mark_signature_processed(signature)
             if queued_orders:
                 # Keep the monitor response auditable without exposing raw transactions.
                 queued_by_signature = {

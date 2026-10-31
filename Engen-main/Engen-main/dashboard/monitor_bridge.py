@@ -154,7 +154,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             if pagination_incomplete:
                 store.mark_processed(address, signature, advance_position=False)
             else:
-                store.mark_processed(wallet_address=address, signature=signature)
+                store.mark_processed(address, signature,)
 
         with latency_recorder.measure("dashboard.transaction_history_persist"):
             results = persist_observed_transactions(address, results)

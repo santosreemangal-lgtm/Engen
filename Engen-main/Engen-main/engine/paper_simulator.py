@@ -500,11 +500,11 @@ class PaperSimulator:
         if order["status"] != "CREATED":
             return {"status": "REJECTED", "reason": "Order is not awaiting execution."}
         if not isinstance(rpc_ok, bool) or not rpc_ok:
-            return self._wait(order, "RPC/provider data unavailable; retrying without a fill.")
+            return self._wait(order, "RPC/provider data unavailable; retrying without a fill.", "RPC_PROVIDER_UNAVAILABLE", "Check public data-provider availability; the order will be retried on the next paper scan.")
         if not isinstance(market_price, MarketPrice) or market_price.mint != order["asset_mint"]:
-            return self._wait(order, "Market price unavailable or for a different token; retrying.")
+            return self._wait(order, "Market price unavailable or for a different token; retrying.", "MARKET_PRICE_UNAVAILABLE", "Wait for a verified USD price snapshot for this exact asset.")
         if not market_price.is_fresh(max_age_seconds=max_price_age_seconds, now=now):
-            return self._wait(order, "Market price is stale; retrying without a fill.")
+            return self._wait(order, "Market price is stale; retrying without a fill.", "MARKET_PRICE_STALE", "Wait for a fresh market-price snapshot; no fill has been recorded.")
         if not isinstance(require_liquidity, bool):
             raise ValueError("require_liquidity must be boolean.")
         minimum_liquidity = decimal_value(
@@ -516,17 +516,19 @@ class PaperSimulator:
             raise ValueError("max_liquidity_age_seconds must be a non-negative integer.")
         if market_price.liquidity_usd is None:
             if require_liquidity:
-                return self._wait(order, "Liquidity data unavailable; retrying without a fill.")
+                return self._wait(order, "Liquidity data unavailable; retrying without a fill.", "LIQUIDITY_DATA_UNAVAILABLE", "Wait for a fresh pool-liquidity snapshot; the liquidity guard remains enabled.")
         else:
             liquidity_age = market_price.liquidity_age_seconds(now)
             if liquidity_age > max_liquidity_age_seconds:
-                return self._wait(order, "Liquidity data is stale; retrying without a fill.")
+                return self._wait(order, "Liquidity data is stale; retrying without a fill.", "LIQUIDITY_DATA_STALE", "Wait for fresh pool-liquidity data; the liquidity guard remains enabled.")
             if market_price.liquidity_usd < minimum_liquidity:
                 return self._wait(
                     order,
                     "Pool liquidity $" + format(market_price.liquidity_usd, "f")
                     + " is below the configured USD minimum of $" + format(minimum_liquidity, "f")
                     + "; paper execution is paused until a fresh pool meets the configured minimum.",
+                    "LIQUIDITY_BELOW_REQUIRED_MINIMUM",
+                    "Wait for a fresh pool snapshot that meets the configured liquidity minimum; the guard will not be bypassed.",
                 )
         for name, value in (("slippage_bps",slippage_bps),("fee_bps",fee_bps)):
             if not isinstance(value,int) or isinstance(value,bool) or not 0 <= value <= 10000:
@@ -584,19 +586,32 @@ class PaperSimulator:
         return {"status":"FILLED","simulated":True,"real_trading":False,
                 "transaction_broadcast":False,"order":dict(updated),"fill":dict(fill)}
 
-    def _wait(self, order, reason):
-        """Keep transient provider/data failures retryable; never fabricate a fill."""
+    def _wait(self, order, reason, diagnostic_code="MARKET_DATA_UNAVAILABLE", next_step=None):
+        """Keep transient data failures retryable and persist a machine-readable explanation."""
         waiting_state = (
             "WAITING_FOR_LIQUIDITY"
-            if "below the configured usd minimum" in str(reason).lower()
+            if str(diagnostic_code).startswith("LIQUIDITY_")
             else "WAITING_FOR_MARKET_DATA"
         )
-        updated = dict(order, status="CREATED", reason=reason,
-                       details={**order["details"], "execution_state":waiting_state})
+        details = {
+            **order.get("details", {}),
+            "execution_state": waiting_state,
+            "diagnostic_code": diagnostic_code,
+        }
+        if next_step:
+            details["diagnostic_next_step"] = str(next_step)[:240]
+        updated = dict(order, status="CREATED", reason=reason, details=details)
         self._persist(updated)
         self.orders[order["order_id"]] = updated
-        return {"status":waiting_state,"reason":reason,
-                "simulated":True,"real_trading":False,"transaction_broadcast":False}
+        return {
+            "status": waiting_state,
+            "reason": reason,
+            "diagnostic_code": diagnostic_code,
+            "next_step": details.get("diagnostic_next_step"),
+            "simulated": True,
+            "real_trading": False,
+            "transaction_broadcast": False,
+        }
 
     def _reject(self, order, reason):
         updated = dict(order, status="REJECTED", reason=reason,

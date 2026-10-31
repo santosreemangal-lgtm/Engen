@@ -168,9 +168,9 @@ def get_and_store_new_wallet_signatures(
             for signature in pending
         ]
 
-    # Poll newest-first and page backwards until the last successfully
-    # processed signature is found. The page cap bounds provider load while
-    # allowing recovery after a short outage or a busy source wallet.
+    # Poll newest-first and page backwards until the last known checkpoint.
+    # If an older database has no usable checkpoint, inspect only the current
+    # page rather than accidentally walking an entire wallet history.
     position = store.get_position(wallet_address)
     anchor_signature = position.get("signature") if position else None
     records_by_signature = {}
@@ -189,7 +189,7 @@ def get_and_store_new_wallet_signatures(
             if anchor_signature and signature == anchor_signature:
                 anchor_found = True
                 break
-        if anchor_found or len(page) < limit or not page:
+        if anchor_signature is None or anchor_found or len(page) < limit or not page:
             break
         next_before = page[-1].get("signature") if isinstance(page[-1], dict) else None
         if (

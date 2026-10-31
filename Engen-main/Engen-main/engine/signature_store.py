@@ -88,6 +88,30 @@ class SignatureStore:
                         PRIMARY KEY (wallet_address, signature)
                     )
                 """)
+
+                # Older versions marked the initial wallet baseline processed
+                # without fetching or persisting its transaction payloads.
+                # Re-queue those entries exactly once for historical analysis;
+                # the durable flag keeps them excluded from paper-copy orders.
+                connection.execute("""
+                    UPDATE seen_signatures
+                    SET historical_baseline = 1,
+                        status = 'pending',
+                        last_checked_at = NULL,
+                        error_stage = NULL,
+                        error_code = NULL,
+                        error_message = NULL
+                    WHERE status = 'processed'
+                      AND historical_baseline = 0
+                      AND wallet_address IN (
+                          SELECT wallet_address FROM wallet_baselines
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM transaction_records tr
+                          WHERE tr.wallet_address = seen_signatures.wallet_address
+                            AND tr.signature = seen_signatures.signature
+                      )
+                """)
                 pruned = self._prune_transaction_records(
                     connection, limit=MAX_RAW_TRANSACTION_RECORDS_PER_WALLET
                 )

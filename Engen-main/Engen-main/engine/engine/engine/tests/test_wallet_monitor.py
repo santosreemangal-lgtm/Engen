@@ -270,6 +270,24 @@ class WalletMonitorTests(unittest.TestCase):
         )
 
 
+    @patch("engine.wallet_monitor.get_wallet_signatures")
+    def test_pending_backlog_batch_matches_five_page_discovery_budget(self, mock_get_signatures):
+        self.store.mark_baseline(self.wallet)
+        for index in range(60):
+            self.store.save(self.wallet, f"backlog-{index:03d}")
+        mock_get_signatures.return_value = []
+
+        results = get_and_store_new_wallet_signatures(
+            wallet_address=self.wallet,
+            store=self.store,
+            limit=10,
+        )
+
+        self.assertEqual(len(results), 50)
+        self.assertEqual(results[0]["signature"], "backlog-000")
+        self.assertEqual(results[-1]["signature"], "backlog-049")
+
+
     @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_rpc_errors_do_not_expose_configured_url_or_credentials(
         self,

@@ -129,6 +129,37 @@ class MonitorBridgeRetryTests(unittest.TestCase):
         )
         self.assertNotIn("paper_copy_status", output[0])
 
+    def test_incomplete_pagination_does_not_advance_processed_checkpoint(self):
+        store = Mock()
+        simulator = Mock()
+        simulator.orders = {}
+        simulator.processed_signals = set()
+        results = [
+            candidate_result("UNKNOWN"),
+            {
+                "scan_incomplete": True,
+                "pagination_mode": "catchup",
+                "pagination_pages_scanned": 101,
+                "pagination_error": "Checkpoint not reached.",
+            },
+        ]
+        with (
+            patch("dashboard.monitor_bridge.SignatureStore", return_value=store),
+            patch("dashboard.monitor_bridge.monitor_wallet", return_value=results),
+            patch("dashboard.monitor_bridge.queue_paper_orders", return_value=[]),
+            patch("dashboard.monitor_bridge.execute_pending_paper_orders", return_value=[]),
+        ):
+            scan = create_scan_function(
+                side_getter=lambda: "BOTH",
+                settings_getter=lambda: {},
+                simulator_getter=lambda: simulator,
+            )
+            scan(WALLET)
+
+        store.mark_processed.assert_called_once_with(
+            WALLET, "synthetic-signature-for-bridge-test", advance_position=False
+        )
+
     def test_paper_queue_rejects_historical_baseline_candidates(self):
         simulator = Mock()
         simulator.orders = {}

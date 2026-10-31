@@ -461,9 +461,16 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertEqual(report["total"], 1)
         stored = report["transactions"][0]
         self.assertEqual(stored["signature"], signature)
-        self.assertEqual(stored["token_mint"], TOKEN_MINT)
-        self.assertEqual(stored["token_decimals"], 6)
-        self.assertEqual(stored["amount"], "1.25")
+        # UNKNOWN observations may retain transaction metadata, but must not
+        # be assigned an arbitrary token mint or amount in the trade history.
+        self.assertIsNone(stored["token_mint"])
+        self.assertIsNone(stored["token_decimals"])
+        self.assertIsNone(stored["amount"])
+        self.assertEqual(
+            stored["evidence"]["token_amount_attribution"],
+            "unavailable_not_verified_swap",
+        )
+        self.assertFalse(stored["evidence"]["verified_swap_for_paper_queue"])
         self.assertFalse(stored["simulated"])
         paper_report = dashboard_server.load_profile_paper_simulation_report(self.profile_id)
         self.assertEqual(paper_report["orders"], [])

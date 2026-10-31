@@ -883,6 +883,31 @@ class TransactionAnalysisTests(unittest.TestCase):
                 self.assertEqual(result["activity_type"], "TRANSFER")
                 self.assertNotIn(result["classification"], ("BUY_CANDIDATE", "SELL_CANDIDATE"))
 
+    def test_unknown_program_context_prevents_transfer_overclassification(self):
+        from engine.transaction_analysis import classify_transaction
+
+        transaction = {
+            "transaction": {
+                "message": {
+                    "instructions": [
+                        {
+                            "program": "unknown_amm",
+                            "programId": "UnrecognizedProgram111111111111111111111111111",
+                        },
+                        {
+                            "program": "spl-token",
+                            "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                            "parsed": {"type": "transferChecked", "info": {}},
+                        },
+                    ],
+                },
+            },
+            "meta": {"err": None, "fee": 5000},
+        }
+        result = classify_transaction(transaction, "WALLET_A", [])
+        self.assertEqual(result["classification"], "UNKNOWN")
+        self.assertNotEqual(result["activity_type"], "TRANSFER")
+
     def test_classifies_parsed_staking_as_non_swap_unknown(self):
         from engine.transaction_analysis import classify_transaction
 

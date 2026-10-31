@@ -589,10 +589,6 @@ function renderPortfolioMetrics(report){
  const unrealized=numericValue(report&&report.unrealized_pnl_usd);
  const fills=Array.isArray(report&&report.fills)?report.fills:[];
  const hasPaperFills=fills.length>0;
- const balances=report&&report.balances&&typeof report.balances==="object"?report.balances:{};
- const hasTokenHoldings=Object.entries(balances).some(([mint,amount])=>
-  mint!=="USD"&&numericValue(amount)!==null&&numericValue(amount)!==0
- );
  const total=!hasPaperFills||realized===null||unrealized===null?null:realized+unrealized;
  const returnPercent=total===null||initial===null||initial<=0?null:(total/initial)*100;
  const today=hasPaperFills?todayRealizedPnl(report&&report.pnl_events):null;

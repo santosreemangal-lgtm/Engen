@@ -131,7 +131,11 @@ footer.hint{padding:10px 4px;line-height:1.7}
 .paper-trades-table tbody tr.paper-buy-row:hover{background:#12362d55}
 .paper-trades-table tbody tr.paper-sell-row:hover{background:#42232e55}
 .paper-type-cell{min-width:112px}
-.paper-order-state{display:block;margin-top:4px;color:#8296b2;font-size:9px;line-height:1.25;white-space:normal;max-width:120px}
+.paper-order-state{display:block;margin-top:4px;color:#b9c9df;font-size:9px;line-height:1.25;white-space:normal;max-width:150px;font-weight:700}
+.paper-order-diagnostic{margin-top:4px;max-width:190px;white-space:normal;color:#a9bad2}
+.paper-order-diagnostic summary{padding:3px 0;font-size:9px;line-height:1.3;color:#93b8ed;cursor:pointer;list-style-position:inside}
+.paper-order-diagnostic summary:hover{color:#d0e2ff}
+.paper-order-reason{padding:5px 6px;border-left:2px solid #536f98;background:#111d2e;border-radius:0 6px 6px 0;font-size:9px;line-height:1.45;color:#c6d3e6;overflow-wrap:anywhere}
 .paper-token-cell{display:flex;align-items:center;gap:8px;min-width:130px;max-width:190px}
 .paper-token-icon{width:27px;height:27px;flex:0 0 27px;display:grid;place-items:center;border-radius:50%;background:hsl(var(--token-hue,215) 38% 22%);border:1px solid hsl(var(--token-hue,215) 44% 43%);color:#e8f0ff;font-size:9px;font-weight:850;letter-spacing:.02em}
 .paper-token-labels{display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -1197,6 +1201,41 @@ async function loadTransactionHistory(){
   say("transaction-history-message",e.message);
  }
 }
+function paperOrderExplanation(order,details,orders){
+ const code=String(details.diagnostic_code||"");
+ const messages={
+  MISSING_VIRTUAL_USD_BALANCE:"No virtual USD balance is set for this paper profile.",
+  INSUFFICIENT_VIRTUAL_USD_BALANCE:"The current virtual USD balance is too small for the requested paper amount plus simulated costs.",
+  BUY_SIZING_UNAVAILABLE:"The paper BUY amount could not be calculated from the saved sizing settings and virtual balance.",
+  SOURCE_QUOTE_USD_PRICE_UNAVAILABLE:"The source quote asset needs a fresh verified USD price before its mirrored amount can be calculated.",
+  ASSET_USD_PRICE_UNAVAILABLE:"No usable USD price and pool-liquidity snapshot was returned for this token.",
+  MARKET_DATA_PROVIDER_ERROR:"The public market-data provider returned an error; no fill was recorded.",
+  MARKET_PRICE_UNAVAILABLE:"A verified USD price for this exact token is not available.",
+  MARKET_PRICE_STALE:"The available USD price is too old to use safely.",
+  RPC_PROVIDER_UNAVAILABLE:"The required public provider data is unavailable.",
+  LIQUIDITY_DATA_UNAVAILABLE:"The pool-liquidity snapshot is missing.",
+  LIQUIDITY_DATA_STALE:"The pool-liquidity snapshot is stale.",
+  LIQUIDITY_BELOW_REQUIRED_MINIMUM:"The available pool liquidity is below the configured minimum.",
+  WAITING_FOR_PRIOR_PAPER_BUY:"This SELL is waiting for an earlier paper BUY for the same token to resolve.",
+  NO_SIMULATED_POSITION:"There is no simulated token position available for this SELL.",
+  INVALID_SOURCE_SELL_FRACTION:"The source token reduction could not be validated as a sell fraction.",
+  PAPER_SIMULATOR_EXCEPTION:"The paper simulator raised an internal error; no fill was recorded.",
+ };
+ const parts=[];
+ const known=messages[code];
+ if(known)parts.push(known);
+ const reason=String(order.reason||"").trim();
+ if(reason&&reason!==known)parts.push(reason);
+ const next=String(details.diagnostic_next_step||"").trim();
+ if(next)parts.push("Next step: "+next);
+ if(details.diagnostic_error_type)parts.push("Error type: "+String(details.diagnostic_error_type));
+ if(!parts.length){
+  if(order.status==="CREATED")parts.push("The order is queued. It will only fill after the required virtual balance, fresh market data, position, and simulator checks pass.");
+  else if(order.status==="REJECTED")parts.push("The simulator rejected this order. Review its source transaction and virtual-ledger requirements.");
+  else parts.push("No additional diagnostic information was stored for this order.");
+ }
+ return parts.join(" ");
+}
 function paperOrderState(order,details,orders){
  const sourceWallet=details.source_wallet;
  if(order.status==="FILLED"||order.status==="COMPLETED")return "FILLED";
@@ -1330,6 +1369,21 @@ async function loadPaperTradeHistory(reportOverride){
    sidePill.title=state+(order.reason?" · "+order.reason:"");
    sidePill.setAttribute("aria-label",side+" · "+state);
    typeCell.append(sidePill);
+   const stateLabel=document.createElement("small");
+   stateLabel.className="paper-order-state";
+   stateLabel.textContent=state;
+   typeCell.append(stateLabel);
+   if(!fill&&order.status!=="CANCELLED"){
+    const diagnostic=document.createElement("details");
+    diagnostic.className="paper-order-diagnostic";
+    const summary=document.createElement("summary");
+    summary.textContent=order.status==="REJECTED"?"Why was it stopped?":"Why is it waiting?";
+    const explanation=document.createElement("div");
+    explanation.className="paper-order-reason";
+    explanation.textContent=paperOrderExplanation(order,details,orders);
+    diagnostic.append(summary,explanation);
+    typeCell.append(diagnostic);
+   }
    if(order.archived_session_at){
     const archivedLabel=document.createElement("small");
     archivedLabel.className="history-sub";

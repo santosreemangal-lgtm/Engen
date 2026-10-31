@@ -102,6 +102,8 @@ def process_new_signatures(
                     "rpc_error", str(exc),
                 )
                 error_result["processing_status"] = failure["status"]
+                if failure["status"] == "needs_review":
+                    error_result["retryable"] = False
             results.append(_include_signature_observation(error_result, item))
             continue
         except Exception as exc:
@@ -123,6 +125,8 @@ def process_new_signatures(
                     type(exc).__name__, "Transaction interpretation failed.",
                 )
                 error_result["processing_status"] = failure["status"]
+                if failure["status"] == "needs_review":
+                    error_result["retryable"] = False
             results.append(_include_signature_observation(error_result, item))
             continue
 

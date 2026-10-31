@@ -192,6 +192,10 @@ class ProfileStoreTests(unittest.TestCase):
         profile = self.store.create_profile("Reference retention")
         self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
         source_signature = "1" * 64
+        self.store.save_transaction(
+            source_signature, PUBLIC_ADDRESS, classification="BUY_CANDIDATE",
+            status="confirmed", profile_ids=(profile,),
+        )
         saved = self.store.save_source_trade_ref(
             profile, "paper-order-1", PUBLIC_ADDRESS, source_signature,
             "BUY", PUBLIC_ADDRESS, source_slot=123, source_block_time=1700000000,

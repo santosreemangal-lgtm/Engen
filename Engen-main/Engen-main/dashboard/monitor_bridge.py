@@ -2,19 +2,43 @@
 """Bridge between the dashboard and the read-only Solana engine."""
 
 import sqlite3
+from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, InvalidOperation
+from time import perf_counter_ns
 
 from engine.signature_store import SignatureStore
+from engine.latency import LatencyRecorder
+from engine.market_data import fetch_market_price
 from engine.transaction_monitor import monitor_wallet
 from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders, get_paper_simulator, PAPER_SIMULATOR_LOCK
 from engine.profile_store import LABELS
 from engine.solana_validation import is_valid_transaction_signature
 
 
+@contextmanager
+def _measured_paper_lock(latency_recorder, stage):
+    """Measure lock wait separately from the short, mutation-only critical section."""
+    waiting_since = perf_counter_ns()
+    PAPER_SIMULATOR_LOCK.acquire()
+    latency_recorder.record(
+        "dashboard.paper_lock_wait",
+        (perf_counter_ns() - waiting_since) / 1_000_000,
+    )
+    try:
+        with latency_recorder.measure(stage):
+            yield
+    finally:
+        PAPER_SIMULATOR_LOCK.release()
+
+
 def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter=None,
-                         simulator_getter=None, profile_id=None, profile_store=None):
-    """Create a read-only scanner with profile-specific paper execution and history."""
+                         simulator_getter=None, profile_id=None, profile_store=None,
+                         latency_recorder=None, price_provider=None):
+    """Create a measured read-only scanner with short paper-ledger lock sections."""
     store = SignatureStore()
+    latency_recorder = latency_recorder or LatencyRecorder()
+    price_provider = price_provider or fetch_market_price
 
     def persist_observed_transactions(address, results):
         """Save observed on-chain transactions separately from simulated orders."""
@@ -107,27 +131,93 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
         return persisted
 
 
-    def scan_wallet(address):
+    def _scan_wallet(address):
         """Analyze new wallet signatures and queue eligible paper-copy orders."""
-        results = monitor_wallet(
-            wallet_address=address,
-            store=store,
-            limit=limit,
-            timeout=timeout,
-            defer_processed=True,
-        )
-        results = persist_observed_transactions(address, results)
+        with latency_recorder.measure("dashboard.wallet_monitor_and_transaction_processing"):
+            results = monitor_wallet(
+                wallet_address=address,
+                store=store,
+                limit=limit,
+                timeout=timeout,
+                defer_processed=True,
+                latency_recorder=latency_recorder,
+            )
+        with latency_recorder.measure("dashboard.transaction_history_persist"):
+            results = persist_observed_transactions(address, results)
         try:
             allowed_sides = side_getter() if side_getter is not None else "BOTH"
             copy_settings = settings_getter() if settings_getter is not None else {}
             simulator = simulator_getter() if simulator_getter is not None else get_paper_simulator()
-            # Serialize order execution and balance writes against dashboard requests.
-            with PAPER_SIMULATOR_LOCK:
+
+            # Queue mutations are protected, but public market-data requests are
+            # deliberately performed after releasing the shared simulator lock.
+            with _measured_paper_lock(latency_recorder, "dashboard.paper_order_queue"):
                 queued_orders = queue_paper_orders(
                     address, results, simulator=simulator,
                     allowed_sides=allowed_sides, copy_settings=copy_settings
                 )
-                execution_outcomes = execute_pending_paper_orders(address, simulator=simulator)
+
+            stable_quote_mints = {
+                "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+            }
+            with _measured_paper_lock(latency_recorder, "dashboard.paper_order_snapshot"):
+                pending_orders = [
+                    dict(order, details=dict(order.get("details") or {}))
+                    for order in simulator.orders.values()
+                    if order.get("status") == "CREATED"
+                    and (order.get("details") or {}).get("origin") == "AUTOMATIC_WALLET_COPY"
+                    and (order.get("details") or {}).get("source_wallet") == address
+                ]
+
+            required_mints = set()
+            for order in pending_orders:
+                details = order.get("details") or {}
+                asset_mint = order.get("asset_mint")
+                if isinstance(asset_mint, str) and asset_mint.strip():
+                    required_mints.add(asset_mint)
+                if (
+                    order.get("side") == "BUY"
+                    and details.get("target_notional_usd") in (None, "")
+                    and details.get("sizing_mode") == "MIRROR_AMOUNT"
+                ):
+                    source_quote_mint = details.get("source_quote_mint")
+                    if (
+                        isinstance(source_quote_mint, str)
+                        and source_quote_mint.strip()
+                        and source_quote_mint not in stable_quote_mints
+                    ):
+                        required_mints.add(source_quote_mint)
+
+            market_prices = {}
+            market_price_errors = {}
+            with latency_recorder.measure("dashboard.paper_market_data_fetch"):
+                if required_mints:
+                    with ThreadPoolExecutor(
+                        max_workers=min(4, len(required_mints)),
+                        thread_name_prefix="paper-market-data",
+                    ) as executor:
+                        futures = {
+                            mint: executor.submit(price_provider, mint)
+                            for mint in sorted(required_mints)
+                        }
+                        for mint, future in futures.items():
+                            try:
+                                market_prices[mint] = future.result()
+                            except Exception as exc:
+                                market_price_errors[mint] = exc
+
+            def prefetched_price(mint):
+                if mint in market_price_errors:
+                    raise market_price_errors[mint]
+                return market_prices.get(mint)
+
+            # Re-enter only for in-memory validation, simulator state changes and
+            # SQLite persistence. No network I/O occurs while this lock is held.
+            with _measured_paper_lock(latency_recorder, "dashboard.paper_simulation"):
+                execution_outcomes = execute_pending_paper_orders(
+                    address, simulator=simulator, price_provider=prefetched_price
+                )
             outcomes_by_signal = {
                 item["signal_id"]: item for item in execution_outcomes
                 if item.get("signal_id")
@@ -141,42 +231,43 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 if isinstance(item, dict) and isinstance(item.get("signature"), str)
             }
             allowed_mode = allowed_sides.upper() if isinstance(allowed_sides, str) else "NONE"
-            processed_signals = getattr(simulator, "processed_signals", set())
-            for item in results:
+            with _measured_paper_lock(latency_recorder, "dashboard.paper_result_commit"):
+                processed_signals = getattr(simulator, "processed_signals", set())
+                for item in results:
                 signature = item.get("signature")
-                if (
-                    not isinstance(signature, str)
-                    or item.get("retryable") is True
-                    or item.get("processing_status") == "needs_review"
-                ):
-                    continue
-                if item.get("historical_baseline") is True:
-                    # Historical observations are recorded in History, never copied.
-                    store.mark_processed(address, signature)
-                    continue
-                signal = item.get("trade_signal")
-                classification = signal.get("classification") if isinstance(signal, dict) else None
-                candidate_side = (
-                    "BUY" if classification == "BUY_CANDIDATE"
-                    else "SELL" if classification == "SELL_CANDIDATE"
-                    else None
-                )
-                side_enabled = (
-                    candidate_side is not None
-                    and allowed_mode in (candidate_side, "BOTH")
-                )
-                signal_id = "wallet-copy:" + address + ":" + signature
-                already_queued = (
-                    signature in queued_signatures
-                    or signal_id in processed_signals
-                )
-                if side_enabled and not already_queued:
-                    item["paper_copy_status"] = "RETRYING_QUEUE"
-                    item["paper_copy_message"] = (
-                        "Eligible swap was not queued; signature remains pending for retry."
+                    if (
+                        not isinstance(signature, str)
+                        or item.get("retryable") is True
+                        or item.get("processing_status") == "needs_review"
+                    ):
+                        continue
+                    if item.get("historical_baseline") is True:
+                        # Historical observations are recorded in History, never copied.
+                        store.mark_processed(address, signature)
+                        continue
+                    signal = item.get("trade_signal")
+                    classification = signal.get("classification") if isinstance(signal, dict) else None
+                    candidate_side = (
+                        "BUY" if classification == "BUY_CANDIDATE"
+                        else "SELL" if classification == "SELL_CANDIDATE"
+                        else None
                     )
-                    continue
-                store.mark_processed(address, signature)
+                    side_enabled = (
+                        candidate_side is not None
+                        and allowed_mode in (candidate_side, "BOTH")
+                    )
+                    signal_id = "wallet-copy:" + address + ":" + signature
+                    already_queued = (
+                        signature in queued_signatures
+                        or signal_id in processed_signals
+                    )
+                    if side_enabled and not already_queued:
+                        item["paper_copy_status"] = "RETRYING_QUEUE"
+                        item["paper_copy_message"] = (
+                            "Eligible swap was not queued; signature remains pending for retry."
+                        )
+                        continue
+                    store.mark_processed(address, signature)
             if queued_orders:
                 # Keep the monitor response auditable without exposing raw transactions.
                 queued_by_signature = {
@@ -229,4 +320,9 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             ]
         return results
 
+    def scan_wallet(address):
+        with latency_recorder.measure("dashboard.wallet_scan_total"):
+            return _scan_wallet(address)
+
+    scan_wallet.latency_recorder = latency_recorder
     return scan_wallet

@@ -333,5 +333,76 @@ class WalletMonitorTests(unittest.TestCase):
         self.assertNotIn("rpc.example", str(context.exception))
 
 
+    @patch("engine.wallet_monitor.get_wallet_signatures")
+    def test_pagination_is_bounded_and_resumes_from_saved_cursor(self, mock_get_signatures):
+        anchor = "1" * 63 + "2"
+        newest = "1" * 63 + "9"
+        middle = "1" * 63 + "8"
+        older = "1" * 63 + "7"
+        self.store.mark_baseline(self.wallet)
+        self.store.save(self.wallet, anchor, slot=100)
+        self.store.mark_processed(self.wallet, anchor)
+
+        mock_get_signatures.side_effect = [
+            [{"signature": newest, "slot": 110}],
+            [{"signature": middle, "slot": 109}],
+            [{"signature": older, "slot": 108}],
+        ]
+        first = get_and_store_new_wallet_signatures(
+            wallet_address=self.wallet, store=self.store, limit=1, max_pages=2,
+        )
+
+        self.assertEqual(len(first), 1)
+        progress = self.store.get_scan_progress(self.wallet)
+        self.assertIsNotNone(progress)
+        self.assertEqual(progress["mode"], "catchup")
+        self.assertEqual(progress["next_before_signature"], older)
+        self.assertEqual(progress["pages_scanned"], 2)
+        self.assertEqual(self.store.get_position(self.wallet)["signature"], anchor)
+
+        mock_get_signatures.side_effect = [
+            [{"signature": newest, "slot": 110}],
+            [{"signature": anchor, "slot": 100}],
+        ]
+        resumed = get_and_store_new_wallet_signatures(
+            wallet_address=self.wallet, store=self.store, limit=1, max_pages=2,
+        )
+
+        self.assertEqual([item["signature"] for item in resumed], [newest])
+        self.assertIsNone(self.store.get_scan_progress(self.wallet))
+        self.assertEqual(self.store.get_position(self.wallet)["signature"], newest)
+        for signature in (newest, middle, older):
+            self.assertTrue(self.store.has_seen(self.wallet, signature))
+
+    @patch("engine.wallet_monitor.get_wallet_signatures")
+    def test_first_scan_backfills_historical_baseline_across_cycles(self, mock_get_signatures):
+        newest = "1" * 63 + "9"
+        older = "1" * 63 + "8"
+        oldest = "1" * 63 + "7"
+        mock_get_signatures.side_effect = [
+            [{"signature": newest, "slot": 110}],
+            [{"signature": older, "slot": 109}],
+        ]
+        first = get_and_store_new_wallet_signatures(
+            wallet_address=self.wallet, store=self.store, limit=1, max_pages=1,
+        )
+        self.assertEqual([item["signature"] for item in first], [newest])
+        self.assertFalse(self.store.has_baseline(self.wallet))
+        self.assertEqual(self.store.get_scan_progress(self.wallet)["mode"], "baseline")
+
+        mock_get_signatures.side_effect = [
+            [{"signature": newest, "slot": 110}],
+            [{"signature": oldest, "slot": 108}],
+            [],
+        ]
+        second = get_and_store_new_wallet_signatures(
+            wallet_address=self.wallet, store=self.store, limit=1, max_pages=2,
+        )
+        self.assertTrue(self.store.has_baseline(self.wallet))
+        self.assertIsNone(self.store.get_scan_progress(self.wallet))
+        for signature in (newest, older, oldest):
+            self.assertTrue(self.store.is_historical_baseline(self.wallet, signature))
+        self.assertEqual([item["signature"] for item in second], [newest])
+
 if __name__ == "__main__":
     unittest.main()

@@ -425,7 +425,10 @@ class SignatureStore:
                         END
                     )
                   )
-                ORDER BY first_seen_at ASC
+                ORDER BY
+                    CASE WHEN last_checked_at IS NULL THEN 0 ELSE 1 END ASC,
+                    last_checked_at ASC,
+                    first_seen_at DESC
                 LIMIT ?
                 """,
                 (wallet_address, limit),

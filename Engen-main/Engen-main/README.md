@@ -83,3 +83,17 @@ Live signing and broadcasting are not implemented or authorized. The requirement
 ## Change policy
 
 Preserve working functionality and use small reviewable changes. Do not commit secrets. Keep monitoring read-only and live trading disabled. Do not merge until the relevant checks and deployment assumptions are verified.
+
+
+## Read-only monitor concurrency and latency
+
+The dashboard scans saved public wallets concurrently using a bounded worker pool. The default is four wallet workers; each wallet also fetches up to four transaction metadata records concurrently. Results are committed in their original order so signature-store retry and deduplication behavior remains deterministic. Public `getTransaction` requests remain individual RPC requests because the method accepts one signature per request; bounded concurrency overlaps network wait rather than relying on provider-specific JSON-RPC batching.
+
+The monitor schedules cycles relative to the previous cycle's start time, so a slow scan does not add another full 15-second delay after it completes. Public market-data requests for paper simulation run outside the simulator mutation lock. Profile paper ledgers use profile-scoped locks so one profile's ledger writes do not serialize other profiles.
+
+Latency summaries are exposed by the profile-monitor status API and Dashboard. They include signature-list RPC, transaction RPC, local transaction analysis, history persistence, market-data fetch, paper-order queue, paper simulation, simulator lock wait, per-wallet scan duration, and whole-cycle duration. Timing summaries are local elapsed-time measurements, not blockchain execution latency.
+
+Optional environment settings (also listed in `.env.example`):
+
+- `MONITOR_SCAN_WORKERS`: 1–16, default `4`.
+- `MONITOR_RPC_TIMEOUT_SECONDS`: 1–60, default `10`.

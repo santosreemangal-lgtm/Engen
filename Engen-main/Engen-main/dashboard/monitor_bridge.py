@@ -234,7 +234,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             with _measured_paper_lock(latency_recorder, "dashboard.paper_result_commit"):
                 processed_signals = getattr(simulator, "processed_signals", set())
                 for item in results:
-                signature = item.get("signature")
+                    signature = item.get("signature")
                     if (
                         not isinstance(signature, str)
                         or item.get("retryable") is True

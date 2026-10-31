@@ -593,26 +593,33 @@ function renderPortfolioMetrics(report){
  const hasTokenHoldings=Object.entries(balances).some(([mint,amount])=>
   mint!=="USD"&&numericValue(amount)!==null&&numericValue(amount)!==0
  );
- const reportedPortfolioValue=numericValue(report&&report.portfolio_value_usd);
- const availableCash=numericValue(report&&(report.available_balance_usd??report.available_balance??balances.USD));
- const currentCapital=reportedPortfolioValue!==null?reportedPortfolioValue:(!hasTokenHoldings?availableCash:null);
  const total=!hasPaperFills||realized===null||unrealized===null?null:realized+unrealized;
  const returnPercent=total===null||initial===null||initial<=0?null:(total/initial)*100;
  const today=hasPaperFills?todayRealizedPnl(report&&report.pnl_events):null;
+ const sellFillCount=Number(report&&report.realized_sell_fill_count||0);
 
- // All four cards remain visible. Capital is an unsigned amount;
- // only return and P&L metrics display positive/negative signs.
- setMetricValue("initial-deposit",currentCapital===null?"$—":money(Math.abs(currentCapital)),"neutral");
+ // "Internal Deposit" is the original virtual deposit, never current market value.
+ // Total P&L includes both realized SELL results and open-position mark-to-market.
+ setMetricValue("initial-deposit",initial===null?"$—":money(initial),"neutral");
  setMetricValue("total-return",hasPaperFills?signedPercent(returnPercent):"—",
   !hasPaperFills?"neutral":returnPercent>0?"positive":returnPercent<0?"negative":"neutral");
  setMetricValue("today-pnl",hasPaperFills?signedMoney(today):"—",
   !hasPaperFills?"neutral":today>0?"positive":today<0?"negative":"neutral");
  setMetricValue("total-pnl",hasPaperFills?signedMoney(total):"—",
   !hasPaperFills?"neutral":total>0?"positive":total<0?"negative":"neutral");
+ $("initial-deposit").title="Original virtual deposit for this paper profile. It does not change with token prices or current cash.";
+ $("today-pnl").title="Realized P&L from SELL paper fills completed today. BUY fills do not realize profit.";
+ $("total-return").title="Percentage return based on Total P&L, which includes unrealized value of open simulated positions.";
+ $("total-pnl").title="Total P&L = realized P&L from completed SELL fills + unrealized P&L on open simulated positions. Unrealized P&L is not booked profit.";
  if(report&&report.error)say("portfolio-message",report.error);
- else if(!hasPaperFills)say("portfolio-message","Fresh $100 paper session. Return and P&L appear after the first completed paper fill.");
+ else if(!hasPaperFills)say("portfolio-message","No completed paper fills yet. Observed wallet activity and queued orders are not fills.");
  else if(total===null)say("portfolio-message","Total P&L is unavailable until realized and unrealized P&L can both be verified with fresh market prices.");
- else say("portfolio-message","");
+ else if(sellFillCount===0){
+  const openPnl=unrealized===null?"Open-position unrealized P&L is currently unavailable.":"Open-position unrealized P&L: "+signedMoney(unrealized)+".";
+  say("portfolio-message","No SELL paper fill has been recorded. Realized P&L is $0.00; "+openPnl+" Any positive Total P&L is unrealized market-value change, not booked profit.");
+ }else{
+  say("portfolio-message","Realized P&L comes from completed SELL paper fills. Total P&L also includes verified unrealized value on any positions still open.");
+ }
 }
 
 async function loadPortfolio(){
@@ -1178,7 +1185,7 @@ async function loadHistoryTokenMetadata(mints){
  return historyTokenMetadataQueue;
 }
 function historyLabelForClassification(value){
- const labels={BUY_CANDIDATE:"BUY",SELL_CANDIDATE:"SELL",FAILED_TRANSACTION:"FAILED",TRANSFER:"TRANSFER",LIQUIDITY_OPERATION:"LIQUIDITY_OPERATION",UNKNOWN:"UNKNOWN",RENT:"RENT",STAKING:"STAKING",ACCOUNT_ACTIVITY:"ACCOUNT ACTIVITY"};
+ const labels={BUY_CANDIDATE:"BUY SIGNAL",SELL_CANDIDATE:"SELL SIGNAL",FAILED_TRANSACTION:"FAILED",TRANSFER:"TRANSFER",LIQUIDITY_OPERATION:"LIQUIDITY_OPERATION",UNKNOWN:"UNKNOWN",RENT:"RENT",STAKING:"STAKING",ACCOUNT_ACTIVITY:"ACCOUNT ACTIVITY"};
  return labels[value]||String(value||"UNKNOWN").replaceAll("_"," ");
 }
 function historyClassificationKind(value){
@@ -1232,7 +1239,10 @@ async function loadTransactionHistory(){
    const typeCell=document.createElement("td");
    const activityType=String(tx.evidence&&tx.evidence.activity_type||tx.classification||"UNKNOWN");
    const typePill=historyPill(historyLabelForClassification(activityType),sideKind);
-   typePill.title=String(tx.classification||"UNKNOWN").replaceAll("_"," ")+(activityType!==tx.classification?" · "+activityType.replaceAll("_"," "):"");
+   const candidateNote=["BUY_CANDIDATE","SELL_CANDIDATE"].includes(tx.classification)
+    ?"Observed swap candidate only; this is not a completed paper fill. ":"";
+   const classificationReason=String(tx.evidence&&tx.evidence.classification_reason||"").trim();
+   typePill.title=candidateNote+String(tx.classification||"UNKNOWN").replaceAll("_"," ")+(activityType!==tx.classification?" · "+activityType.replaceAll("_"," "):"")+(classificationReason?" · "+classificationReason:"");
    typeCell.append(typePill);row.append(typeCell);
    row.append(makeHistoryTokenCell(tx.token_mint));
    const amountCell=historyCell(row,historyAmount(tx.amount));

@@ -401,7 +401,7 @@ function handleProfileMonitorEvent(event, profileId) {
  void Promise.allSettled([
   loadMonitor(),
   loadTransactionHistory(),
-  loadPaperTradeHistory(null),
+  loadPaperTradeHistory(),
   loadPortfolioForProfile()
  ]);
 }
@@ -493,10 +493,12 @@ async function loadPortfolioForProfile(){
   $("realized").textContent=money(null);$("unrealized").textContent=money(null);
   say("virtual-balance-message","Select a paper profile to set its virtual balance.");
   say("portfolio-message","Select a paper profile to view its portfolio.");
-  await loadPaperTradeHistory(null);return;
+  await loadPaperTradeHistory();return;
  }
  const preserveDraft=balanceInputDirty;
  if(!preserveDraft){input.disabled=true;save.disabled=true;}
+ // Load persisted fills immediately; portfolio market valuation is independent.
+ void loadPaperTradeHistory();
  try{
   const path="/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile);
   let d=await api(path),r=d.report||d;
@@ -515,11 +517,9 @@ async function loadPortfolioForProfile(){
   else if(balance===null||balance===undefined){say("portfolio-message","No virtual USD balance is set for this profile yet. Enter an amount above and confirm it.");}
   else if(r.portfolio_value_usd===null||r.portfolio_value_usd===undefined){say("portfolio-message","Available cash is shown in USD. Portfolio value is unavailable while token holdings lack a verified fresh market price.");}
   else{say("portfolio-message","Portfolio value currently reflects virtual USD cash; token holdings are included only when reliably valued.");}
-  await loadPaperTradeHistory(r);
  }catch(e){
   if(!balanceInputDirty){input.disabled=false;save.disabled=!selectedProfile||balanceSaveInProgress;}
   say("portfolio-message",e.message);say("virtual-balance-message","Could not load this profile's virtual balance.");
-  await loadPaperTradeHistory(null);
  }
 }
 function updateAmountLabel(){
@@ -707,7 +707,7 @@ function setHistoryTab(mode){
  $("paper-history-tab").classList.toggle("active",!observed);
  $("observed-history-tab").setAttribute("aria-selected",observed?"true":"false");
  $("paper-history-tab").setAttribute("aria-selected",observed?"false":"true");
- if(observed)loadTransactionHistory();else loadPaperTradeHistory(null);
+ if(observed)loadTransactionHistory();else loadPaperTradeHistory();
 }
 async function loadTransactionHistory(){
  const tbody=$("transaction-history-table");
@@ -758,7 +758,7 @@ async function loadTransactionHistory(){
   say("transaction-history-message",e.message);
  }
 }
-async function loadPaperTradeHistory(reportOverride){
+async function loadPaperTradeHistory(){
  const tbody=$("paper-trade-history-table");
  if(!selectedProfile){
   historySetEmpty(tbody,7,"Select a profile to view simulated paper trades.");
@@ -766,8 +766,7 @@ async function loadPaperTradeHistory(reportOverride){
   say("paper-trade-history-message","");return;
  }
  try{
-  let r=reportOverride;
-  if(!r){const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile));r=d.report||d;}
+  const r=await api("/api/profile-paper-history?profile_id="+encodeURIComponent(selectedProfile));
   if(r.error){historySetEmpty(tbody,7,"Paper history unavailable: "+r.error);say("paper-trade-history-message",r.error);return;}
   const orders=Array.isArray(r.orders)?r.orders.slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||""))):[];
   const fills=Array.isArray(r.fills)?r.fills:[];
@@ -850,7 +849,7 @@ async function loadPaperTradeHistory(reportOverride){
   );
  }catch(e){historySetEmpty(tbody,7,e.message||"Unable to load paper history.");say("paper-trade-history-message",e.message);}
 }
-async function loadHistory(){await Promise.all([loadTransactionHistory(),loadPaperTradeHistory(null)]);}
+async function loadHistory(){await Promise.all([loadTransactionHistory(),loadPaperTradeHistory()]);}
 $("history-details").addEventListener("toggle",()=>{if($("history-details").open)loadHistory();});
 $("observed-history-tab").addEventListener("click",()=>setHistoryTab("observed"));
 $("paper-history-tab").addEventListener("click",()=>setHistoryTab("paper"));
@@ -898,7 +897,7 @@ let refreshInProgress = false;
 setInterval(async()=> {
   if(!backendReady || refreshInProgress) return;
   refreshInProgress = true;
-  try { await Promise.all([loadMonitor(), loadTransactionHistory(), loadPaperTradeHistory(null)]); }
+  try { await Promise.all([loadMonitor(), loadTransactionHistory(), loadPaperTradeHistory()]); }
   finally { refreshInProgress = false; }
 },60000);
 setInterval(loadRpcHealth,30000);

@@ -97,3 +97,4 @@ Optional environment settings (also listed in `.env.example`):
 
 - `MONITOR_SCAN_WORKERS`: 1–16, default `4`.
 - `MONITOR_RPC_TIMEOUT_SECONDS`: 1–60, default `10`.
+- `MONITOR_MAX_SIGNATURE_PAGES`: 1–1000 older pages per wallet per scan cycle, default `100`. A scan that has not reached its saved checkpoint is marked incomplete and resumes from its persisted cursor on a later cycle; its checkpoint is not advanced early.

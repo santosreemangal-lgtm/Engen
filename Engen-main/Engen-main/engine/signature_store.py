@@ -60,6 +60,7 @@ class SignatureStore:
                     "error_stage": "TEXT",
                     "error_code": "TEXT",
                     "error_message": "TEXT",
+                    "historical_baseline": "INTEGER NOT NULL DEFAULT 0",
                 }
                 for column, definition in migrations.items():
                     if column not in columns:
@@ -215,27 +216,46 @@ class SignatureStore:
 
         return row[0] if row else None
 
-    def save(self, wallet_address, signature, slot=None):
+    def save(self, wallet_address, signature, slot=None, historical_baseline=False):
         self._validate_wallet(wallet_address)
         self._validate_signature(signature)
         if slot is not None and (
             not isinstance(slot, int) or isinstance(slot, bool) or slot < 0
         ):
             raise ValueError("Slot must be a non-negative integer.")
+        if not isinstance(historical_baseline, bool):
+            raise ValueError("historical_baseline must be a boolean.")
 
         with closing(self._connect()) as connection:
             with connection:
                 cursor = connection.execute(
                     """
                     INSERT OR IGNORE INTO seen_signatures
-                        (wallet_address, signature, status, slot)
-                    VALUES (?, ?, 'pending', ?)
+                        (wallet_address, signature, status, slot, historical_baseline)
+                    VALUES (?, ?, 'pending', ?, ?)
                     """,
-                    (wallet_address, signature, slot),
+                    (wallet_address, signature, slot, int(historical_baseline)),
                 )
                 saved = cursor.rowcount == 1
+                if historical_baseline:
+                    connection.execute(
+                        """UPDATE seen_signatures SET historical_baseline=1
+                           WHERE wallet_address=? AND signature=?""",
+                        (wallet_address, signature),
+                    )
 
         return saved
+
+    def is_historical_baseline(self, wallet_address, signature):
+        self._validate_wallet(wallet_address)
+        self._validate_signature(signature)
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT historical_baseline FROM seen_signatures
+                   WHERE wallet_address=? AND signature=?""",
+                (wallet_address, signature),
+            ).fetchone()
+        return bool(row and row[0])
 
     def save_many(self, wallet_address, signatures):
         saved = 0

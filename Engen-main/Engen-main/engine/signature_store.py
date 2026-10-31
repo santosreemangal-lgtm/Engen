@@ -433,7 +433,7 @@ class SignatureStore:
                 FROM seen_signatures
                 WHERE wallet_address = ?
                   AND status = 'pending'
-                ORDER BY first_seen_at ASC
+                ORDER BY first_seen_at ASC, rowid ASC
                 LIMIT ?
                 """,
                 (wallet_address, limit),

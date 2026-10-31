@@ -20,23 +20,24 @@ class MonitorBaselineTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     @patch("engine.wallet_monitor.get_wallet_signatures")
-    def test_first_scan_stores_existing_signatures_but_returns_none(
-        self, mock_get_signatures
-    ):
-        mock_get_signatures.return_value = [
-            {"signature": "1111111111111111111111111111111111111111111111111111111111111112"},
-            {"signature": "1111111111111111111111111111111111111111111111111111111111111113"},
+    def test_first_scan_returns_historical_entries_for_analysis(self, mock_get_signatures):
+        signatures = [
+            "1111111111111111111111111111111111111111111111111111111111111112",
+            "1111111111111111111111111111111111111111111111111111111111111113",
         ]
+        mock_get_signatures.return_value = [{"signature": value} for value in signatures]
 
         result = get_and_store_new_wallet_signatures(
-            wallet_address=self.wallet,
-            store=self.store,
+            wallet_address=self.wallet, store=self.store,
         )
 
-        self.assertEqual(result, [])
-        self.assertTrue(self.store.has_seen(self.wallet, "1111111111111111111111111111111111111111111111111111111111111112"))
-        self.assertTrue(self.store.has_seen(self.wallet, "1111111111111111111111111111111111111111111111111111111111111113"))
+        self.assertEqual({item["signature"] for item in result}, set(signatures))
+        self.assertTrue(all(item.get("historical_baseline") is True for item in result))
         self.assertTrue(self.store.has_baseline(self.wallet))
+        for signature in signatures:
+            self.assertTrue(self.store.has_seen(self.wallet, signature))
+            self.assertTrue(self.store.is_historical_baseline(self.wallet, signature))
+            self.assertEqual(self.store.get_status(self.wallet, signature), "pending")
 
     @patch("engine.wallet_monitor.get_wallet_signatures")
     def test_repeated_scan_does_not_return_saved_signatures(
@@ -51,12 +52,16 @@ class MonitorBaselineTests(unittest.TestCase):
             store=self.store,
         )
 
+        # Simulate the bridge completing the first historical analysis.
+        self.assertEqual(len(first_result), 1)
+        self.assertTrue(first_result[0]["historical_baseline"])
+        self.store.mark_processed(
+            self.wallet, first_result[0]["signature"]
+        )
         second_result = get_and_store_new_wallet_signatures(
-            wallet_address=self.wallet,
-            store=self.store,
+            wallet_address=self.wallet, store=self.store,
         )
 
-        self.assertEqual(first_result, [])
         self.assertEqual(second_result, [])
 
     @patch("engine.wallet_monitor.get_wallet_signatures")
@@ -67,10 +72,12 @@ class MonitorBaselineTests(unittest.TestCase):
             {"signature": "1111111111111111111111111111111111111111111111111111111111111112"},
         ]
 
-        get_and_store_new_wallet_signatures(
-            wallet_address=self.wallet,
-            store=self.store,
+        initial = get_and_store_new_wallet_signatures(
+            wallet_address=self.wallet, store=self.store,
         )
+        self.assertEqual(len(initial), 1)
+        self.assertTrue(initial[0]["historical_baseline"])
+        self.store.mark_processed(self.wallet, initial[0]["signature"])
 
         mock_get_signatures.return_value = [
             {"signature": "1111111111111111111111111111111111111111111111111111111111111114"},
@@ -96,10 +103,11 @@ class MonitorBaselineTests(unittest.TestCase):
             {"signature": "1111111111111111111111111111111111111111111111111111111111111112"},
         ]
 
-        get_and_store_new_wallet_signatures(
-            wallet_address=self.wallet,
-            store=self.store,
+        initial = get_and_store_new_wallet_signatures(
+            wallet_address=self.wallet, store=self.store,
         )
+        self.assertEqual(len(initial), 1)
+        self.store.mark_processed(self.wallet, initial[0]["signature"])
 
         reopened_store = SignatureStore(db_path=self.db_path)
 

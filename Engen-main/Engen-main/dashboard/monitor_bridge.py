@@ -176,10 +176,11 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     address, results, simulator=simulator,
                     allowed_sides=allowed_sides, copy_settings=copy_settings
                 )
+                # Persist the source link immediately after the order is durable,
+                # before attempting its fill. A subsequent scan also reconciles
+                # active and archived orders if the process stops between steps.
+                persist_source_trade_refs(address, simulator)
                 execution_outcomes = execute_pending_paper_orders(address, simulator=simulator)
-            # Reconcile the simulator's durable orders on every scan. This also
-            # closes the crash window between order creation and reference write.
-            persist_source_trade_refs(address, simulator)
             outcomes_by_signal = {
                 item["signal_id"]: item for item in execution_outcomes
                 if item.get("signal_id")

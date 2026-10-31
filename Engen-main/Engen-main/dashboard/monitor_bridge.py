@@ -35,7 +35,7 @@ def _measured_paper_lock(lock, latency_recorder, stage):
 def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter=None,
                          simulator_getter=None, profile_id=None, profile_store=None,
                          latency_recorder=None, price_provider=None,
-                         simulator_lock_getter=None):
+                         simulator_lock_getter=None, max_pages=100):
     """Create a measured read-only scanner with short paper-ledger lock sections."""
     store = SignatureStore()
     latency_recorder = latency_recorder or LatencyRecorder()
@@ -142,7 +142,12 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 timeout=timeout,
                 defer_processed=True,
                 latency_recorder=latency_recorder,
+                max_pages=max_pages,
             )
+        pagination_incomplete = any(
+            isinstance(item, dict) and item.get("scan_incomplete") is True
+            for item in results
+        )
         with latency_recorder.measure("dashboard.transaction_history_persist"):
             results = persist_observed_transactions(address, results)
         try:
@@ -249,7 +254,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                         continue
                     if item.get("historical_baseline") is True:
                         # Historical observations are recorded in History, never copied.
-                        store.mark_processed(address, signature)
+                        store.mark_processed(address, signature, advance_position=not pagination_incomplete)
                         continue
                     signal = item.get("trade_signal")
                     classification = signal.get("classification") if isinstance(signal, dict) else None

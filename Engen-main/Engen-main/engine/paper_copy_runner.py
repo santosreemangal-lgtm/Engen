@@ -391,7 +391,7 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                 diagnostic_code = "MARKET_DATA_PROVIDER_ERROR"
             else:
                 reason = (
-                    "No valid public USD price and liquidity snapshot was returned "
+                    "No usable public USD price/liquidity snapshot was returned "
                     "for this asset; the order remains queued and no simulated fill was recorded."
                 )
                 diagnostic_code = "ASSET_USD_PRICE_UNAVAILABLE"

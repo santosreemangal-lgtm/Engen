@@ -235,7 +235,6 @@ class PaperCopyRunnerTests(unittest.TestCase):
             )
 
     def test_source_trade_must_have_block_time_and_be_at_most_60_seconds_old(self):
-        fresh = candidate_result()
         stale = candidate_result()
         stale["signature_observation"]["block_time"] = 138
         missing_time = candidate_result()

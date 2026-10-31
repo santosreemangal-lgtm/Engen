@@ -54,6 +54,8 @@ class MonitorService:
             "source_quality": "unknown",
             "rpc_error_count": 0,
             "retryable_count": 0,
+            "pagination_incomplete": False,
+            "pagination_pages_scanned": 0,
             "scan_count": 0,
             "scan_duration_ms": None,
             "scan_started_at": None,
@@ -219,6 +221,20 @@ class MonitorService:
             if not isinstance(results, list):
                 raise TypeError("Monitor scan must return a list.")
 
+            pagination_markers = [
+                item for item in results
+                if isinstance(item, dict) and item.get("scan_incomplete") is True
+            ]
+            pagination_incomplete = bool(pagination_markers)
+            pagination_pages_scanned = max(
+                (
+                    int(item.get("pagination_pages_scanned", 0))
+                    for item in pagination_markers
+                    if isinstance(item.get("pagination_pages_scanned", 0), int)
+                    and not isinstance(item.get("pagination_pages_scanned", 0), bool)
+                ),
+                default=0,
+            )
             rpc_errors = [
                 item for item in results
                 if isinstance(item, dict)
@@ -234,7 +250,13 @@ class MonitorService:
                 if isinstance(item.get("rpc_code"), int)
                 and not isinstance(item.get("rpc_code"), bool)
             })
-            if rpc_errors:
+            if pagination_incomplete:
+                source_quality = "incomplete"
+                scan_error = str(
+                    pagination_markers[0].get("pagination_error")
+                    or "Wallet history pagination is incomplete; scanning will resume from the saved cursor."
+                )
+            elif rpc_errors:
                 source_quality = "degraded"
                 code_note = (
                     " (RPC codes: " + ", ".join(rpc_codes) + ")"
@@ -272,6 +294,8 @@ class MonitorService:
                         "source_quality": source_quality,
                         "rpc_error_count": len(rpc_errors),
                         "retryable_count": len(retryable),
+                        "pagination_incomplete": pagination_incomplete,
+                        "pagination_pages_scanned": pagination_pages_scanned,
                         "scan_count": wallet.get("scan_count", 0) + 1,
                         "scan_duration_ms": duration_ms,
                         "latest_results": results[:20],

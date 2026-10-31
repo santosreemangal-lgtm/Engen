@@ -401,7 +401,7 @@ function handleProfileMonitorEvent(event, profileId) {
  void Promise.allSettled([
   loadMonitor(),
   loadTransactionHistory(),
-  loadPaperTradeHistory(),
+  // loadPortfolioForProfile refreshes the independent database-only fill history.
   loadPortfolioForProfile()
  ]);
 }

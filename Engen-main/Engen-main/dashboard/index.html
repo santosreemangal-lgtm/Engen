@@ -73,7 +73,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 #wallet-list .wallet{align-items:flex-start;border:1px solid #263852;background:#0d1727;border-radius:12px;padding:12px;display:grid;grid-template-columns:minmax(0,1fr);gap:9px}
 #wallet-list .address{font-size:11px;line-height:1.7;overflow-wrap:anywhere}
 #wallet-list .wallet-actions button{font-size:12px;padding:9px 11px;min-height:36px}
-.wallet-section-card .message{overflow-wrap:anywhere}.wallet-monitor-status{font-size:12px;color:var(--muted);line-height:1.5;overflow-wrap:anywhere}.wallet-monitor-status[data-state="error"]{color:var(--red)}.wallet-monitor-status[data-state="connected"]{color:var(--green)}
+.wallet-section-card .message{overflow-wrap:anywhere}.wallet-monitor-status{font-size:12px;color:var(--muted);line-height:1.5;overflow-wrap:anywhere}#monitor-performance{font-size:11px;color:#9eb1cc;margin:4px 0 12px;font-variant-numeric:tabular-nums}.wallet-monitor-status[data-state="error"],.wallet-monitor-status[data-quality="degraded"]{color:var(--red)}.wallet-monitor-status[data-state="connected"]{color:var(--green)}.wallet-monitor-status[data-quality="pending"],.wallet-monitor-status[data-quality="incomplete"]{color:#f0bd73}
 @media(max-width:760px){.wallet-layout{grid-template-columns:1fr}.wallet-top-actions{width:100%}.wallet-top-actions button{flex:1}}
 @media(max-width:520px){.wallet-top-actions{display:grid;grid-template-columns:1fr 1fr}.wallet-top-actions .status{grid-column:1/-1}.wallet-section-card{padding:14px}.wallet-top-actions button{width:100%;white-space:normal}}
 .amount-input-wrap{display:flex;align-items:center;gap:8px}.amount-input-wrap input{flex:1;min-width:0}.amount-suffix{min-width:54px;text-align:center;padding:11px 12px;font-weight:800;border:1px solid var(--line);border-radius:10px;background:#17243a;color:#cbd6eb}.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}.virtual-balance-editor{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;padding:16px;margin:16px 0 18px;border:1px solid #30415f;border-radius:15px;background:linear-gradient(145deg,#111e31,#0c1525)}.virtual-balance-editor h3{margin:0;font-size:15px}.virtual-balance-editor form{align-items:stretch}.virtual-balance-editor input{flex:1;min-width:0}.virtual-balance-editor .message{margin-top:0}.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.history-subpanel{min-width:0;padding:16px;border:1px solid #2a3a55;border-radius:14px;background:linear-gradient(145deg,#111c2d,#0c1422)}.history-subpanel h3{margin:0 0 5px}.history-subpanel .history-list{margin-top:12px}.history-subpanel a{color:#aebeff;font-size:13px;overflow-wrap:anywhere}.history-subpanel .history-item{min-width:0}@media(max-width:760px){.history-grid{grid-template-columns:1fr}}</style>
@@ -131,7 +131,11 @@ footer.hint{padding:10px 4px;line-height:1.7}
 .paper-trades-table tbody tr.paper-buy-row:hover{background:#12362d55}
 .paper-trades-table tbody tr.paper-sell-row:hover{background:#42232e55}
 .paper-type-cell{min-width:112px}
-.paper-order-state{display:block;margin-top:4px;color:#8296b2;font-size:9px;line-height:1.25;white-space:normal;max-width:120px}
+.paper-order-state{display:block;margin-top:4px;color:#b9c9df;font-size:9px;line-height:1.25;white-space:normal;max-width:150px;font-weight:700}
+.paper-order-diagnostic{margin-top:4px;max-width:190px;white-space:normal;color:#a9bad2}
+.paper-order-diagnostic summary{padding:3px 0;font-size:9px;line-height:1.3;color:#93b8ed;cursor:pointer;list-style-position:inside}
+.paper-order-diagnostic summary:hover{color:#d0e2ff}
+.paper-order-reason{padding:5px 6px;border-left:2px solid #536f98;background:#111d2e;border-radius:0 6px 6px 0;font-size:9px;line-height:1.45;color:#c6d3e6;overflow-wrap:anywhere}
 .paper-token-cell{display:flex;align-items:center;gap:8px;min-width:130px;max-width:190px}
 .paper-token-icon{width:27px;height:27px;flex:0 0 27px;display:grid;place-items:center;border-radius:50%;background:hsl(var(--token-hue,215) 38% 22%);border:1px solid hsl(var(--token-hue,215) 44% 43%);color:#e8f0ff;font-size:9px;font-weight:850;letter-spacing:.02em}
 .paper-token-labels{display:flex;flex-direction:column;gap:2px;min-width:0}
@@ -397,6 +401,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <div class="wallet-top-actions"><span id="monitor-state" class="status">Monitoring OFF</span><span id="wallet-count" class="status">0 wallets</span><button id="start-monitoring" type="button" disabled>Start Monitoring</button><button id="stop-monitoring" type="button" class="danger" disabled>Stop Monitoring</button></div>
 </div>
 <p id="monitor-message" class="message" role="status"></p>
+<p id="monitor-performance" class="wallet-monitor-status" role="status"></p>
 <div class="wallet-layout">
 <section class="wallet-section-card">
 <div class="panel-head"><div><h3>Paper Profile</h3></div><button id="create-profile" type="button" class="secondary">＋ Create Profile</button></div>
@@ -405,7 +410,10 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <form id="profile-form" class="hidden field"><label for="profile-name">Profile name</label><div class="row"><input id="profile-name" maxlength="80" placeholder="e.g. Paper Test 1" required><button type="submit">Create Profile</button></div><button id="cancel-create-profile" type="button" class="secondary">Cancel</button><p class="hint">This creates a paper-trading profile, not a blockchain wallet.</p></form>
 <div id="selected-profile-detail" class="profile-detail">
 <div class="panel-head selected-profile-head"><div><h3 id="detail-profile-title">Choose a paper profile</h3></div><span id="detail-profile-status" class="status">No selection</span></div>
-<button id="activate-profile" class="secondary profile-activate-button" type="button" disabled>Activate Profile</button>
+<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+ <button id="activate-profile" class="secondary profile-activate-button" type="button" disabled>Activate Profile</button>
+ <button id="delete-profile" class="danger" type="button" disabled style="font-size:11px;padding:7px 10px;min-height:32px">Delete Profile</button>
+</div>
 </div>
 </section>
 <section class="wallet-section-card">
@@ -440,13 +448,14 @@ footer.hint{padding:10px 4px;line-height:1.7}
  <div class="history-tabs" role="tablist" aria-label="History type">
   <button id="observed-history-tab" class="history-tab active" type="button" role="tab" aria-selected="true">Wallet Activity</button>
   <button id="paper-history-tab" class="history-tab" type="button" role="tab" aria-selected="false">Paper Trades</button>
+  <button id="paper-sound-toggle" class="secondary" type="button" aria-pressed="false" title="Play a soft tone only when a new paper fill is recorded">Paper sound: Off</button>
  </div>
  <div class="history-filters">
   <select id="history-classification" aria-label="Filter by trade type">
    <option value="">All activity</option><option value="BUY_CANDIDATE">Buys</option><option value="SELL_CANDIDATE">Sells</option><option value="FAILED_TRANSACTION">Failed</option><option value="TRANSFER">Transfers</option><option value="LIQUIDITY_OPERATION">Liquidity</option><option value="UNKNOWN">Unknown</option>
   </select>
   <select id="history-status" aria-label="Filter by status">
-   <option value="">All statuses</option><option value="confirmed">Confirmed</option><option value="observed">Observed</option><option value="failed">Failed</option><option value="pending">Pending</option><option value="unknown">Unknown</option>
+   <option value="">All statuses</option><option value="confirmed">Confirmed</option><option value="observed">Observed</option><option value="failed">Failed</option><option value="pending">Pending</option><option value="needs_review">Needs review</option><option value="unknown">Unknown</option>
   </select>
   <input id="history-token-filter" type="text" placeholder="Token mint address" aria-label="Filter by token mint address" autocomplete="off">
   <button id="history-apply-filters" type="button">Apply</button>
@@ -473,6 +482,10 @@ footer.hint{padding:10px 4px;line-height:1.7}
 const $ = id => document.getElementById(id);
 let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, currentMonitorWallets = [], paperSessionResetInProgress = false;
 let pendingSellAllPreview = null, sellAllInProgress = false;
+let paperSoundEnabled = false;
+let paperAudioContext = null;
+const paperFillSoundStateByProfile = new Map();
+try { paperSoundEnabled = localStorage.getItem("paper-fill-sound-enabled") === "true"; } catch {}
 const headers = {"Content-Type":"application/json"};
 function apiRequestHeaders(extra={}) {
   let token = "";
@@ -576,30 +589,33 @@ function renderPortfolioMetrics(report){
  const unrealized=numericValue(report&&report.unrealized_pnl_usd);
  const fills=Array.isArray(report&&report.fills)?report.fills:[];
  const hasPaperFills=fills.length>0;
- const balances=report&&report.balances&&typeof report.balances==="object"?report.balances:{};
- const hasTokenHoldings=Object.entries(balances).some(([mint,amount])=>
-  mint!=="USD"&&numericValue(amount)!==null&&numericValue(amount)!==0
- );
- const reportedPortfolioValue=numericValue(report&&report.portfolio_value_usd);
- const availableCash=numericValue(report&&(report.available_balance_usd??report.available_balance??balances.USD));
- const currentCapital=reportedPortfolioValue!==null?reportedPortfolioValue:(!hasTokenHoldings?availableCash:null);
  const total=!hasPaperFills||realized===null||unrealized===null?null:realized+unrealized;
  const returnPercent=total===null||initial===null||initial<=0?null:(total/initial)*100;
  const today=hasPaperFills?todayRealizedPnl(report&&report.pnl_events):null;
+ const sellFillCount=Number(report&&report.realized_sell_fill_count||0);
 
- // All four cards remain visible. Capital is an unsigned amount;
- // only return and P&L metrics display positive/negative signs.
- setMetricValue("initial-deposit",currentCapital===null?"$—":money(Math.abs(currentCapital)),"neutral");
+ // "Internal Deposit" is the original virtual deposit, never current market value.
+ // Total P&L includes both realized SELL results and open-position mark-to-market.
+ setMetricValue("initial-deposit",initial===null?"$—":money(initial),"neutral");
  setMetricValue("total-return",hasPaperFills?signedPercent(returnPercent):"—",
   !hasPaperFills?"neutral":returnPercent>0?"positive":returnPercent<0?"negative":"neutral");
  setMetricValue("today-pnl",hasPaperFills?signedMoney(today):"—",
   !hasPaperFills?"neutral":today>0?"positive":today<0?"negative":"neutral");
  setMetricValue("total-pnl",hasPaperFills?signedMoney(total):"—",
   !hasPaperFills?"neutral":total>0?"positive":total<0?"negative":"neutral");
+ $("initial-deposit").title="Original virtual deposit for this paper profile. It does not change with token prices or current cash.";
+ $("today-pnl").title="Realized P&L from SELL paper fills completed today. BUY fills do not realize profit.";
+ $("total-return").title="Percentage return based on Total P&L, which includes unrealized value of open simulated positions.";
+ $("total-pnl").title="Total P&L = realized P&L from completed SELL fills + unrealized P&L on open simulated positions. Unrealized P&L is not booked profit.";
  if(report&&report.error)say("portfolio-message",report.error);
- else if(!hasPaperFills)say("portfolio-message","Fresh $100 paper session. Return and P&L appear after the first completed paper fill.");
+ else if(!hasPaperFills)say("portfolio-message","No completed paper fills yet. Observed wallet activity and queued orders are not fills.");
  else if(total===null)say("portfolio-message","Total P&L is unavailable until realized and unrealized P&L can both be verified with fresh market prices.");
- else say("portfolio-message","");
+ else if(sellFillCount===0){
+  const openPnl=unrealized===null?"Open-position unrealized P&L is currently unavailable.":"Open-position unrealized P&L: "+signedMoney(unrealized)+".";
+  say("portfolio-message","No SELL paper fill has been recorded. Realized P&L is $0.00; "+openPnl+" Any positive Total P&L is unrealized market-value change, not booked profit.");
+ }else{
+  say("portfolio-message","Realized P&L comes from completed SELL paper fills. Total P&L also includes verified unrealized value on any positions still open.");
+ }
 }
 
 async function loadPortfolio(){
@@ -630,8 +646,16 @@ function renderWallets(){
    const checked=monitor.last_successful_check?new Date(monitor.last_successful_check):null;
    const checkedLabel=checked&&!Number.isNaN(checked.getTime())?" · "+checked.toLocaleTimeString():"";
    const resultCount=Array.isArray(monitor.latest_results)?monitor.latest_results.length:0;
-   monitorStatus.textContent=state.replaceAll("_"," ")+checkedLabel+(resultCount?" · "+resultCount+" recent":"");
+   const quality=String(monitor.source_quality||"unknown").toLowerCase();
+   const qualityLabel=quality==="incomplete"?" · history backfill incomplete":quality==="degraded"?" · metadata degraded":quality==="pending"?" · transactions pending":"";
+   const rpcErrors=Number(monitor.rpc_error_count||0);
+   const scanDuration=monitor.scan_duration_ms!==null&&monitor.scan_duration_ms!==undefined&&Number.isFinite(Number(monitor.scan_duration_ms))?Number(monitor.scan_duration_ms):null;
+   const scanLabel=scanDuration===null?"":" · "+scanDuration.toFixed(1)+" ms";
+   const scanCount=Number(monitor.scan_count||0);
+   monitorStatus.textContent=state.replaceAll("_"," ")+qualityLabel+(rpcErrors?" · "+rpcErrors+" RPC errors":"")+scanLabel+(scanCount?" · "+scanCount+" scans":"")+checkedLabel+(resultCount?" · "+resultCount+" recent":"");
    monitorStatus.dataset.state=state;
+   monitorStatus.dataset.quality=quality;
+   monitorStatus.title=monitor.last_error||"No monitor diagnostic details.";
   }
   const actions=document.createElement("div");actions.className="wallet-actions";
   const unassign=document.createElement("button");unassign.className="danger";unassign.textContent="Unassign";
@@ -679,14 +703,38 @@ async function loadMonitor(){
   currentMonitorWallets=observed;
   renderWallets();
   const failed=observed.find(x=>x.state==="error");
-  const connected=observed.filter(x=>x.state==="connected");
+  const incomplete=observed.find(x=>x.source_quality==="incomplete"||x.pagination_incomplete===true);
+  const degraded=observed.find(x=>x.source_quality==="degraded");
+  const pending=observed.find(x=>x.source_quality==="pending");
   const historyFailed=observed.some(x=>(x.latest_results||[]).some(tx=>tx.profile_history_status==="save_failed"));
   const queueFailed=observed.some(x=>(x.latest_results||[]).some(tx=>tx.paper_copy_error));
-  if(historyFailed){say("monitor-message","Read-only scanning is active, but transaction-history storage failed for at least one observation. The history may be incomplete.");}
+  const latency=report.latency&&typeof report.latency==="object"?report.latency:{};
+  const latencyLabel=stage=>{
+   const value=latency[stage];
+   return value&&Number.isFinite(Number(value.p95_ms))?Number(value.p95_ms).toFixed(1)+" ms p95":null;
+  };
+  const performanceParts=[];
+  if(report.last_cycle_duration_ms!==null&&report.last_cycle_duration_ms!==undefined&&Number.isFinite(Number(report.last_cycle_duration_ms)))performanceParts.push("Cycle "+Number(report.last_cycle_duration_ms).toFixed(1)+" ms");
+  if(Number.isFinite(Number(report.last_cycle_wallet_count)))performanceParts.push((Number(report.last_cycle_wallet_count)||0)+" wallets / "+(Number(report.scan_workers)||1)+" workers");
+  if(Number.isFinite(Number(report.rpc_timeout_seconds)))performanceParts.push("RPC timeout "+Number(report.rpc_timeout_seconds).toFixed(1)+" s");
+  if(Number.isFinite(Number(report.max_signature_pages_per_scan)))performanceParts.push("Backfill cap "+Number(report.max_signature_pages_per_scan)+" pages/scan");
+  const signatureLatency=latencyLabel("wallet.signature_fetch");if(signatureLatency)performanceParts.push("Signature RPC "+signatureLatency);
+  const transactionLatency=latencyLabel("transaction.rpc_fetch");if(transactionLatency)performanceParts.push("Transaction RPC "+transactionLatency);
+  const analysisLatency=latencyLabel("transaction.local_analysis");if(analysisLatency)performanceParts.push("Local analysis "+analysisLatency);
+  const historyLatency=latencyLabel("dashboard.transaction_history_persist");if(historyLatency)performanceParts.push("History save "+historyLatency);
+  const queueLatency=latencyLabel("dashboard.paper_order_queue");if(queueLatency)performanceParts.push("Order queue "+queueLatency);
+  const paperLatency=latencyLabel("dashboard.paper_simulation");if(paperLatency)performanceParts.push("Paper simulation "+paperLatency);
+  const marketLatency=latencyLabel("dashboard.paper_market_data_fetch");if(marketLatency)performanceParts.push("Market data "+marketLatency);
+  const lockLatency=latencyLabel("dashboard.paper_lock_wait");if(lockLatency)performanceParts.push("Simulator lock wait "+lockLatency);
+  say("monitor-performance",performanceParts.length?"Latency · "+performanceParts.join(" · "):"Latency metrics are collecting; timings will appear after the first scan.");
+  if(incomplete){say("monitor-message","Wallet history backfill is incomplete. The scan will resume from its saved cursor; the Dashboard will not report this wallet as fully healthy. "+(incomplete.last_error||""));}
+  else if(historyFailed){say("monitor-message","Read-only scanning is active, but transaction-history storage failed for at least one observation. The history may be incomplete.");}
   else if(queueFailed){say("monitor-message","Read-only scanning is active, but a paper-order queue step failed. No real transaction was sent; check the paper-trade history and server logs.");}
   else if(failed){say("monitor-message","Monitoring is enabled, but a source-wallet scan failed. "+(failed.last_error||"Check the configured RPC connection."));}
+  else if(degraded){say("monitor-message","Wallet signature discovery is connected, but transaction details are failing. "+(degraded.last_error||"Check RPC transaction-version compatibility."));}
+  else if(pending){say("monitor-message","Wallet monitoring is connected, but some signatures are still awaiting confirmation or complete metadata. "+(pending.last_error||""));}
   else{say("monitor-message","");}
- }catch(e){currentMonitor=false;currentMonitorWallets=[];renderWallets();say("monitor-state","Status unavailable");$("monitor-state").dataset.state="error";$("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;say("monitor-message","Could not verify monitor status: "+e.message);}
+ }catch(e){currentMonitor=false;currentMonitorWallets=[];renderWallets();say("monitor-state","Status unavailable");$("monitor-state").dataset.state="error";$("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;say("monitor-message","Could not verify monitor status: "+e.message);say("monitor-performance","Latency metrics are unavailable until monitoring status can be loaded.");}
 }
 async function loadProfiles(){
  try{
@@ -724,6 +772,8 @@ function renderProfileCards(){
  $("selected-profile-detail").classList.toggle("hidden",!p);
  $("activate-profile").classList.toggle("hidden",!p||active);
  $("activate-profile").disabled=!p||active;
+ $("delete-profile").classList.toggle("hidden",!p);
+ $("delete-profile").disabled=!p;
  renderWallets();
 }
 function selected(){return profiles.find(p=>p.profile_id===selectedProfile);}
@@ -793,6 +843,30 @@ $("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const ad
 $("create-profile").addEventListener("click",()=>{if(profiles.length>=3){say("profile-card-message","You can create up to 3 paper profiles.");return;} $("profile-form").classList.toggle("hidden");});$("cancel-create-profile").addEventListener("click",()=>$("profile-form").classList.add("hidden"));
 $("profile-form").addEventListener("submit",async e=>{e.preventDefault();if(profiles.length>=3){say("wallet-message","Maximum of 3 paper profiles reached.");return;}try{const d=await post("/api/profiles",{action:"create",name:$("profile-name").value.trim(),destination_public_address:null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"FIXED_USD",sizing_value:"3"}}});selectedProfile=d.profile.profile_id;$("profile-name").value="";$("profile-form").classList.add("hidden");say("wallet-message","Paper profile created. Activate it, then start read-only monitoring when ready.");await loadProfiles();$("profile-select").value=selectedProfile;}catch(err){say("wallet-message",err.message);}});
 $("profile-select").addEventListener("change",async()=>{selectedProfile=$("profile-select").value;renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();if($("history-details").open)loadHistory();renderWallets();});
+
+$("delete-profile").addEventListener("click",async()=>{
+ if(!selectedProfile)return;
+ const profile=selected();
+ if(!profile)return;
+ const profileId=selectedProfile;
+ const confirmed=confirm(
+  "Delete profile '"+String(profile.name||"Paper profile")+"'?\n\nMonitoring for this profile will stop. The profile will be archived and removed from the selectable profile list. Wallet activity, paper orders, fills and stored history will be preserved. Other profiles will not be changed."
+ );
+ if(!confirmed)return;
+ const button=$("delete-profile");
+ button.disabled=true;
+ say("profile-card-message","Archiving profile and stopping its monitor…");
+ try{
+  const result=await post("/api/profiles",{action:"delete",profile_id:profileId});
+  if(result.deleted!==true||result.history_preserved!==true)throw new Error("The server did not confirm that the profile was archived with history preserved.");
+  if(selectedProfile===profileId)selectedProfile="";
+  await loadProfiles();
+  say("profile-card-message","Profile archived. Its history was preserved and it is no longer selectable.");
+ }catch(error){
+  say("profile-card-message","Profile was not deleted: "+error.message);
+  button.disabled=false;
+ }
+});
 
 $("reset-paper-session").addEventListener("click",async()=>{
  if(paperSessionResetInProgress)return;
@@ -1107,7 +1181,7 @@ async function loadHistoryTokenMetadata(mints){
  return historyTokenMetadataQueue;
 }
 function historyLabelForClassification(value){
- const labels={BUY_CANDIDATE:"BUY",SELL_CANDIDATE:"SELL",FAILED_TRANSACTION:"FAILED",TRANSFER:"TRANSFER",LIQUIDITY_OPERATION:"LIQUIDITY_OPERATION",UNKNOWN:"UNKNOWN",RENT:"RENT"};
+ const labels={BUY_CANDIDATE:"BUY SIGNAL",SELL_CANDIDATE:"SELL SIGNAL",FAILED_TRANSACTION:"FAILED",TRANSFER:"TRANSFER",LIQUIDITY_OPERATION:"LIQUIDITY_OPERATION",UNKNOWN:"UNKNOWN",RENT:"RENT",STAKING:"STAKING",ACCOUNT_ACTIVITY:"ACCOUNT ACTIVITY"};
  return labels[value]||String(value||"UNKNOWN").replaceAll("_"," ");
 }
 function historyClassificationKind(value){
@@ -1159,8 +1233,12 @@ async function loadTransactionHistory(){
    const ageCell=historyCell(row,formatPaperAge(tx.observed_at),"history-age");
    if(tx.observed_at){ageCell.dataset.createdAt=tx.observed_at;ageCell.title="Observed: "+historyDate(tx.observed_at);}
    const typeCell=document.createElement("td");
-   const typePill=historyPill(historyLabelForClassification(tx.classification),sideKind);
-   typePill.title=String(tx.classification||"UNKNOWN").replaceAll("_"," ");
+   const activityType=String(tx.evidence&&tx.evidence.activity_type||tx.classification||"UNKNOWN");
+   const typePill=historyPill(historyLabelForClassification(activityType),sideKind);
+   const candidateNote=["BUY_CANDIDATE","SELL_CANDIDATE"].includes(tx.classification)
+    ?"Observed swap candidate only; this is not a completed paper fill. ":"";
+   const classificationReason=String(tx.evidence&&tx.evidence.classification_reason||"").trim();
+   typePill.title=candidateNote+String(tx.classification||"UNKNOWN").replaceAll("_"," ")+(activityType!==tx.classification?" · "+activityType.replaceAll("_"," "):"")+(classificationReason?" · "+classificationReason:"");
    typeCell.append(typePill);row.append(typeCell);
    row.append(makeHistoryTokenCell(tx.token_mint));
    const amountCell=historyCell(row,historyAmount(tx.amount));
@@ -1170,8 +1248,8 @@ async function loadTransactionHistory(){
    const walletCell=document.createElement("td");const wallet=document.createElement("span");
    wallet.className="history-wallet-address";wallet.textContent=historyShortAddress(tx.source_wallet_address);
    wallet.title=tx.source_wallet_address||"";walletCell.append(wallet);row.append(walletCell);
-   const statusCell=document.createElement("td");const status=String(tx.status||"unknown").toLowerCase();
-   statusCell.append(historyPill(status.toUpperCase(),["confirmed","failed","pending","observed"].includes(status)?status:""));row.append(statusCell);
+   const statusCell=document.createElement("td");const status=String(tx.evidence&&tx.evidence.processing_status==="needs_review"?"needs_review":tx.status||"unknown").toLowerCase();
+   statusCell.append(historyPill(status.toUpperCase(),["confirmed","failed","pending","needs_review","observed"].includes(status)?status:""));row.append(statusCell);
    const actionCell=document.createElement("td");
    if(tx.signature){const link=document.createElement("a");link.className="history-link";link.href="https://solscan.io/tx/"+encodeURIComponent(tx.signature);link.target="_blank";link.rel="noopener noreferrer";link.textContent="View tx ↗";actionCell.append(link);const sig=document.createElement("small");sig.className="history-sub";sig.textContent=historyShortAddress(tx.signature);sig.title=tx.signature;actionCell.append(sig);}
    else actionCell.textContent="—";
@@ -1189,12 +1267,48 @@ async function loadTransactionHistory(){
   say("transaction-history-message",e.message);
  }
 }
+function paperOrderExplanation(order,details,orders){
+ const code=String(details.diagnostic_code||"");
+ const messages={
+  MISSING_VIRTUAL_USD_BALANCE:"No virtual USD balance is set for this paper profile.",
+  INSUFFICIENT_VIRTUAL_USD_BALANCE:"The current virtual USD balance is too small for the requested paper amount plus simulated costs.",
+  BUY_SIZING_UNAVAILABLE:"The paper BUY amount could not be calculated from the saved sizing settings and virtual balance.",
+  SOURCE_QUOTE_USD_PRICE_UNAVAILABLE:"The source quote asset needs a fresh verified USD price before its mirrored amount can be calculated.",
+  ASSET_USD_PRICE_UNAVAILABLE:"No usable USD price and pool-liquidity snapshot was returned for this token.",
+  MARKET_DATA_PROVIDER_ERROR:"The public market-data provider returned an error; no fill was recorded.",
+  MARKET_PRICE_UNAVAILABLE:"A verified USD price for this exact token is not available.",
+  MARKET_PRICE_STALE:"The available USD price is too old to use safely.",
+  RPC_PROVIDER_UNAVAILABLE:"The required public provider data is unavailable.",
+  LIQUIDITY_DATA_UNAVAILABLE:"The pool-liquidity snapshot is missing.",
+  LIQUIDITY_DATA_STALE:"The pool-liquidity snapshot is stale.",
+  LIQUIDITY_BELOW_REQUIRED_MINIMUM:"The available pool liquidity is below the configured minimum.",
+  WAITING_FOR_PRIOR_PAPER_BUY:"This SELL is waiting for an earlier paper BUY for the same token to resolve.",
+  NO_SIMULATED_POSITION:"There is no simulated token position available for this SELL.",
+  INVALID_SOURCE_SELL_FRACTION:"The source token reduction could not be validated as a sell fraction.",
+  PAPER_SIMULATOR_EXCEPTION:"The paper simulator raised an internal error; no fill was recorded.",
+ };
+ const parts=[];
+ const known=messages[code];
+ if(known)parts.push(known);
+ const reason=String(order.reason||"").trim();
+ if(reason&&reason!==known)parts.push(reason);
+ const next=String(details.diagnostic_next_step||"").trim();
+ if(next)parts.push("Next step: "+next);
+ if(details.diagnostic_error_type)parts.push("Error type: "+String(details.diagnostic_error_type));
+ if(!parts.length){
+  if(order.status==="CREATED")parts.push("The order is queued. It will only fill after the required virtual balance, fresh market data, position, and simulator checks pass.");
+  else if(order.status==="REJECTED")parts.push("The simulator rejected this order. Review its source transaction and virtual-ledger requirements.");
+  else parts.push("No additional diagnostic information was stored for this order.");
+ }
+ return parts.join(" ");
+}
 function paperOrderState(order,details,orders){
  const sourceWallet=details.source_wallet;
  if(order.status==="FILLED"||order.status==="COMPLETED")return "FILLED";
  if(order.status==="REJECTED"||details.execution_state==="REJECTED")return "FAILED TO EXECUTE";
  if(details.execution_state==="AWAITING_VIRTUAL_BALANCE")return "NEEDS PAPER BALANCE";
  if(details.execution_state==="WAITING_FOR_LIQUIDITY")return "CHECKING LIQUIDITY";
+ if(String(details.diagnostic_code||"").startsWith("LIQUIDITY_"))return "WAITING FOR LIQUIDITY DATA";
  if(details.execution_state==="AWAITING_VERIFIED_MARKET_DATA"||details.execution_state==="WAITING_FOR_MARKET_DATA")return "PREPARING TO EXECUTE";
  if(details.execution_state==="WAITING_FOR_POSITION"){
   const hasEarlierPendingBuy=orders.some(candidate=>{
@@ -1272,16 +1386,97 @@ async function sharePaperTrade(order,fill,pnlEvent,button){
   setTimeout(()=>{if(button.isConnected){button.textContent=original;button.title="Share or copy this paper trade summary";}},1600);
  }
 }
+function updatePaperSoundToggle(){
+ const button=$("paper-sound-toggle");
+ if(!button)return;
+ button.textContent=paperSoundEnabled?"Paper sound: On":"Paper sound: Off";
+ button.setAttribute("aria-pressed",paperSoundEnabled?"true":"false");
+ button.title=paperSoundEnabled
+  ?"Soft sound enabled for newly recorded paper fills only."
+  :"Enable a soft sound for newly recorded paper fills only.";
+}
+function setPaperSoundEnabled(enabled){
+ paperSoundEnabled=enabled===true;
+ try{localStorage.setItem("paper-fill-sound-enabled",paperSoundEnabled?"true":"false");}catch{}
+ if(paperSoundEnabled){
+  const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+  if(AudioContextClass){
+   try{
+    if(!paperAudioContext)paperAudioContext=new AudioContextClass();
+    if(paperAudioContext.state==="suspended")void paperAudioContext.resume().catch(()=>{});
+   }catch{paperAudioContext=null;}
+  }
+ }
+ updatePaperSoundToggle();
+}
+function playPaperFillSound(){
+ if(!paperSoundEnabled||!paperAudioContext||paperAudioContext.state!=="running")return;
+ const context=paperAudioContext;
+ const start=context.currentTime+0.02;
+ [[660,0],[880,0.14]].forEach(([frequency,offset])=>{
+  const oscillator=context.createOscillator();
+  const gain=context.createGain();
+  const toneStart=start+offset;
+  oscillator.type="sine";
+  oscillator.frequency.setValueAtTime(frequency,toneStart);
+  gain.gain.setValueAtTime(0.0001,toneStart);
+  gain.gain.exponentialRampToValueAtTime(0.025,toneStart+0.025);
+  gain.gain.exponentialRampToValueAtTime(0.0001,toneStart+0.13);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start(toneStart);
+  oscillator.stop(toneStart+0.14);
+ });
+}
+function trackNewPaperFills(profileId,fills){
+ if(!profileId)return;
+ const fillIds=(fills||[]).map(fill=>{
+  if(!fill||typeof fill!=="object")return null;
+  const stable=fill.fill_id||[
+   fill.order_id,fill.created_at,fill.quantity,fill.execution_price,fill.gross_quote
+  ].map(value=>String(value??"")).join("|");
+  return stable&&stable!=="||||"?"fill:"+String(stable):null;
+ }).filter(Boolean);
+ const existing=paperFillSoundStateByProfile.get(profileId);
+ if(!existing){
+  paperFillSoundStateByProfile.set(profileId,{ids:new Set(fillIds)});
+  return;
+ }
+ const fresh=fillIds.filter(id=>!existing.ids.has(id));
+ fillIds.forEach(id=>existing.ids.add(id));
+ if(fresh.length)playPaperFillSound();
+ return fresh.length;
+}
+$("paper-sound-toggle").addEventListener("click",()=>{
+ setPaperSoundEnabled(!paperSoundEnabled);
+ if(paperSoundEnabled&&!paperAudioContext){
+  say("paper-trade-history-message","This browser could not initialize audio notifications.");
+ }
+});
+updatePaperSoundToggle();
+function resumePaperAudioOnGesture(){
+ if(!paperSoundEnabled)return;
+ const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+ if(!AudioContextClass)return;
+ try{
+  if(!paperAudioContext)paperAudioContext=new AudioContextClass();
+  if(paperAudioContext.state==="suspended")void paperAudioContext.resume().catch(()=>{});
+ }catch{paperAudioContext=null;}
+}
+document.addEventListener("pointerdown",resumePaperAudioOnGesture,{once:true,capture:true});
+document.addEventListener("keydown",resumePaperAudioOnGesture,{once:true,capture:true});
+
 async function loadPaperTradeHistory(reportOverride){
  const tbody=$("paper-trade-history-table");
- if(!selectedProfile){
+ const profileId=selectedProfile;
+ if(!profileId){
   historySetEmpty(tbody,9,"Select a profile to view simulated paper trades.");
   $("paper-trade-total").textContent="—";$("paper-fill-total").textContent="0 completed fills";
   say("paper-trade-history-message","");return;
  }
  try{
   let r=reportOverride;
-  if(!r){const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile));r=d.report||d;}
+  if(!r){const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(profileId));r=d.report||d;}
   if(r.error){historySetEmpty(tbody,9,"Paper history unavailable: "+r.error);say("paper-trade-history-message",r.error);return;}
   const activeOrders=Array.isArray(r.orders)?r.orders:[];
   const activeFills=Array.isArray(r.fills)?r.fills:[];
@@ -1296,6 +1491,8 @@ async function loadPaperTradeHistory(reportOverride){
   );
   const archivedFills=archivedSessions.flatMap(session=>Array.isArray(session.fills)?session.fills:[]);
   const archivedPnlEvents=archivedSessions.flatMap(session=>Array.isArray(session.pnl_events)?session.pnl_events:[]);
+  const newlyRecordedPaperFills=selectedProfile===profileId
+   ?trackNewPaperFills(profileId,[...activeFills,...archivedFills]):0;
   const allOrders=[...activeOrders,...archivedOrders].sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
   const orders=allOrders.slice(0,100);
   const visibleOrderIds=new Set(orders.map(order=>String(order.order_id||"")));
@@ -1322,6 +1519,21 @@ async function loadPaperTradeHistory(reportOverride){
    sidePill.title=state+(order.reason?" · "+order.reason:"");
    sidePill.setAttribute("aria-label",side+" · "+state);
    typeCell.append(sidePill);
+   const stateLabel=document.createElement("small");
+   stateLabel.className="paper-order-state";
+   stateLabel.textContent=state;
+   typeCell.append(stateLabel);
+   if(!fill&&order.status!=="CANCELLED"){
+    const diagnostic=document.createElement("details");
+    diagnostic.className="paper-order-diagnostic";
+    const summary=document.createElement("summary");
+    summary.textContent=order.status==="REJECTED"?"Why was it stopped?":"Why is it waiting?";
+    const explanation=document.createElement("div");
+    explanation.className="paper-order-reason";
+    explanation.textContent=paperOrderExplanation(order,details,orders);
+    diagnostic.append(summary,explanation);
+    typeCell.append(diagnostic);
+   }
    if(order.archived_session_at){
     const archivedLabel=document.createElement("small");
     archivedLabel.className="history-sub";
@@ -1376,9 +1588,12 @@ async function loadPaperTradeHistory(reportOverride){
   });
   void loadHistoryTokenMetadata(orders.map(order=>order.asset_mint));
   refreshPaperTradeAges();
-  say("paper-trade-history-message",orders.length
+  const fillNotice=newlyRecordedPaperFills
+   ?" · "+newlyRecordedPaperFills+" new paper fill"+(newlyRecordedPaperFills===1?"":"s")+" recorded."
+   :"";
+  say("paper-trade-history-message",(orders.length
    ?"Showing "+orders.length+" of "+allOrders.length+" paper order(s); the 100 most recent are retained in History. Buy/Sell colors identify the side; Age updates every second. Total USD, Profit and simulated Gas are shown only when a fill exists. Market cap is shown only when verified data is available."
-   :"Paper orders appear after the copy engine queues them. Wallet Activity remains separate from simulated paper trades.");
+   :"Paper orders appear after the copy engine queues them. Wallet Activity remains separate from simulated paper trades.")+fillNotice);
  }catch(e){
   historySetEmpty(tbody,9,e.message||"Unable to load paper history.");
   say("paper-trade-history-message",e.message);

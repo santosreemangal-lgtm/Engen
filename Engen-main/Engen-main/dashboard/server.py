@@ -19,14 +19,14 @@ from urllib.parse import parse_qs, urlparse
 from decimal import Decimal
 from datetime import datetime, timezone
 
-from engine.profile_store import ProfileStore, LABELS, STATUSES, validate_public_address, settings_json
-
 ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = ROOT.parent
 
-# Make the existing engine importable when this file is run directly.
+# Make the existing engine importable before importing any engine modules.
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from engine.profile_store import ProfileStore, LABELS, STATUSES, validate_public_address, settings_json
 
 from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
@@ -46,6 +46,18 @@ PAPER_SIMULATOR_DB = Path(os.environ.get("PAPER_SIMULATOR_DB", str(PROJECT_ROOT 
 PROFILE_STORE_DB = Path(os.environ.get("PROFILE_STORE_DB", str(PROJECT_ROOT / "data" / "profiles.db")))
 PROFILE_DATA_DIR = Path(os.environ.get("PROFILE_DATA_DIR", str(PROFILE_STORE_DB.parent / "profiles")))
 MAX_HISTORY_PAGE_SIZE = 100
+try:
+    MONITOR_RPC_TIMEOUT_SECONDS = float(os.environ.get("MONITOR_RPC_TIMEOUT_SECONDS", "10"))
+    MONITOR_SCAN_WORKERS = int(os.environ.get("MONITOR_SCAN_WORKERS", "4"))
+    MONITOR_MAX_SIGNATURE_PAGES = int(os.environ.get("MONITOR_MAX_SIGNATURE_PAGES", "100"))
+except (TypeError, ValueError) as exc:
+    raise RuntimeError("Monitor timeout/workers configuration must be numeric.") from exc
+if not 1 <= MONITOR_RPC_TIMEOUT_SECONDS <= 60:
+    raise RuntimeError("MONITOR_RPC_TIMEOUT_SECONDS must be between 1 and 60.")
+if not 1 <= MONITOR_SCAN_WORKERS <= 16:
+    raise RuntimeError("MONITOR_SCAN_WORKERS must be between 1 and 16.")
+if not 1 <= MONITOR_MAX_SIGNATURE_PAGES <= 1000:
+    raise RuntimeError("MONITOR_MAX_SIGNATURE_PAGES must be between 1 and 1000.")
 HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT = int(os.environ.get("PORT", "8000"))
 TRUST_PROXY = os.environ.get("DASHBOARD_TRUST_PROXY", "").strip().lower() == "true"
@@ -253,11 +265,16 @@ def is_valid_solana_address(value):
 
 
 # Creating services does not start monitoring or make RPC requests.
-monitor_service = MonitorService(create_scan_function(), interval=15)
+monitor_service = MonitorService(
+    create_scan_function(timeout=MONITOR_RPC_TIMEOUT_SECONDS, max_pages=MONITOR_MAX_SIGNATURE_PAGES),
+    interval=15,
+    max_workers=MONITOR_SCAN_WORKERS,
+)
 # Each saved profile gets its own in-memory monitor lifecycle. The saved source
 # wallet list remains profile-scoped in ProfileStore.
 profile_monitor_services = {}
 profile_paper_simulators = {}
+_PROFILE_PAPER_LOCKS = {}
 
 
 def load_monitor_state():
@@ -389,6 +406,13 @@ def profile_paper_db_path(profile_id):
     return PROFILE_DATA_DIR / canonical_profile_id(profile_id) / "paper_trading.db"
 
 
+def get_profile_paper_lock(profile_id):
+    """Return a per-profile simulator lock; the global lock protects only the registry."""
+    canonical = canonical_profile_id(profile_id)
+    with paper_simulator_lock:
+        return _PROFILE_PAPER_LOCKS.setdefault(canonical, threading.RLock())
+
+
 def get_profile_paper_simulator(profile_id):
     """Return one persistent simulator per profile; never share account balances."""
     canonical = canonical_profile_id(profile_id)
@@ -472,8 +496,8 @@ def set_profile_virtual_balance(profile_id, amount):
     if not value.is_finite() or value <= 0 or value > Decimal("1000000000"):
         raise ValueError("Virtual balance must be greater than zero and at most 1,000,000,000 USD.")
     initialize_profile_paper_ledger(profile_id)
-    with paper_simulator_lock:
-        simulator = get_profile_paper_simulator(profile_id)
+    simulator = get_profile_paper_simulator(profile_id)
+    with get_profile_paper_lock(profile_id):
         result = simulator.set_virtual_balance(format(value, "f"), "USD")
         # Keep the earlier balance table in sync for safe migration/diagnostics.
         path = profile_paper_db_path(profile_id)
@@ -516,8 +540,8 @@ def reset_profile_paper_session(profile_id, amount):
         profile_monitor_services.pop(profile_id, None)
 
     initialize_profile_paper_ledger(profile_id)
-    with paper_simulator_lock:
-        simulator = get_profile_paper_simulator(profile_id)
+    simulator = get_profile_paper_simulator(profile_id)
+    with get_profile_paper_lock(profile_id):
         result = simulator.reset_session(format(value, "f"), "USD")
 
     return {
@@ -541,7 +565,8 @@ def load_profile_paper_simulation_report(profile_id):
         "archived_sessions": [],
         "available_balance": None, "available_balance_usd": None,
         "initial_balance": None, "portfolio_value_usd": None,
-        "realized_pnl_usd": None, "unrealized_pnl_usd": None,
+        "realized_pnl_usd": None, "realized_pnl_status": "no_sell_fills",
+        "realized_sell_fill_count": 0, "unrealized_pnl_usd": None,
         "pnl": {"cost_basis_method": "average_cost", "currency": "USD",
                 "realized_by_mint": {},
                 "unrealized_status": "unavailable_no_verified_fresh_market_price"},
@@ -561,8 +586,9 @@ def load_profile_paper_simulation_report(profile_id):
         path = profile_paper_db_path(profile_id)
         if not path.is_file():
             return base
-        with paper_simulator_lock:
-            simulator_report = get_profile_paper_simulator(profile_id).report()
+        simulator = get_profile_paper_simulator(profile_id)
+        with get_profile_paper_lock(profile_id):
+            simulator_report = simulator.report()
             sim_balances = dict(simulator_report.get("balances", {}))
             sim_orders = list(simulator_report.get("orders", []))
             sim_fills = list(simulator_report.get("fills", []))
@@ -616,15 +642,26 @@ def load_profile_paper_simulation_report(profile_id):
         base["fills"] = sim_fills
         base["pnl_events"] = sim_pnl_events
         base["pnl"] = simulator_report.get("pnl", base["pnl"])
+        base["realized_sell_fill_count"] = sum(
+            1 for fill in sim_fills
+            if isinstance(fill, dict) and str(fill.get("side", "")).upper() == "SELL"
+        )
         realized = base["pnl"].get("realized_by_mint", {})
         if not realized:
             base["realized_pnl_usd"] = "0"
+            base["realized_pnl_status"] = (
+                "no_sell_fills"
+                if base["realized_sell_fill_count"] == 0
+                else "unavailable_missing_sell_pnl"
+            )
         elif all(item.get("status") == "calculated" and item.get("pnl") is not None
                  for item in realized.values()):
             base["realized_pnl_usd"] = format(
                 sum((Decimal(item["pnl"]) for item in realized.values()), Decimal("0")), "f")
+            base["realized_pnl_status"] = "calculated"
         else:
             base["realized_pnl_usd"] = None
+            base["realized_pnl_status"] = "unknown_cost_basis"
         # Value non-cash holdings only from verified, fresh public market snapshots.
         # Portfolio value may be known even when cost basis is unknown; in that
         # case unrealized P&L stays unavailable rather than being guessed.
@@ -638,8 +675,8 @@ def load_profile_paper_simulation_report(profile_id):
         ]
         # Snapshot cost basis under the simulator lock, then perform public
         # network lookups outside that lock so price APIs cannot stall paper fills.
-        with paper_simulator_lock:
-            simulator = get_profile_paper_simulator(profile_id)
+        simulator = get_profile_paper_simulator(profile_id)
+        with get_profile_paper_lock(profile_id):
             ledger = simulator.pnl_ledger
             ledger_positions = {
                 mint: ledger.snapshot(mint) for mint in mints_for_valuation
@@ -884,13 +921,17 @@ def get_profile_monitor_service(profile_id):
     if canonical not in profile_monitor_services:
         profile_monitor_services[canonical] = MonitorService(
             create_scan_function(
+                timeout=MONITOR_RPC_TIMEOUT_SECONDS,
+                max_pages=MONITOR_MAX_SIGNATURE_PAGES,
                 side_getter=lambda: profile_copy_side(canonical),
                 settings_getter=lambda: profile_paper_settings(canonical),
                 simulator_getter=lambda: get_profile_paper_simulator(canonical),
+                simulator_lock_getter=lambda: get_profile_paper_lock(canonical),
                 profile_id=canonical,
                 profile_store=ProfileStore(PROFILE_STORE_DB),
             ),
             interval=15,
+            max_workers=MONITOR_SCAN_WORKERS,
         )
     return profile_monitor_services[canonical]
 
@@ -905,7 +946,15 @@ def profile_monitor_report(profile_id):
     status = service.status() if service is not None else {
         "enabled": False, "interval_seconds": 15, "wallets": [],
     }
-    return {"profile_id": canonical, "profile_status": profile["status"], "monitor": status}
+    return {
+        "profile_id": canonical,
+        "profile_status": profile["status"],
+        "monitor": {
+            **status,
+            "rpc_timeout_seconds": MONITOR_RPC_TIMEOUT_SECONDS,
+            "max_signature_pages_per_scan": MONITOR_MAX_SIGNATURE_PAGES,
+        },
+    }
 
 
 def load_profile_transactions(query):
@@ -932,7 +981,7 @@ def load_profile_transactions(query):
     token_mint = (query.get("token_mint") or [""])[0].strip()
     if classification and classification not in LABELS:
         raise ValueError("Unsupported transaction classification.")
-    if status and status not in STATUSES:
+    if status and status not in STATUSES and status != "needs_review":
         raise ValueError("Unsupported transaction status.")
     if token_mint:
         validate_public_address(token_mint, "token mint")
@@ -941,7 +990,10 @@ def load_profile_transactions(query):
     if classification:
         filters.append("t.classification=?")
         params.append(classification)
-    if status:
+    if status == "needs_review":
+        filters.append("json_extract(t.evidence_json, '$.processing_status')=?")
+        params.append(status)
+    elif status:
         filters.append("t.status=?")
         params.append(status)
     if token_mint:
@@ -1181,10 +1233,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     skipped = []
                     sold_mints = set()
                     now = datetime.now(timezone.utc).isoformat()
-                    with paper_simulator_lock:
-                        simulator = get_profile_paper_simulator(profile_id)
-                        # Only assets with an actual filled BUY from the automatic copy
-                        # engine are eligible. Arbitrary/manual balances are never bulk-sold.
+                    simulator = get_profile_paper_simulator(profile_id)
+                    profile_lock = get_profile_paper_lock(profile_id)
+                    # Snapshot only the eligible virtual positions while locked.
+                    # Network price/liquidity lookups happen after releasing the lock.
+                    with profile_lock:
                         copied_mints = {
                             order.get("asset_mint")
                             for order in simulator.orders.values()
@@ -1192,35 +1245,68 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             and order.get("status") == "FILLED"
                             and (order.get("details") or {}).get("origin") == "AUTOMATIC_WALLET_COPY"
                         }
+                        position_snapshot = {}
                         for mint in sorted(copied_mints):
                             try:
                                 quantity = Decimal(str(simulator.balances.get(mint, "0")))
                             except Exception:
                                 quantity = Decimal("0")
+                            if quantity.is_finite() and quantity > 0:
+                                position_snapshot[mint] = quantity
+
+                    valid_mints = []
+                    for mint in position_snapshot:
+                        try:
+                            validate_public_address(mint, "token mint")
+                            valid_mints.append(mint)
+                        except ValueError:
+                            skipped.append({
+                                "token": str(mint), "status": "SKIPPED",
+                                "reason": "Token mint is not a valid public Solana address.",
+                            })
+
+                    market_prices = {}
+                    market_price_errors = {}
+                    if valid_mints:
+                        with ThreadPoolExecutor(max_workers=min(6, len(valid_mints))) as pool:
+                            futures = {mint: pool.submit(fetch_market_price, mint) for mint in valid_mints}
+                            for mint, future in futures.items():
+                                try:
+                                    market_prices[mint] = future.result()
+                                except Exception as exc:
+                                    market_price_errors[mint] = type(exc).__name__
+
+                    for mint in valid_mints:
+                        market_price = market_prices.get(mint)
+                        error_type = market_price_errors.get(mint)
+                        if (
+                            not isinstance(market_price, MarketPrice)
+                            or market_price.mint != mint
+                            or str(market_price.currency).upper() != "USD"
+                        ):
+                            reason = (
+                                "Public market-data provider failed (" + error_type + ")."
+                                if error_type else "A fresh verified USD price is unavailable."
+                            )
+                            skipped.append({"token": mint, "status": "SKIPPED", "reason": reason})
+                            continue
+
+                        execution_now = datetime.now(timezone.utc).isoformat()
+                        if not market_price.is_fresh(max_age_seconds=60, now=execution_now):
+                            skipped.append({"token": mint, "status": "SKIPPED", "reason": "A fresh verified USD price is unavailable."})
+                            continue
+                        if market_price.liquidity_usd is None:
+                            skipped.append({"token": mint, "status": "SKIPPED", "reason": "Pool liquidity data is unavailable."})
+                            continue
+                        if market_price.liquidity_age_seconds(execution_now) > 60:
+                            skipped.append({"token": mint, "status": "SKIPPED", "reason": "Pool liquidity data is stale."})
+                            continue
+
+                        # Re-read the balance inside the profile lock because a
+                        # paper fill may have changed the position during lookup.
+                        with profile_lock:
+                            quantity = Decimal(str(simulator.balances.get(mint, "0")))
                             if not quantity.is_finite() or quantity <= 0:
-                                continue
-                            try:
-                                validate_public_address(mint, "token mint")
-                            except ValueError:
-                                skipped.append({"token": str(mint), "status": "SKIPPED", "reason": "Token mint is not a valid public Solana address."})
-                                continue
-                            try:
-                                market_price = fetch_market_price(mint)
-                            except Exception:
-                                market_price = None
-                            if (
-                                not isinstance(market_price, MarketPrice)
-                                or market_price.mint != mint
-                                or str(market_price.currency).upper() != "USD"
-                                or not market_price.is_fresh(max_age_seconds=60, now=now)
-                            ):
-                                skipped.append({"token": mint, "status": "SKIPPED", "reason": "A fresh verified USD price is unavailable."})
-                                continue
-                            if market_price.liquidity_usd is None:
-                                skipped.append({"token": mint, "status": "SKIPPED", "reason": "Pool liquidity data is unavailable."})
-                                continue
-                            if market_price.liquidity_age_seconds(now) > 60:
-                                skipped.append({"token": mint, "status": "SKIPPED", "reason": "Pool liquidity data is stale."})
                                 continue
                             estimated_notional = quantity * market_price.price
                             required_liquidity = max(
@@ -1239,7 +1325,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                 asset_mint=mint,
                                 quantity=format(quantity, "f"),
                                 quote_mint="USD",
-                                created_at=now,
+                                created_at=execution_now,
                                 details={
                                     "origin": "MANUAL_PAPER_SELL_ALL",
                                     "profile_id": profile_id,
@@ -1256,7 +1342,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                 result = simulator.execute_order(
                                     order["order_id"],
                                     market_price,
-                                    now=now,
+                                    now=execution_now,
                                     max_price_age_seconds=60,
                                     slippage_bps=PAPER_SLIPPAGE_BPS,
                                     fee_bps=PAPER_FEE_BPS,
@@ -1495,7 +1581,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if action == "delete":
                     service = profile_monitor_services.get(profile_id)
                     if service is not None:
-                        service.stop_and_wait(timeout=15)
+                        stopped = service.stop_and_wait(timeout=15)
+                        if stopped.get("worker_stopped") is not True:
+                            # Do not archive a profile while one of its scanner
+                            # threads may still be writing its history/ledger.
+                            set_profile_monitor_persistence(profile_id, False)
+                            self.send_json(
+                                409,
+                                {
+                                    "error": "Profile monitoring is still stopping. The profile was not archived; retry after the monitor has stopped.",
+                                    "deleted": False,
+                                    "profile_id": profile_id,
+                                    "worker_stopped": False,
+                                },
+                            )
+                            return
                         profile_monitor_services.pop(profile_id, None)
                     set_profile_monitor_persistence(profile_id, False)
                     store.delete_profile(profile_id)

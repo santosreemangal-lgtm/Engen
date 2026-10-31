@@ -1,5 +1,8 @@
 """Monitor public Solana wallet transactions without submitting trades."""
 
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
+
 from engine.solana_public import DEFAULT_RPC_URL, SolanaRPCError, get_signature_status
 from engine.signature_store import SignatureStore
 from engine.solana_validation import is_valid_solana_address, is_valid_transaction_signature
@@ -17,7 +20,9 @@ def _include_signature_observation(result, item):
         "block_time": item.get("blockTime"),
     }
     if any(value is not None for value in fields.values()):
-        return {**result, "signature_observation": fields}
+        result = {**result, "signature_observation": fields}
+    if item.get("historical_baseline") is True:
+        result = {**result, "historical_baseline": True}
     return result
 
 
@@ -46,6 +51,7 @@ def process_new_signatures(
     store=None,
     defer_processed=False,
     latency_recorder=None,
+    advance_position=True,
 ):
     """Analyze signatures and update persistent processing status."""
 
@@ -54,7 +60,36 @@ def process_new_signatures(
 
     results = []
 
-    for item in signatures:
+    # Fetch transaction payloads concurrently, then apply all SignatureStore
+    # mutations in the original order on this calling thread. getTransaction
+    # accepts one signature per RPC request, so this overlaps bounded requests
+    # rather than relying on provider-specific JSON-RPC batch support.
+    fetch_futures = {}
+    fetchable = [
+        (index, item) for index, item in enumerate(signatures)
+        if isinstance(item, dict)
+        and isinstance(item.get("signature"), str)
+        and item.get("signature", "").strip()
+    ]
+    if fetchable:
+        with ThreadPoolExecutor(
+            max_workers=min(4, len(fetchable)),
+            thread_name_prefix="solana-transaction-fetch",
+        ) as executor:
+            for index, item in fetchable:
+                signature = item["signature"]
+                processor_options = {
+                    "signature": signature,
+                    "rpc_url": rpc_url,
+                    "timeout": timeout,
+                }
+                if latency_recorder is not None:
+                    processor_options["latency_recorder"] = latency_recorder
+                fetch_futures[index] = executor.submit(
+                    process_transaction_signature, **processor_options
+                )
+
+    for index, item in enumerate(signatures):
         if not isinstance(item, dict):
             continue
 
@@ -64,14 +99,7 @@ def process_new_signatures(
             continue
 
         try:
-            processor_options = {
-                "signature": signature,
-                "rpc_url": rpc_url,
-                "timeout": timeout,
-            }
-            if latency_recorder is not None:
-                processor_options["latency_recorder"] = latency_recorder
-            result = process_transaction_signature(**processor_options)
+            result = fetch_futures[index].result()
         except ValueError:
             # Invalid signatures are rejected before any transaction RPC call.
             results.append(_include_signature_observation({
@@ -84,6 +112,7 @@ def process_new_signatures(
             }, item))
             continue
         except SolanaRPCError as exc:
+            provider_code = getattr(exc, "code", None)
             error_result = {
                 "signature": signature,
                 "available": False,
@@ -92,16 +121,25 @@ def process_new_signatures(
                 "error": str(exc),
                 "retryable": True,
             }
+            if isinstance(provider_code, int) and not isinstance(provider_code, bool):
+                error_result["rpc_code"] = provider_code
             if (
                 wallet_address is not None
                 and store is not None
                 and is_valid_transaction_signature(signature)
             ):
+                failure_code = (
+                    "rpc_provider_" + str(provider_code)
+                    if isinstance(provider_code, int) and not isinstance(provider_code, bool)
+                    else type(exc).__name__
+                )
                 failure = store.record_failure(
                     wallet_address, signature, "rpc_fetch",
-                    "rpc_error", str(exc),
+                    failure_code, str(exc),
                 )
                 error_result["processing_status"] = failure["status"]
+                if failure["status"] == "needs_review":
+                    error_result["retryable"] = False
             results.append(_include_signature_observation(error_result, item))
             continue
         except Exception as exc:
@@ -123,6 +161,8 @@ def process_new_signatures(
                     type(exc).__name__, "Transaction interpretation failed.",
                 )
                 error_result["processing_status"] = failure["status"]
+                if failure["status"] == "needs_review":
+                    error_result["retryable"] = False
             results.append(_include_signature_observation(error_result, item))
             continue
 
@@ -179,9 +219,15 @@ def process_new_signatures(
             and item.get("confirmationStatus") not in ("confirmed", "finalized")
         ):
             try:
-                resolved_status = get_signature_status(
-                    signature, rpc_url=rpc_url, timeout=timeout
+                status_timer = (
+                    latency_recorder.measure("transaction.signature_status_rpc")
+                    if latency_recorder is not None
+                    else nullcontext()
                 )
+                with status_timer:
+                    resolved_status = get_signature_status(
+                        signature, rpc_url=rpc_url, timeout=timeout
+                    )
             except SolanaRPCError:
                 resolved_status = None
             if isinstance(resolved_status, dict):
@@ -317,7 +363,9 @@ def process_new_signatures(
             and not defer_processed
         ):
             if result.get("retryable") is not True:
-                store.mark_processed(wallet_address, signature)
+                store.mark_processed(
+                    wallet_address, signature, advance_position=advance_position
+                )
 
         results.append(result)
 
@@ -332,6 +380,7 @@ def monitor_wallet(
     timeout=10,
     defer_processed=False,
     latency_recorder=None,
+    max_pages=100,
 ):
     """Monitor a public wallet and retry pending transactions."""
 
@@ -347,10 +396,17 @@ def monitor_wallet(
         "limit": limit,
         "rpc_url": rpc_url,
         "timeout": timeout,
+        "max_pages": max_pages,
     }
     if latency_recorder is not None:
         signature_options["latency_recorder"] = latency_recorder
     pending_signatures = get_and_store_new_wallet_signatures(**signature_options)
+    scan_progress = store.get_scan_progress(wallet_address)
+    # Treat only the concrete persisted row returned by SignatureStore as
+    # pagination state; test doubles/older adapters may expose dynamic mocks.
+    if not isinstance(scan_progress, dict):
+        scan_progress = None
+    pagination_incomplete = scan_progress is not None
 
     monitor_options = {
         "signatures": pending_signatures,
@@ -359,10 +415,21 @@ def monitor_wallet(
         "wallet_address": wallet_address,
         "store": store,
         "defer_processed": defer_processed,
+        "advance_position": not pagination_incomplete,
     }
     if latency_recorder is not None:
         monitor_options["latency_recorder"] = latency_recorder
-    return process_new_signatures(**monitor_options)
+    results = process_new_signatures(**monitor_options)
+    if pagination_incomplete:
+        results.append({
+            "scan_incomplete": True,
+            "pagination_mode": scan_progress.get("mode"),
+            "pagination_pages_scanned": scan_progress.get("pages_scanned", 0),
+            "pagination_error": scan_progress.get("error") or (
+                "Wallet history is still being backfilled; the saved checkpoint has not been reached."
+            ),
+        })
+    return results
 
 
 if __name__ == "__main__":

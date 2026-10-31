@@ -9,9 +9,12 @@ Engen is a read-only monitoring and research project for public Solana wallet ac
 - **Engine overview:** read-only mode, monitor status, last successful scan, and RPC health.
 - **Wallet watchlist:** add/remove public addresses; address input is validated and the saved list is bounded.
 - **Independent wallet profiles:** each profile stores its own public wallet address, monitored-trader list, settings, stored balance observations, transaction history, and read-only monitor lifecycle.
+  - Profiles can be archived from the selected-profile panel; archiving stops that profile's monitor and preserves its transaction and paper-history records.
 - **Profile paper ledger:** when the paper-only runner is started with a saved profile ID, that profile uses its own persistent virtual balances and paper-trade history; configured position-size and open-position limits are enforced by the simulator.
 - **Transaction history:** paginated records with classification, status, and token-mint filters.
+  - Parsed non-swap activity may be labeled as transfer, staking, account activity, or liquidity activity; ambiguous protocol activity remains unknown and is never promoted to a BUY/SELL candidate.
 - **Paper simulation:** separate simulated balances, orders, fills, and realized P&L; the report reads its database without creating or mutating it.
+  - The History panel offers an opt-in soft sound for newly observed paper fills. Its per-profile fill-ID tracking suppresses duplicate notifications; it does not indicate a live blockchain transaction.
 - **Failure handling:** backend/API failures are surfaced to the UI; no stale transaction-history results should be treated as fresh after a failed request.
 
 ## Run locally
@@ -83,3 +86,18 @@ Live signing and broadcasting are not implemented or authorized. The requirement
 ## Change policy
 
 Preserve working functionality and use small reviewable changes. Do not commit secrets. Keep monitoring read-only and live trading disabled. Do not merge until the relevant checks and deployment assumptions are verified.
+
+
+## Read-only monitor concurrency and latency
+
+The dashboard scans saved public wallets concurrently using a bounded worker pool. The default is four wallet workers; each wallet also fetches up to four transaction metadata records concurrently. Results are committed in their original order so signature-store retry and deduplication behavior remains deterministic. Public `getTransaction` requests remain individual RPC requests because the method accepts one signature per request; bounded concurrency overlaps network wait rather than relying on provider-specific JSON-RPC batching.
+
+The monitor schedules cycles relative to the previous cycle's start time, so a slow scan does not add another full 15-second delay after it completes. Public market-data requests for paper simulation run outside the simulator mutation lock. Profile paper ledgers use profile-scoped locks so one profile's ledger writes do not serialize other profiles.
+
+Latency summaries are exposed by the profile-monitor status API and Dashboard. They include signature-list RPC, transaction RPC, local transaction analysis, history persistence, market-data fetch, paper-order queue, paper simulation, simulator lock wait, per-wallet scan duration, and whole-cycle duration. Timing summaries are local elapsed-time measurements, not blockchain execution latency.
+
+Optional environment settings (also listed in `.env.example`):
+
+- `MONITOR_SCAN_WORKERS`: 1–16, default `4`.
+- `MONITOR_RPC_TIMEOUT_SECONDS`: 1–60, default `10`.
+- `MONITOR_MAX_SIGNATURE_PAGES`: 1–1000 older pages per wallet per scan cycle, default `100`. A scan that has not reached its saved checkpoint is marked incomplete and resumes from its persisted cursor on a later cycle; its checkpoint is not advanced early.

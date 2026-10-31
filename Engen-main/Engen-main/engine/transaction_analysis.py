@@ -8,6 +8,18 @@ WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112"
 PUMP_FUN_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
 NATIVE_SOL_SOURCE = "native_sol"
 
+# Mainnet swap programs whose instructions may contain inner SPL transfers.
+# Match exact program IDs as well as parsed program names: jsonParsed RPC
+# responses do not always supply a human-readable program name.
+RECOGNIZED_SWAP_PROGRAM_IDS = frozenset({
+    "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",  # Jupiter v6
+    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",  # Raydium AMM v4
+    "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",  # Raydium CPMM
+    "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",  # Raydium CLMM
+    "routeUGWgWzqBWFcrCfv8tritsqukccJPu3q5GPP3xS",  # Raydium router
+    "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",  # Orca Whirlpools
+})
+
 # Recognized SPL quote-token mints.
 QUOTE_TOKEN_MINTS = frozenset({
     "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
@@ -699,6 +711,124 @@ def _pumpfun_instruction_context(transaction):
         "quote_mint": pumpfun_instructions[0]["quote_mint"],
     }
 
+def _classify_non_swap_activity(instructions):
+    """Identify only explicit, parsed non-swap activity; never infer trades from it."""
+    if not isinstance(instructions, list) or not instructions:
+        return None
+
+    normalized = []
+    for item in instructions:
+        if not isinstance(item, Mapping):
+            continue
+        program = str(item.get("program") or "").lower().replace("_", "").replace("-", "")
+        program_id = str(item.get("program_id") or "")
+        parsed_type = str(item.get("parsed_type") or "").lower().replace("_", "").replace("-", "")
+        normalized.append((program, program_id, parsed_type))
+
+    liquidity_actions = {
+        "addliquidity", "removeliquidity", "depositliquidity",
+        "withdrawliquidity", "initializepool", "createpool",
+    }
+    liquidity_programs = ("raydium", "orca", "meteora", "lifinity")
+    if any(
+        parsed_type in liquidity_actions
+        and any(marker in program for marker in liquidity_programs)
+        for program, _program_id, parsed_type in normalized
+    ):
+        return {
+            "classification": "LIQUIDITY_OPERATION",
+            "activity_type": "LIQUIDITY_OPERATION",
+            "reason": "A recognized liquidity-pool instruction was found; this is not a BUY/SELL swap candidate.",
+        }
+
+    # A recognized swap/DEX context takes precedence over inner token transfers.
+    # A parsed liquidity action is handled above before the DEX program marker.
+    swap_markers = (
+        "swap", "jupiter", "raydium", "orca", "lifinity",
+        "meteora", "phoenix", "openbook", "pumpfun",
+    )
+    if any(
+        marker in program or marker in parsed_type
+        for program, _program_id, parsed_type in normalized
+        for marker in swap_markers
+    ):
+        return None
+
+    stake_program_id = "Stake11111111111111111111111111111111111111"
+    stake_actions = {
+        "delegate", "deactivate", "withdraw", "split", "merge",
+        "authorize", "initialize", "authorizechecked",
+    }
+    if any(
+        (program == "stake" or program_id == stake_program_id)
+        and parsed_type in stake_actions
+        for program, program_id, parsed_type in normalized
+    ):
+        return {
+            "classification": "UNKNOWN",
+            "activity_type": "STAKING",
+            "reason": "A parsed stake-program instruction was found; this is not classified as a token swap.",
+        }
+
+    known_non_swap_programs = {
+        "system", "spltoken", "token", "spltoken2022",
+        "splassociatedtokenaccount", "computebudget", "memo",
+    }
+    known_non_swap_program_ids = {
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+        "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+    }
+    lifecycle_context_is_unambiguous = all(
+        program in known_non_swap_programs
+        or program_id in known_non_swap_program_ids
+        for program, program_id, _parsed_type in normalized
+    )
+    account_lifecycle = {
+        "createaccount", "createidempotent", "initializeaccount",
+        "initializeaccount2", "initializeaccount3", "closeaccount",
+        "syncnative", "recovernested",
+    }
+    if lifecycle_context_is_unambiguous and any(
+        parsed_type in account_lifecycle
+        or (
+            "associatedtoken" in program
+            and parsed_type in {"create", "createidempotent"}
+        )
+        for program, _program_id, parsed_type in normalized
+    ):
+        return {
+            "classification": "UNKNOWN",
+            "activity_type": "ACCOUNT_ACTIVITY",
+            "reason": "Parsed account creation or token-account lifecycle instructions were found. Associated native SOL movement may represent rent or a transfer; this is not classified as a swap.",
+        }
+
+    transfer_types = {"transfer", "transferchecked", "transfercheckedwithfee"}
+    token_program_ids = {
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        "11111111111111111111111111111111",
+    }
+    transfer_context_is_unambiguous = all(
+        program in known_non_swap_programs or program_id in token_program_ids
+        for program, program_id, _parsed_type in normalized
+    )
+    if transfer_context_is_unambiguous and any(
+        parsed_type in transfer_types
+        and (
+            program in {"system", "spltoken", "token", "spltoken2022"}
+            or program_id in token_program_ids
+        )
+        for program, program_id, parsed_type in normalized
+    ):
+        return {
+            "classification": "TRANSFER",
+            "activity_type": "TRANSFER",
+            "reason": "A parsed System or SPL Token transfer was found without a recognized swap instruction.",
+        }
+
+    return None
+
+
 def classify_transaction(transaction, wallet_address, balance_changes=None):
     """Classify conservatively and return auditable evidence and confidence.
 
@@ -899,11 +1029,23 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
             )
             if value is not None
         )
-        explicit_swap_context = pumpfun_action in ("BUY", "SELL") or any(
-            marker in instruction_text
-            for marker in (
-                "swap", "jupiter", "raydium", "orca", "lifinity",
-                "meteora", "phoenix", "openbook",
+        instruction_program_ids = {
+            instruction.get("program_id")
+            for instruction in instructions
+            if isinstance(instruction.get("program_id"), str)
+        }
+        recognized_swap_program = bool(
+            instruction_program_ids & RECOGNIZED_SWAP_PROGRAM_IDS
+        )
+        explicit_swap_context = (
+            pumpfun_action in ("BUY", "SELL")
+            or recognized_swap_program
+            or any(
+                marker in instruction_text
+                for marker in (
+                    "swap", "jupiter", "raydium", "orca", "lifinity",
+                    "meteora", "phoenix", "openbook",
+                )
             )
         )
         lifecycle_context = any(
@@ -932,9 +1074,32 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
             }
             candidate = False
 
+    if not candidate:
+        non_swap = _classify_non_swap_activity(instructions)
+        if non_swap is not None:
+            signal = {
+                **signal,
+                **non_swap,
+                "asset_mints": [],
+                "quote_mints": [],
+            }
+            has_native_sol_delta = any(
+                item.get("source") == NATIVE_SOL_SOURCE
+                and item.get("raw_delta_amount") not in (None, "0", 0)
+                for item in owned_changes
+            )
+            if non_swap.get("activity_type") == "TRANSFER" and has_native_sol_delta:
+                # Native SOL movement can be a transfer, rent, or account
+                # funding. Retain the descriptive activity tag but do not
+                # elevate it to a definitive transfer classification.
+                signal["classification"] = "UNKNOWN"
+                signal["reason"] += " Native SOL movement is ambiguous and remains UNKNOWN."
+
     signal.update({
         "confidence": "medium" if candidate else "low",
+        "activity_type": signal.get("activity_type", signal.get("classification", "UNKNOWN")),
         "evidence": {
+            "activity_type": signal.get("activity_type", signal.get("classification", "UNKNOWN")),
             "wallet_address": wallet_address,
             "wallet_balance_changes": owned_changes,
             "instruction_context": instructions,

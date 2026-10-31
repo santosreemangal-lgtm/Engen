@@ -34,7 +34,7 @@ class TransactionRPCTests(unittest.TestCase):
         self.assertEqual(result, transaction)
         request = mock_urlopen.call_args.args[0]
         payload = json.loads(request.data.decode("utf-8"))
-        self.assertEqual(payload["params"][1]["maxSupportedTransactionVersion"], 0)
+        self.assertEqual(payload["params"][1]["maxSupportedTransactionVersion"], 1)
 
     @patch("engine.rpc_policy.urllib.request.urlopen")
     def test_returns_none_when_transaction_is_not_found(

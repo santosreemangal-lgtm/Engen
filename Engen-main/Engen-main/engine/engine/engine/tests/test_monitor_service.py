@@ -108,6 +108,75 @@ class MonitorServiceTests(unittest.TestCase):
         self.assertEqual(state["state"], "stale")
         service.stop()
 
+    def test_active_scan_is_not_reported_stale(self):
+        service = MonitorService(lambda address: [], interval=30)
+        old = (datetime.now(timezone.utc) - timedelta(seconds=90)).isoformat()
+        state = service._status_details({
+            "state": "scanning",
+            "last_successful_check": old,
+            "last_error": None,
+            "latest_results": [],
+        })
+        self.assertEqual(state["state"], "scanning")
+        service.stop()
+
+    def test_transaction_rpc_errors_report_degraded_source_quality(self):
+        scan_started = threading.Event()
+
+        def degraded_scan(address):
+            scan_started.set()
+            return [{
+                "signature": "test_signature",
+                "metadata_status": "rpc_error",
+                "rpc_code": -32015,
+                "retryable": True,
+            }]
+
+        service = MonitorService(degraded_scan, interval=30)
+        try:
+            service.start(["11111111111111111111111111111111"])
+            self.assertTrue(scan_started.wait(timeout=3))
+            deadline = time.monotonic() + 3
+            wallet = service.status()["wallets"][0]
+            while time.monotonic() < deadline and wallet["state"] != "connected":
+                time.sleep(0.01)
+                wallet = service.status()["wallets"][0]
+            self.assertEqual(wallet["state"], "connected")
+            self.assertEqual(wallet["source_quality"], "degraded")
+            self.assertEqual(wallet["rpc_error_count"], 1)
+            self.assertIn("-32015", wallet["last_error"])
+        finally:
+            service.stop_and_wait(timeout=3)
+
+    def test_incomplete_pagination_is_not_reported_healthy(self):
+        scan_started = threading.Event()
+
+        def incomplete_scan(address):
+            scan_started.set()
+            return [{
+                "scan_incomplete": True,
+                "pagination_mode": "catchup",
+                "pagination_pages_scanned": 125,
+                "pagination_error": "Saved checkpoint has not been reached.",
+            }]
+
+        service = MonitorService(incomplete_scan, interval=30)
+        try:
+            service.start(["11111111111111111111111111111111"])
+            self.assertTrue(scan_started.wait(timeout=3))
+            deadline = time.monotonic() + 3
+            wallet = service.status()["wallets"][0]
+            while time.monotonic() < deadline and wallet["state"] != "connected":
+                time.sleep(0.01)
+                wallet = service.status()["wallets"][0]
+            self.assertEqual(wallet["state"], "connected")
+            self.assertEqual(wallet["source_quality"], "incomplete")
+            self.assertTrue(wallet["pagination_incomplete"])
+            self.assertEqual(wallet["pagination_pages_scanned"], 125)
+            self.assertIn("checkpoint", wallet["last_error"])
+        finally:
+            service.stop_and_wait(timeout=3)
+
     def test_scan_error_is_recorded(self):
         scan_started = threading.Event()
 
@@ -138,7 +207,7 @@ class MonitorServiceTests(unittest.TestCase):
             self.assertEqual(wallet["state"], "error")
             self.assertEqual(
                 wallet["last_error"],
-                "Monitoring scan failed; sensitive error details are hidden.",
+                "Monitoring scan failed (RuntimeError).",
             )
             self.assertIsNotNone(wallet["last_scan"])
 
@@ -181,6 +250,52 @@ class MonitorServiceTests(unittest.TestCase):
     def test_rejects_interval_below_15_seconds(self):
         with self.assertRaises(ValueError):
             MonitorService(lambda address: [], interval=14)
+
+    def test_wallet_scans_run_concurrently_with_bounded_workers(self):
+        first = "11111111111111111111111111111111"
+        second = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+        both_running = threading.Event()
+        release_scans = threading.Event()
+        state_lock = threading.Lock()
+        active = 0
+        maximum_active = 0
+
+        def concurrent_scan(address):
+            nonlocal active, maximum_active
+            with state_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+                if active >= 2:
+                    both_running.set()
+            release_scans.wait(timeout=3)
+            with state_lock:
+                active -= 1
+            return [{"signature": "result-" + address[:4], "available": True}]
+
+        service = MonitorService(concurrent_scan, interval=30, max_workers=2)
+        try:
+            service.start([first, second])
+            self.assertTrue(
+                both_running.wait(timeout=2),
+                "Both wallet scans should be in progress at the same time.",
+            )
+            self.assertEqual(service.status()["scan_workers"], 2)
+        finally:
+            release_scans.set()
+            service.stop_and_wait(timeout=3)
+
+        self.assertGreaterEqual(maximum_active, 2)
+        states = {item["address"]: item for item in service.status()["wallets"]}
+        self.assertGreater(states[first]["scan_duration_ms"], 0)
+        self.assertGreater(states[second]["scan_duration_ms"], 0)
+        self.assertEqual(states[first]["scan_count"], 1)
+        self.assertEqual(states[second]["scan_count"], 1)
+
+    def test_rejects_invalid_worker_count(self):
+        for workers in (0, -1, 17, True, "2"):
+            with self.subTest(workers=workers):
+                with self.assertRaises(ValueError):
+                    MonitorService(lambda address: [], max_workers=workers)
 
     def test_rejects_non_callable_scan_function(self):
         with self.assertRaises(ValueError):

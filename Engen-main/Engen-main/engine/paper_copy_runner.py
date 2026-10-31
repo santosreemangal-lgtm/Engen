@@ -35,12 +35,22 @@ PAPER_EXECUTION_COST_MULTIPLIER = (
 )
 
 
-def _save_order_reason(simulator, order, reason, execution_state=None):
-    """Persist a visible blocker so the dashboard explains the order state."""
+def _save_order_reason(
+    simulator, order, reason, execution_state=None, *,
+    diagnostic_code=None, next_step=None, error_type=None,
+):
+    """Persist a retry-safe blocker and structured dashboard diagnostics."""
     order["reason"] = reason
     details = dict(order.get("details") or {})
     if execution_state:
         details["execution_state"] = execution_state
+    if diagnostic_code:
+        details["diagnostic_code"] = str(diagnostic_code)[:80]
+    if next_step:
+        details["diagnostic_next_step"] = str(next_step)[:240]
+    if error_type:
+        # Store only the exception class; never persist exception text or secrets.
+        details["diagnostic_error_type"] = str(error_type)[:80]
     order["details"] = details
     persist = getattr(simulator, "_persist", None)
     if callable(persist):
@@ -195,7 +205,11 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                 virtual_cash = Decimal("0")
             if not virtual_cash.is_finite() or virtual_cash <= 0:
                 reason = "Set a positive virtual USD balance before this paper BUY can execute."
-                _save_order_reason(simulator, order, reason, "AWAITING_VIRTUAL_BALANCE")
+                _save_order_reason(
+                    simulator, order, reason, "AWAITING_VIRTUAL_BALANCE",
+                    diagnostic_code="MISSING_VIRTUAL_USD_BALANCE",
+                    next_step="Set a positive virtual USD balance for this profile; the queued paper order will be checked again.",
+                )
                 outcomes.append({
                     "order_id": order.get("order_id"),
                     "signal_id": order.get("signal_id"),
@@ -255,10 +269,18 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                 )
                 if waiting_for_price:
                     reason = "A fresh public USD price for the source quote asset is required to size this mirrored paper BUY."
-                    _save_order_reason(simulator, order, reason, "AWAITING_VERIFIED_MARKET_DATA")
+                    _save_order_reason(
+                        simulator, order, reason, "AWAITING_VERIFIED_MARKET_DATA",
+                        diagnostic_code="SOURCE_QUOTE_USD_PRICE_UNAVAILABLE",
+                        next_step="Wait for a fresh verified USD price for the source quote asset; no estimate is substituted.",
+                    )
                 else:
                     reason = "Paper BUY sizing is unavailable; check the saved copy settings and virtual balance."
-                    _save_order_reason(simulator, order, reason, "AWAITING_VIRTUAL_BALANCE")
+                    _save_order_reason(
+                        simulator, order, reason, "AWAITING_VIRTUAL_BALANCE",
+                        diagnostic_code="BUY_SIZING_UNAVAILABLE",
+                        next_step="Check the profile's virtual USD balance and saved paper sizing settings.",
+                    )
                 outcomes.append({
                     "order_id": order.get("order_id"),
                     "signal_id": order.get("signal_id"),
@@ -275,7 +297,11 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
             target = min(target, maximum_affordable_notional)
             if target <= 0:
                 reason = "The virtual USD balance is too small for this paper BUY."
-                _save_order_reason(simulator, order, reason, "AWAITING_VIRTUAL_BALANCE")
+                _save_order_reason(
+                    simulator, order, reason, "AWAITING_VIRTUAL_BALANCE",
+                    diagnostic_code="INSUFFICIENT_VIRTUAL_USD_BALANCE",
+                    next_step="Add or set enough virtual USD balance for the configured paper size and simulated costs.",
+                )
                 outcomes.append({
                     "order_id": order.get("order_id"),
                     "signal_id": order.get("signal_id"),
@@ -300,11 +326,15 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                     "The source SELL fraction is missing or invalid; this paper order "
                     "failed validation and was closed without a simulated fill."
                 )
-                failure = simulator._reject(order, reason)
+                failure = simulator._reject(
+                    order, reason, "INVALID_SOURCE_SELL_FRACTION",
+                    "The source transaction's asset reduction could not be converted into a valid fraction; review the source balance metadata.",
+                )
                 outcomes.append({
                     "order_id": order.get("order_id"),
                     "signal_id": order.get("signal_id"),
                     "status": failure.get("status", "REJECTED"),
+                    "diagnostic_code": failure.get("diagnostic_code"),
                     "reason": reason,
                 })
                 continue
@@ -314,7 +344,11 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                         "An earlier copied BUY for this token is still unresolved; "
                         "this SELL will retry after that BUY is either filled or rejected."
                     )
-                    _save_order_reason(simulator, order, reason, "WAITING_FOR_POSITION")
+                    _save_order_reason(
+                        simulator, order, reason, "WAITING_FOR_POSITION",
+                        diagnostic_code="WAITING_FOR_PRIOR_PAPER_BUY",
+                        next_step="This SELL will be rechecked after its earlier paper BUY is resolved; no position is invented.",
+                    )
                     outcomes.append({
                         "order_id": order.get("order_id"),
                         "signal_id": order.get("signal_id"),
@@ -327,27 +361,51 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                         "the SELL failed because the paper account has no position. "
                         "No simulated fill was created."
                     )
-                    failure = simulator._reject(order, reason)
+                    failure = simulator._reject(
+                        order, reason, "NO_SIMULATED_POSITION",
+                        "A SELL can only be simulated against an existing virtual token balance. A prior copied BUY must fill first, or the profile must already contain a verified simulated position.",
+                    )
                     outcomes.append({
                         "order_id": order.get("order_id"),
                         "signal_id": order.get("signal_id"),
                         "status": failure.get("status", "REJECTED"),
+                        "diagnostic_code": failure.get("diagnostic_code"),
                         "reason": reason,
                     })
                 continue
             order["quantity"] = str(owned_quantity * sell_fraction)
             simulator._persist(order)
+        price_provider_error = None
         try:
             market_price = price_provider(order.get("asset_mint"))
-        except Exception:
+        except Exception as exc:
             market_price = None
+            price_provider_error = type(exc).__name__
         if market_price is None:
-            reason = "No usable public USD price/liquidity snapshot; order remains queued for retry."
-            _save_order_reason(simulator, order, reason, "WAITING_FOR_MARKET_DATA")
+            if price_provider_error:
+                reason = (
+                    "The public market-data provider raised "
+                    + price_provider_error
+                    + "; this order remains queued and no simulated fill was recorded."
+                )
+                diagnostic_code = "MARKET_DATA_PROVIDER_ERROR"
+            else:
+                reason = (
+                    "No usable public USD price/liquidity snapshot was returned "
+                    "for this asset; the order remains queued and no simulated fill was recorded."
+                )
+                diagnostic_code = "ASSET_USD_PRICE_UNAVAILABLE"
+            _save_order_reason(
+                simulator, order, reason, "WAITING_FOR_MARKET_DATA",
+                diagnostic_code=diagnostic_code,
+                next_step="Check public market-data availability and wait for a fresh USD price plus pool-liquidity snapshot.",
+                error_type=price_provider_error,
+            )
             outcomes.append({
                 "order_id": order.get("order_id"),
                 "signal_id": order.get("signal_id"),
                 "status": "WAITING_FOR_MARKET_DATA",
+                "diagnostic_code": diagnostic_code,
                 "reason": reason,
             })
             continue
@@ -380,13 +438,25 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                 max_liquidity_age_seconds=60,
                 require_liquidity=True,
             )
-        except Exception:
-            reason = "Paper execution failed validation; no simulated fill was recorded. The order will be retried."
-            _save_order_reason(simulator, order, reason, "EXECUTION_ERROR")
+        except Exception as exc:
+            error_type = type(exc).__name__
+            reason = (
+                "The paper simulator raised "
+                + error_type
+                + "; no simulated fill was recorded. The order remains queued for diagnosis and retry."
+            )
+            _save_order_reason(
+                simulator, order, reason, "EXECUTION_ERROR",
+                diagnostic_code="PAPER_SIMULATOR_EXCEPTION",
+                next_step="Inspect the server-side paper-simulator logs for this error type before retrying.",
+                error_type=error_type,
+            )
             outcomes.append({
                 "order_id": order.get("order_id"),
                 "signal_id": order.get("signal_id"),
                 "status": "EXECUTION_ERROR",
+                "diagnostic_code": "PAPER_SIMULATOR_EXCEPTION",
+                "error_type": error_type,
                 "reason": reason,
             })
             continue
@@ -437,6 +507,9 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
 
     for result in results:
         if not isinstance(result, dict):
+            continue
+        # First-run history is informational only and must never create an order.
+        if result.get("historical_baseline") is True:
             continue
         signature = result.get("signature")
         observation = result.get("signature_observation")

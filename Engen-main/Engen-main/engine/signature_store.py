@@ -51,6 +51,10 @@ class SignatureStore:
                         "PRAGMA table_info(seen_signatures)"
                     ).fetchall()
                 }
+                # The original legacy schema had no processing status. Keep its
+                # historical default behavior; replay only databases that already
+                # tracked processed signatures before the historical-baseline fix.
+                had_processing_status = "status" in columns
 
                 migrations = {
                     "status": "TEXT NOT NULL DEFAULT 'processed'",
@@ -60,6 +64,7 @@ class SignatureStore:
                     "error_stage": "TEXT",
                     "error_code": "TEXT",
                     "error_message": "TEXT",
+                    "historical_baseline": "INTEGER NOT NULL DEFAULT 0",
                 }
                 for column, definition in migrations.items():
                     if column not in columns:
@@ -78,6 +83,20 @@ class SignatureStore:
                 """)
 
                 connection.execute("""
+                    CREATE TABLE IF NOT EXISTS wallet_scan_progress (
+                        wallet_address TEXT PRIMARY KEY,
+                        mode TEXT NOT NULL CHECK(mode IN ('baseline','catchup')),
+                        anchor_signature TEXT,
+                        newest_signature TEXT,
+                        newest_slot INTEGER,
+                        next_before_signature TEXT,
+                        pages_scanned INTEGER NOT NULL DEFAULT 0,
+                        error TEXT,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                connection.execute("""
                     CREATE TABLE IF NOT EXISTS transaction_records (
                         wallet_address TEXT NOT NULL,
                         signature TEXT NOT NULL,
@@ -87,6 +106,31 @@ class SignatureStore:
                         PRIMARY KEY (wallet_address, signature)
                     )
                 """)
+
+                # Older versions marked the initial wallet baseline processed
+                # without fetching or persisting its transaction payloads.
+                # Re-queue those entries exactly once for historical analysis;
+                # the durable flag keeps them excluded from paper-copy orders.
+                if had_processing_status:
+                    connection.execute("""
+                        UPDATE seen_signatures
+                        SET historical_baseline = 1,
+                            status = 'pending',
+                            last_checked_at = NULL,
+                            error_stage = NULL,
+                            error_code = NULL,
+                            error_message = NULL
+                        WHERE status = 'processed'
+                          AND historical_baseline = 0
+                          AND wallet_address IN (
+                              SELECT wallet_address FROM wallet_baselines
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM transaction_records tr
+                              WHERE tr.wallet_address = seen_signatures.wallet_address
+                                AND tr.signature = seen_signatures.signature
+                          )
+                    """)
                 pruned = self._prune_transaction_records(
                     connection, limit=MAX_RAW_TRANSACTION_RECORDS_PER_WALLET
                 )
@@ -215,27 +259,46 @@ class SignatureStore:
 
         return row[0] if row else None
 
-    def save(self, wallet_address, signature, slot=None):
+    def save(self, wallet_address, signature, slot=None, historical_baseline=False):
         self._validate_wallet(wallet_address)
         self._validate_signature(signature)
         if slot is not None and (
             not isinstance(slot, int) or isinstance(slot, bool) or slot < 0
         ):
             raise ValueError("Slot must be a non-negative integer.")
+        if not isinstance(historical_baseline, bool):
+            raise ValueError("historical_baseline must be a boolean.")
 
         with closing(self._connect()) as connection:
             with connection:
                 cursor = connection.execute(
                     """
                     INSERT OR IGNORE INTO seen_signatures
-                        (wallet_address, signature, status, slot)
-                    VALUES (?, ?, 'pending', ?)
+                        (wallet_address, signature, status, slot, historical_baseline)
+                    VALUES (?, ?, 'pending', ?, ?)
                     """,
-                    (wallet_address, signature, slot),
+                    (wallet_address, signature, slot, int(historical_baseline)),
                 )
                 saved = cursor.rowcount == 1
+                if historical_baseline:
+                    connection.execute(
+                        """UPDATE seen_signatures SET historical_baseline=1
+                           WHERE wallet_address=? AND signature=?""",
+                        (wallet_address, signature),
+                    )
 
         return saved
+
+    def is_historical_baseline(self, wallet_address, signature):
+        self._validate_wallet(wallet_address)
+        self._validate_signature(signature)
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT historical_baseline FROM seen_signatures
+                   WHERE wallet_address=? AND signature=?""",
+                (wallet_address, signature),
+            ).fetchone()
+        return bool(row and row[0])
 
     def save_many(self, wallet_address, signatures):
         saved = 0
@@ -246,7 +309,7 @@ class SignatureStore:
 
         return saved
 
-    def mark_processed(self, wallet_address, signature):
+    def mark_processed(self, wallet_address, signature, *, advance_position=True):
         self._validate_wallet(wallet_address)
         self._validate_signature(signature)
 
@@ -272,10 +335,13 @@ class SignatureStore:
                        WHERE wallet_address = ? AND signature = ?""",
                     (wallet_address, signature),
                 )
-                position = connection.execute(
-                    "SELECT slot FROM seen_signatures WHERE wallet_address = ? AND signature = ?",
-                    (wallet_address, signature),
-                ).fetchone()
+                position = (
+                    connection.execute(
+                        "SELECT slot FROM seen_signatures WHERE wallet_address = ? AND signature = ?",
+                        (wallet_address, signature),
+                    ).fetchone()
+                    if advance_position else None
+                )
                 if position and position[0] is not None:
                     connection.execute(
                         """INSERT INTO wallet_positions (wallet_address, slot, signature)
@@ -413,7 +479,7 @@ class SignatureStore:
                 FROM seen_signatures
                 WHERE wallet_address = ?
                   AND status = 'pending'
-                ORDER BY first_seen_at ASC
+                ORDER BY first_seen_at ASC, rowid ASC
                 LIMIT ?
                 """,
                 (wallet_address, limit),
@@ -432,6 +498,92 @@ class SignatureStore:
         if row is None:
             return None
         return {"slot": row[0], "signature": row[1], "updated_at": row[2]}
+
+    def get_scan_progress(self, wallet_address):
+        self._validate_wallet(wallet_address)
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT mode, anchor_signature, newest_signature, newest_slot,
+                          next_before_signature, pages_scanned, error, updated_at
+                   FROM wallet_scan_progress WHERE wallet_address=?""",
+                (wallet_address,),
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(zip(
+            ("mode", "anchor_signature", "newest_signature", "newest_slot",
+             "next_before_signature", "pages_scanned", "error", "updated_at"),
+            row,
+        ))
+
+    def save_scan_progress(
+        self, wallet_address, *, mode, anchor_signature,
+        newest_signature, newest_slot, next_before_signature,
+        pages_scanned, error=None,
+    ):
+        self._validate_wallet(wallet_address)
+        if mode not in ("baseline", "catchup"):
+            raise ValueError("Scan progress mode must be baseline or catchup.")
+        self._validate_signature(next_before_signature)
+        if newest_signature is not None:
+            self._validate_signature(newest_signature)
+        if newest_slot is not None and (
+            not isinstance(newest_slot, int) or isinstance(newest_slot, bool)
+            or newest_slot < 0
+        ):
+            raise ValueError("Newest slot must be a non-negative integer.")
+        if not isinstance(pages_scanned, int) or isinstance(pages_scanned, bool) or pages_scanned < 0:
+            raise ValueError("pages_scanned must be a non-negative integer.")
+        safe_error = error[:240] if isinstance(error, str) else None
+        with closing(self._connect()) as connection:
+            with connection:
+                connection.execute(
+                    """INSERT INTO wallet_scan_progress
+                       (wallet_address,mode,anchor_signature,newest_signature,
+                        newest_slot,next_before_signature,pages_scanned,error)
+                       VALUES (?,?,?,?,?,?,?,?)
+                       ON CONFLICT(wallet_address) DO UPDATE SET
+                         mode=excluded.mode,
+                         anchor_signature=excluded.anchor_signature,
+                         newest_signature=excluded.newest_signature,
+                         newest_slot=excluded.newest_slot,
+                         next_before_signature=excluded.next_before_signature,
+                         pages_scanned=excluded.pages_scanned,
+                         error=excluded.error,
+                         updated_at=CURRENT_TIMESTAMP""",
+                    (wallet_address, mode, anchor_signature, newest_signature,
+                     newest_slot, next_before_signature, pages_scanned, safe_error),
+                )
+        return True
+
+    def clear_scan_progress(self, wallet_address):
+        self._validate_wallet(wallet_address)
+        with closing(self._connect()) as connection:
+            with connection:
+                cursor = connection.execute(
+                    "DELETE FROM wallet_scan_progress WHERE wallet_address=?",
+                    (wallet_address,),
+                )
+        return cursor.rowcount > 0
+
+    def set_position(self, wallet_address, slot, signature):
+        self._validate_wallet(wallet_address)
+        self._validate_signature(signature)
+        if not isinstance(slot, int) or isinstance(slot, bool) or slot < 0:
+            raise ValueError("Position slot must be a non-negative integer.")
+        with closing(self._connect()) as connection:
+            with connection:
+                connection.execute(
+                    """INSERT INTO wallet_positions(wallet_address,slot,signature)
+                       VALUES(?,?,?)
+                       ON CONFLICT(wallet_address) DO UPDATE SET
+                         slot=excluded.slot, signature=excluded.signature,
+                         updated_at=CURRENT_TIMESTAMP
+                       WHERE wallet_positions.slot IS NULL
+                          OR excluded.slot >= wallet_positions.slot""",
+                    (wallet_address, slot, signature),
+                )
+        return self.get_position(wallet_address)
 
     def get_seen_signatures(self, wallet_address, limit=1000):
         if not isinstance(limit, int) or isinstance(limit, bool):

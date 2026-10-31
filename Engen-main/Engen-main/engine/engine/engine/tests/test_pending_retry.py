@@ -5,8 +5,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from engine.signature_store import SignatureStore
-from engine.solana_public import SolanaRPCError
-from engine.transaction_monitor import monitor_wallet
+from engine.solana_public import SolanaRPCError, SolanaRPCProviderError
+from engine.transaction_monitor import monitor_wallet, process_new_signatures
 
 
 class PendingRetryTests(unittest.TestCase):
@@ -32,7 +32,6 @@ class PendingRetryTests(unittest.TestCase):
             ) as mock_process,
         ):
             mock_get_signatures.side_effect = [
-                [{"signature": "1111111111111111111111111111111111111111111111111111111111111112"}],
                 [{"signature": signature}],
                 [{"signature": signature}],
                 [{"signature": signature}],
@@ -51,51 +50,50 @@ class PendingRetryTests(unittest.TestCase):
                 },
             ]
 
-            # First scan establishes the historical baseline.
-            first_result = monitor_wallet(
-                self.wallet,
-                store=self.store,
-            )
+            # The first scan analyzes the historical baseline for History.
+            # Its result remains pending when transaction metadata is unavailable.
+            first_result = monitor_wallet(self.wallet, store=self.store)
+            self.assertEqual(len(first_result), 1)
+            self.assertTrue(first_result[0]["historical_baseline"])
+            self.assertFalse(first_result[0]["available"])
+            self.assertTrue(first_result[0]["retryable"])
+            self.assertEqual(self.store.get_status(self.wallet, signature), "pending")
+            self.assertEqual(mock_process.call_count, 1)
 
-            self.assertEqual(first_result, [])
-            self.assertEqual(mock_process.call_count, 0)
-
-            # Second scan finds the new signature, but its transaction
-            # data is temporarily unavailable.
-            second_result = monitor_wallet(
-                self.wallet,
-                store=self.store,
-            )
-
+            # The next scan retries the same historical signature.
+            second_result = monitor_wallet(self.wallet, store=self.store)
             self.assertEqual(len(second_result), 1)
-            self.assertFalse(second_result[0]["available"])
-            self.assertTrue(second_result[0]["retryable"])
-            self.assertEqual(
-                self.store.get_status(self.wallet, signature),
-                "pending",
-            )
+            self.assertTrue(second_result[0]["available"])
+            self.assertTrue(second_result[0]["historical_baseline"])
+            self.assertEqual(self.store.get_status(self.wallet, signature), "processed")
 
-            # Third scan retries the pending signature.
-            third_result = monitor_wallet(
-                self.wallet,
-                store=self.store,
-            )
-
-            self.assertEqual(len(third_result), 1)
-            self.assertTrue(third_result[0]["available"])
-            self.assertEqual(
-                self.store.get_status(self.wallet, signature),
-                "processed",
-            )
-
-            # Fourth scan must not process the same signature again.
-            fourth_result = monitor_wallet(
-                self.wallet,
-                store=self.store,
-            )
-
-            self.assertEqual(fourth_result, [])
+            # A completed historical signature is not analyzed again.
+            third_result = monitor_wallet(self.wallet, store=self.store)
+            self.assertEqual(third_result, [])
             self.assertEqual(mock_process.call_count, 2)
+
+    def test_provider_error_stops_after_five_attempts_and_needs_review(self):
+        signature = "1" * 64
+
+        with patch(
+            "engine.transaction_monitor.process_transaction_signature",
+            side_effect=SolanaRPCProviderError(-32015),
+        ):
+            for attempt in range(5):
+                result = process_new_signatures(
+                    [{"signature": signature}],
+                    wallet_address=self.wallet,
+                    store=self.store,
+                )[0]
+                if attempt < 4:
+                    self.assertTrue(result["retryable"])
+                    self.assertEqual(result["processing_status"], "pending")
+
+        self.assertFalse(result["retryable"])
+        self.assertEqual(result["rpc_code"], -32015)
+        self.assertEqual(result["processing_status"], "needs_review")
+        self.assertEqual(self.store.get_status(self.wallet, signature), "needs_review")
+        self.assertEqual(self.store.get_pending_signatures(self.wallet), [])
 
     def test_rpc_error_keeps_signature_pending_for_retry(self):
         signature = "1111111111111111111111111111111111111111111111111111111111111114"

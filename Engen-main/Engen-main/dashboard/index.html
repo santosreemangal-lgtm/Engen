@@ -778,6 +778,9 @@ async function loadPaperTradeHistory(reportOverride){
    typeof fill.asset_mint==="string"&&
    typeof fill.quantity==="string"&&
    typeof fill.execution_price==="string"&&
+   typeof fill.gross_quote==="string"&&
+   typeof fill.side==="string"&&
+   ["BUY","SELL"].includes(fill.side)&&
    typeof fill.created_at==="string"
   ).sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
   if(fillsBaselineProfile!==selectedProfile){

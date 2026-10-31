@@ -223,6 +223,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 const $ = id => document.getElementById(id);
 let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, currentMonitorWallets = [], balanceInputDirty = false, balanceSaveInProgress = false;
 let fillsBaselineProfile = "", knownFillIds = new Set();
+let profileEventController = null, profileEventStreamProfile = "";
 const headers = {"Content-Type":"application/json"};
 function apiRequestHeaders(extra={}) {
   let token = "";
@@ -392,6 +393,78 @@ async function loadMonitor(){
   else{say("monitor-message","Ready. Start Monitoring will check the selected public source wallets only.");}
  }catch(e){currentMonitor=false;currentMonitorWallets=[];renderWallets();say("monitor-state","Status unavailable");$("start-monitoring").disabled=true;$("stop-monitoring").disabled=true;say("monitor-message","Could not verify monitor status: "+e.message);}
 }
+function handleProfileMonitorEvent(event, profileId) {
+ if(profileId!==selectedProfile) return;
+ if(!event||!["wallet_scan_complete","wallet_scan_error"].includes(event.type)) return;
+ // The scan function returns only after verified paper orders have been queued
+ // and the paper simulator has attempted any eligible fills.
+ void Promise.allSettled([
+  loadMonitor(),
+  loadTransactionHistory(),
+  loadPaperTradeHistory(null),
+  loadPortfolioForProfile()
+ ]);
+}
+function stopProfileEventStream() {
+ if(profileEventController) profileEventController.abort();
+ profileEventController=null;
+ profileEventStreamProfile="";
+}
+async function startProfileEventStream() {
+ const profileId=selectedProfile;
+ if(!backendReady||!profileId) {
+  stopProfileEventStream();
+  return;
+ }
+ if(profileEventController&&!profileEventController.signal.aborted&&profileEventStreamProfile===profileId) return;
+ stopProfileEventStream();
+ const controller=new AbortController();
+ profileEventController=controller;
+ profileEventStreamProfile=profileId;
+ let retryMs=500;
+ while(!controller.signal.aborted&&selectedProfile===profileId) {
+  try {
+   const response=await fetch("/api/profile-events?profile_id="+encodeURIComponent(profileId),{
+    method:"GET",
+    headers:apiRequestHeaders({"Accept":"text/event-stream"}),
+    cache:"no-store",
+    signal:controller.signal
+   });
+   if(!response.ok||!response.body) throw new Error("Dashboard event stream unavailable ("+response.status+").");
+   retryMs=500;
+   const reader=response.body.getReader();
+   const decoder=new TextDecoder();
+   let buffer="";
+   while(!controller.signal.aborted) {
+    const chunk=await reader.read();
+    if(chunk.done) break;
+    buffer+=decoder.decode(chunk.value,{stream:true});
+    buffer=buffer.replace(/\r\n/g,"\n");
+    let boundary;
+    while((boundary=buffer.indexOf("\n\n"))>=0) {
+     const frame=buffer.slice(0,boundary);
+     buffer=buffer.slice(boundary+2);
+     const data=frame.split("\n").filter(line=>line.startsWith("data:")).map(line=>line.slice(5).trim()).join("\n");
+     if(!data) continue;
+     try { handleProfileMonitorEvent(JSON.parse(data),profileId); }
+     catch { /* Ignore malformed event frames and keep the stream alive. */ }
+    }
+   }
+   try { reader.releaseLock(); } catch {}
+  } catch(error) {
+   if(controller.signal.aborted) break;
+  }
+  if(!controller.signal.aborted&&selectedProfile===profileId) {
+   await new Promise(resolve=>setTimeout(resolve,retryMs));
+   retryMs=Math.min(retryMs*2,5000);
+  }
+ }
+ if(profileEventController===controller) {
+  profileEventController=null;
+  profileEventStreamProfile="";
+ }
+}
+
 async function loadProfiles(){
  try{
   const d=await api("/api/profiles");profiles=Array.isArray(d.profiles)?d.profiles:[];
@@ -399,7 +472,7 @@ async function loadProfiles(){
   profiles.forEach(p=>{const o=document.createElement("option");o.value=p.profile_id;o.textContent=p.name+(p.destination_public_address?" · "+p.destination_public_address.slice(0,6)+"…":"");sel.append(o);});
   if(selectedProfile&&profiles.some(p=>p.profile_id===selectedProfile))sel.value=selectedProfile;else{selectedProfile=profiles[0]?.profile_id||"";sel.value=selectedProfile;}
    renderProfileCards();
-  renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();renderWallets();if($("history-details").open)await loadHistory();
+  renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();renderWallets();if($("history-details").open)await loadHistory();void startProfileEventStream();
  }catch(e){say("wallet-message","Profiles unavailable: "+e.message);}
 }
 function renderProfileCards(){const host=$("profile-cards");host.replaceChildren();if(!profiles.length){const p=document.createElement("p");p.className="empty";p.textContent="No paper profile yet. Create one to organize the public wallets you want to monitor.";host.append(p);}profiles.forEach(p=>{const card=document.createElement("button");card.type="button";card.className="profile-card";card.setAttribute("aria-pressed",String(p.profile_id===selectedProfile));const name=document.createElement("span");name.className="card-name";name.textContent=p.name||"Paper profile";const address=document.createElement("span");address.className="card-address";address.textContent="Paper-only · no personal wallet required";const meta=document.createElement("span");meta.className="card-meta";const state=document.createElement("span");state.textContent=(p.status||"disabled").toUpperCase();const count=document.createElement("span");count.textContent=(p.source_wallets||[]).length+" source wallet(s)";meta.append(state,count);card.append(name,address,meta);card.addEventListener("click",async()=>{if(balanceInputDirty&&selectedProfile!==p.profile_id&&!confirm("Discard the unsaved virtual balance change before switching profiles?"))return;balanceInputDirty=false;selectedProfile=p.profile_id;$("profile-select").value=selectedProfile;await loadProfiles();if($("history-details").open)await loadHistory();});host.append(card);});$("create-profile").disabled=profiles.length>=3;$("create-profile").title=profiles.length>=3?"Maximum of 3 paper profiles reached":"";const p=selected();$("detail-profile-title").textContent=p?p.name:"Select a paper profile";$("detail-profile-subtitle").textContent=p?(p.source_wallets||[]).length+" public source wallet(s) assigned":"Create a profile to group source wallets.";$("detail-profile-status").textContent=p?(p.status||"disabled").toUpperCase():"No selection";$("selected-profile-detail").classList.toggle("hidden",!p);$("activate-profile").disabled=!p||String(p.status||"").toLowerCase()==="active";}
@@ -462,7 +535,7 @@ document.querySelectorAll('input[name="sizing"]').forEach(x=>x.addEventListener(
 $("wallet-form").addEventListener("submit",async e=>{e.preventDefault();const address=$("wallet-address").value.trim();if(!selectedProfile){say("wallet-message","Create or select a paper profile before adding a public source wallet.");return;}try{await post("/api/wallets",{action:"add",address});await post("/api/profiles",{action:"associate-source-wallet",profile_id:selectedProfile,wallet_address:address});$("wallet-address").value="";say("wallet-message","Public source wallet saved and associated with the selected paper profile.");await loadWallets();}catch(err){say("wallet-message","Source wallet was not fully added: "+err.message+" Refresh the wallet list and verify the association.");await loadProfiles();}});
 $("create-profile").addEventListener("click",()=>{if(profiles.length>=3){say("profile-card-message","You can create up to 3 paper profiles.");return;} $("profile-form").classList.toggle("hidden");});$("cancel-create-profile").addEventListener("click",()=>$("profile-form").classList.add("hidden"));
 $("profile-form").addEventListener("submit",async e=>{e.preventDefault();if(profiles.length>=3){say("wallet-message","Maximum of 3 paper profiles reached.");return;}try{const d=await post("/api/profiles",{action:"create",name:$("profile-name").value.trim(),destination_public_address:null,settings:{paper_trading:{copy_side:"BOTH",sizing_mode:"SOURCE_PERCENT",sizing_value:"5"}}});selectedProfile=d.profile.profile_id;$("profile-name").value="";$("profile-form").classList.add("hidden");say("wallet-message","Paper profile created. Activate it, then start read-only monitoring when ready.");await loadProfiles();$("profile-select").value=selectedProfile;}catch(err){say("wallet-message",err.message);}});
-$("profile-select").addEventListener("change",async()=>{selectedProfile=$("profile-select").value;renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();if($("history-details").open)loadHistory();renderWallets();});
+$("profile-select").addEventListener("change",async()=>{selectedProfile=$("profile-select").value;renderDirectionFromProfile();await loadPortfolioForProfile();await loadMonitor();if($("history-details").open)loadHistory();renderWallets();void startProfileEventStream();});
 $("virtual-balance-value").addEventListener("input",()=>{
  balanceInputDirty=true;
  say("virtual-balance-message","Unsaved change. Press Confirm Balance to save this amount.");
@@ -798,13 +871,14 @@ setInterval(async()=> {
   finally { portfolioRefreshInProgress = false; }
 },5000);
 
-// Monitoring status and on-chain history need less frequent refreshes.
+// Event stream updates history immediately after each completed wallet scan.
+ // This slow refresh is only a recovery path if the event connection is interrupted.
 let refreshInProgress = false;
 setInterval(async()=> {
   if(!backendReady || refreshInProgress) return;
   refreshInProgress = true;
   try { await Promise.all([loadMonitor(), loadTransactionHistory(), loadPaperTradeHistory(null)]); }
   finally { refreshInProgress = false; }
-},15000);
+},60000);
 setInterval(loadRpcHealth,30000);
 </script></body></html>

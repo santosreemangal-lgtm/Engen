@@ -211,7 +211,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </section>
 <section id="paper-history-panel" class="history-subpanel hidden" role="tabpanel" aria-labelledby="paper-history-tab">
  <div class="history-overview"><div><strong id="paper-trade-total">—</strong><span>completed paper trades</span><small id="paper-fill-total">0 completed fills</small></div><p class="hint">Virtual simulation only. No wallet signing or blockchain transaction is performed.</p></div>
- <div class="history-table-wrap"><table class="history-table"><thead><tr><th>Created</th><th>Side</th><th>Token mint</th><th>Quantity</th><th>Cash flow / price</th><th>Fill status</th><th>Source transaction</th></tr></thead><tbody id="paper-trade-history-table"><tr><td colspan="7" class="history-empty">Select a profile to load paper trades.</td></tr></tbody></table></div>
+ <div class="history-table-wrap"><table class="history-table"><thead><tr><th>Filled at</th><th>Side</th><th>Token mint</th><th>Quantity</th><th>Cash flow / price</th><th>Fill status</th><th>Source transaction</th></tr></thead><tbody id="paper-trade-history-table"><tr><td colspan="7" class="history-empty">Select a profile to load paper trades.</td></tr></tbody></table></div>
  <p id="paper-trade-history-message" class="message" role="status"></p>
 </section>
 </details>
@@ -595,6 +595,15 @@ function historyDate(value){
  const date=new Date(value);return Number.isNaN(date.getTime())?String(value):date.toLocaleString();
 }
 function historyAmount(value){return compactNumber(value);}
+function exactHistoryAmount(value){
+ if(value===null||value===undefined||value==="")return "—";
+ const raw=String(value).trim();
+ const match=raw.match(/^([+-]?)(\d+)(?:\.(\d+))?$/);
+ if(!match)return raw;
+ const whole=match[2].replace(/\B(?=(\d{3})+(?!\d))/g,",");
+ const fraction=(match[3]||"").replace(/0+$/,"");
+ return match[1]+whole+(fraction?"."+fraction:"");
+}
 function historyShortAddress(value){
  if(!value)return "—";const text=String(value);
  return text.length>16?text.slice(0,7)+"…"+text.slice(-6):text;
@@ -806,18 +815,18 @@ async function loadPaperTradeHistory(reportOverride){
    const sideCell=document.createElement("td");
    sideCell.append(historyPill(side,side==="BUY"?"buy":"sell"));row.append(sideCell);
    row.append(makeHistoryTokenCell(fill.asset_mint));
-   const quantityCell=historyCell(row,historyAmount(fill.quantity));
+   const quantityCell=historyCell(row,exactHistoryAmount(fill.quantity));
    quantityCell.title="Exact filled quantity: "+String(fill.quantity);
    const notionalCell=document.createElement("td");
    const cashFlow=fill.net_quote===null||fill.net_quote===undefined?fill.gross_quote:fill.net_quote;
    const gross=document.createElement("span");gross.className="history-main";
-   gross.textContent=(side==="BUY"?"Spent $":"Received $")+historyAmount(cashFlow);
+   gross.textContent=(side==="BUY"?"Spent $":"Received $")+exactHistoryAmount(cashFlow);
    gross.title=(side==="BUY"?"Exact simulated cash debit: $":"Exact simulated cash credit: $")+String(cashFlow);
    const price=document.createElement("small");price.className="history-sub";
    const costDetails=[];
-   if(fill.fee!==null&&fill.fee!==undefined)costDetails.push("Fee $"+historyAmount(fill.fee));
-   if(fill.network_cost!==null&&fill.network_cost!==undefined)costDetails.push("Network $"+historyAmount(fill.network_cost));
-   price.textContent="Gross $"+historyAmount(fill.gross_quote)+" · Price $"+historyAmount(fill.execution_price)+(costDetails.length?" · "+costDetails.join(" · "):"");
+   if(fill.fee!==null&&fill.fee!==undefined)costDetails.push("Fee $"+exactHistoryAmount(fill.fee));
+   if(fill.network_cost!==null&&fill.network_cost!==undefined)costDetails.push("Network $"+exactHistoryAmount(fill.network_cost));
+   price.textContent="Gross $"+exactHistoryAmount(fill.gross_quote)+" · Price $"+exactHistoryAmount(fill.execution_price)+(costDetails.length?" · "+costDetails.join(" · "):"");
    price.title="Gross quote: "+String(fill.gross_quote)+"; execution price: "+String(fill.execution_price);
    notionalCell.append(gross,price);row.append(notionalCell);
    const stateCell=document.createElement("td");

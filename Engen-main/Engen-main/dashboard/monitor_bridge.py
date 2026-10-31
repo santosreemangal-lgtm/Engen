@@ -113,6 +113,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 "rpc_code": item.get("rpc_code") if isinstance(item.get("rpc_code"), int) and not isinstance(item.get("rpc_code"), bool) else None,
                 "confirmation_status": confirmation,
                 "classification_reason": str(signal.get("reason", ""))[:400],
+                "activity_type": str(signal.get("activity_type", classification))[:60],
                 "confidence": str(signal.get("confidence", "unknown"))[:40],
                 "historical_baseline": item.get("historical_baseline") is True,
                 "monitored_wallet_is_signer": address in item.get("signers", []) if isinstance(item.get("signers"), list) else False,

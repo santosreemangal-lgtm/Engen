@@ -17,7 +17,7 @@ from urllib.request import Request, urlopen
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 
 from engine.profile_store import ProfileStore, LABELS, STATUSES, validate_public_address, settings_json
@@ -145,6 +145,23 @@ def _fetch_public_token_metadata(mint):
         "mint": mint, "name": name, "symbol": symbol,
         "found": True, "status": "ok",
     }
+
+
+
+def calculate_portfolio_value_usd(available_balance, token_values):
+    """Return a total only when virtual cash and every holding value are known."""
+    if available_balance is None or not isinstance(token_values, list):
+        return None
+    try:
+        cash = Decimal(str(available_balance))
+        values = [Decimal(str(value)) for value in token_values]
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    if not cash.is_finite() or cash < 0:
+        return None
+    if any(not value.is_finite() or value < 0 for value in values):
+        return None
+    return format(cash + sum(values, Decimal("0")), "f")
 
 
 def _cached_public_token_metadata(mint):
@@ -596,11 +613,12 @@ def load_profile_paper_simulation_report(profile_id):
             unrealized_values.append(
                 quantity * market_price.price - Decimal(ledger_position["cost_basis"])
             )
-        cash_value = Decimal(str(base["available_balance"] or "0"))
-        if all(value is not None for value in token_values):
-            base["portfolio_value_usd"] = format(cash_value + sum(token_values, Decimal("0")), "f")
-        else:
-            base["portfolio_value_usd"] = None
+        # Missing cash or stale/missing holding prices must not be shown as zero.
+        base["portfolio_value_usd"] = calculate_portfolio_value_usd(
+            base["available_balance"], token_values
+        )
+        if base["available_balance"] is None:
+            valuation_notes.append("virtual_cash_balance_unavailable")
         if all(value is not None for value in unrealized_values):
             base["unrealized_pnl_usd"] = format(sum(unrealized_values, Decimal("0")), "f")
             base["pnl"]["unrealized_status"] = "calculated"

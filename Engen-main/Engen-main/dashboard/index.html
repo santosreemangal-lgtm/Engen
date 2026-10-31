@@ -611,7 +611,9 @@ function updateHistoryTokenCell(container){
  const symbol=meta&&typeof meta.symbol==="string"?meta.symbol.trim():"";
  // Never display a mint address here, even when public token metadata is missing.
  const unavailable=meta&&["unavailable","service_error"].includes(meta.status);
- const display=name||symbol||(unavailable?"Token metadata service unavailable":"Token name unavailable");
+ const shortMint=mint.length>16?mint.slice(0,7)+"…"+mint.slice(-6):mint;
+ const display=(name&&symbol)?name+" ("+symbol+")":
+  name||symbol||(unavailable?"Metadata unavailable · "+shortMint:"Unknown token · "+shortMint);
  primary.textContent=display;
  primary.title=display;
 }
@@ -769,64 +771,83 @@ async function loadPaperTradeHistory(reportOverride){
   if(r.error){historySetEmpty(tbody,7,"Paper history unavailable: "+r.error);say("paper-trade-history-message",r.error);return;}
   const orders=Array.isArray(r.orders)?r.orders.slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||""))):[];
   const fills=Array.isArray(r.fills)?r.fills:[];
+  const ordersById=new Map(orders.map(order=>[String(order.order_id||""),order]));
+  const completedTrades=fills.filter(fill=>
+   fill&&typeof fill==="object"&&
+   typeof fill.order_id==="string"&&
+   typeof fill.asset_mint==="string"&&
+   typeof fill.quantity==="string"&&
+   typeof fill.execution_price==="string"&&
+   typeof fill.gross_quote==="string"&&
+   typeof fill.side==="string"&&
+   ["BUY","SELL"].includes(fill.side)&&
+   typeof fill.created_at==="string"
+  ).sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
   if(fillsBaselineProfile!==selectedProfile){
    fillsBaselineProfile=selectedProfile;
-   knownFillIds=new Set(fills.map(fill=>String(fill.order_id||fill.fill_id||"")).filter(Boolean));
+   knownFillIds=new Set(completedTrades.map(fill=>String(fill.order_id||fill.fill_id||"")).filter(Boolean));
   }else{
-   const newFills=fills.filter(fill=>{
+   const newFills=completedTrades.filter(fill=>{
     const id=String(fill.order_id||fill.fill_id||"");
     return id&&!knownFillIds.has(id);
    });
-   fills.forEach(fill=>{const id=String(fill.order_id||fill.fill_id||"");if(id)knownFillIds.add(id);});
+   completedTrades.forEach(fill=>{const id=String(fill.order_id||fill.fill_id||"");if(id)knownFillIds.add(id);});
    if(newFills.length){
-    const latest=newFills[newFills.length-1];
-    const order=ordersForFillLookup(r.orders,latest);
+    const latest=newFills[0];
+    const order=ordersById.get(String(latest.order_id||""))||null;
     notifyTradeExecution(latest,order);
    }
   }
-  $("paper-trade-total").textContent=orders.length.toLocaleString();
-  $("paper-fill-total").textContent=fills.length.toLocaleString()+" completed fill"+(fills.length===1?"":"s");
+  const unfilledCount=Math.max(0,orders.length-completedTrades.length);
+  $("paper-trade-total").textContent=completedTrades.length.toLocaleString();
+  $("paper-fill-total").textContent=completedTrades.length.toLocaleString()+" completed fill"+(completedTrades.length===1?"":"s");
   tbody.replaceChildren();
-  if(!orders.length)historySetEmpty(tbody,7,"No Paper Orders have been queued yet. The first scan only establishes a baseline; older transactions are not replayed. A new confirmed BUY/SELL swap must be detected while monitoring is active.");
-  orders.forEach(order=>{
-   const row=document.createElement("tr"),details=order.details&&typeof order.details==="object"?order.details:{};
-   const fill=fills.find(x=>x.order_id===order.order_id);
-   historyCell(row,historyDate(fill?.created_at||order.created_at));
-   const side=String(order.side||"ORDER").toUpperCase(),sideCell=document.createElement("td");sideCell.append(historyPill(side,side==="BUY"?"buy":side==="SELL"?"sell":""));row.append(sideCell);
-   row.append(makeHistoryTokenCell(order.asset_mint));
-   const sourceWallet=details.source_wallet;
-   let quantity=fill?.quantity;
-   if(!quantity){
-    if(side==="SELL"&&details.source_sell_fraction)quantity="Source position × "+(Number(details.source_sell_fraction)*100).toFixed(2).replace(/\.00$/,"")+"%";
-    else if(details.target_notional_usd)quantity="Target $"+historyAmount(details.target_notional_usd);
-    else quantity=details.execution_state==="AWAITING_VIRTUAL_BALANCE"?"Waiting for virtual balance":"Waiting for verified sizing";
-   }else quantity=historyAmount(quantity);
-   const quantityCell=historyCell(row,quantity);
-   const exactQuantity=fill?.quantity||((order.status==="FILLED"||order.status==="COMPLETED")?order.quantity:null);
-   if(exactQuantity!==null&&exactQuantity!==undefined)quantityCell.title="Exact quantity: "+String(exactQuantity);
+  if(!completedTrades.length){
+   historySetEmpty(tbody,7,"No successfully executed paper trades yet. Detected orders without a persisted fill are excluded from this table and from Portfolio calculations.");
+  }
+  completedTrades.forEach(fill=>{
+   const order=ordersById.get(String(fill.order_id||""))||{};
+   const details=order.details&&typeof order.details==="object"?order.details:{};
+   const row=document.createElement("tr");
+   historyCell(row,historyDate(fill.created_at));
+   const side=String(fill.side||order.side||"UNKNOWN").toUpperCase();
+   const sideCell=document.createElement("td");
+   sideCell.append(historyPill(side,side==="BUY"?"buy":side==="SELL"?"sell":""));
+   row.append(sideCell);
+   row.append(makeHistoryTokenCell(fill.asset_mint));
+   const quantityCell=historyCell(row,historyAmount(fill.quantity));
+   quantityCell.title="Exact filled quantity: "+String(fill.quantity);
    const notionalCell=document.createElement("td");
-   if(fill){const gross=document.createElement("span");gross.className="history-main";gross.textContent="$"+historyAmount(fill.gross_quote);gross.title="Exact gross quote: "+String(fill.gross_quote);notionalCell.append(gross);const price=document.createElement("small");price.className="history-sub";price.textContent="Price $"+historyAmount(fill.execution_price);price.title="Exact execution price: "+String(fill.execution_price);notionalCell.append(price);}
-   else if(details.target_notional_usd){notionalCell.textContent="$"+historyAmount(details.target_notional_usd);notionalCell.title="Exact target: $"+String(details.target_notional_usd);}
-   else notionalCell.textContent="Pending";
+   const gross=document.createElement("span");
+   gross.className="history-main";
+   gross.textContent="$"+historyAmount(fill.gross_quote);
+   gross.title="Exact gross quote: "+String(fill.gross_quote);
+   notionalCell.append(gross);
+   const price=document.createElement("small");
+   price.className="history-sub";
+   price.textContent="Price $"+historyAmount(fill.execution_price);
+   price.title="Exact execution price: "+String(fill.execution_price);
+   notionalCell.append(price);
    row.append(notionalCell);
    const stateCell=document.createElement("td");
-   let state=String(order.status||"UNKNOWN").toUpperCase();
-   if(fill)state="FILLED";
-   else if(details.execution_state==="AWAITING_VIRTUAL_BALANCE")state="WAITING BALANCE";
-   else if(details.execution_state==="AWAITING_VERIFIED_MARKET_DATA"||details.execution_state==="WAITING_FOR_MARKET_DATA")state="WAITING PRICE";
-   else if(details.execution_state==="WAITING_FOR_POSITION")state="WAITING POSITION";
-   else if(details.execution_state==="EXECUTION_ERROR")state="EXECUTION ERROR";
-   const kind=state==="FILLED"?"filled":state.includes("WAITING")||state==="CREATED"?"waiting":state==="REJECTED"?"rejected":"";
-   const pill=historyPill(state,kind);if(order.reason)pill.title=order.reason;stateCell.append(pill);
-   if(order.reason){const reason=document.createElement("small");reason.className="history-sub";reason.textContent=order.reason;stateCell.append(reason);}
+   stateCell.append(historyPill("FILLED","filled"));
    row.append(stateCell);
    const sourceCell=document.createElement("td");
-   if(details.source_signature){const link=document.createElement("a");link.className="history-link";link.href="https://solscan.io/tx/"+encodeURIComponent(details.source_signature);link.target="_blank";link.rel="noopener noreferrer";link.textContent="View source ↗";sourceCell.append(link);}
-   else sourceCell.textContent="—";
-   row.append(sourceCell);tbody.append(row);
+   if(details.source_signature){
+    const link=document.createElement("a");
+    link.className="history-link";
+    link.href="https://solscan.io/tx/"+encodeURIComponent(details.source_signature);
+    link.target="_blank";link.rel="noopener noreferrer";
+    link.textContent="View source ↗";sourceCell.append(link);
+   }else sourceCell.textContent="—";
+   row.append(sourceCell);
+   tbody.append(row);
   });
-  void loadHistoryTokenMetadata(orders.map(order=>order.asset_mint));
-  say("paper-trade-history-message",orders.length?"Showing the latest "+orders.length+" stored paper order(s); "+fills.length+" have simulated fills.":"Paper orders are shown only when the copy engine queues them. On-chain transaction rows are kept separate.");
+  void loadHistoryTokenMetadata(completedTrades.map(fill=>fill.asset_mint));
+  say("paper-trade-history-message",
+   "Showing only "+completedTrades.length+" successfully executed paper trade(s). "+
+   unfilledCount+" order(s) without a persisted fill are excluded from trades and Portfolio."
+  );
  }catch(e){historySetEmpty(tbody,7,e.message||"Unable to load paper history.");say("paper-trade-history-message",e.message);}
 }
 async function loadHistory(){await Promise.all([loadTransactionHistory(),loadPaperTradeHistory(null)]);}

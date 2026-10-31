@@ -14,7 +14,7 @@ MAX_PROFILE_ACTIVITY_TRANSACTIONS = 1000
 MAX_WALLET_ACTIVITY_TRANSACTIONS = MAX_PROFILE_ACTIVITY_TRANSACTIONS
 LABELS = {"BUY_CANDIDATE", "SELL_CANDIDATE", "TRANSFER", "UNKNOWN",
           "FAILED_TRANSACTION", "RENT", "LIQUIDITY_OPERATION"}
-STATUSES = {"observed", "confirmed", "failed", "pending", "unknown"}
+STATUSES = {"observed", "confirmed", "failed", "pending", "unknown", "needs_review"}
 ADDRESS_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 

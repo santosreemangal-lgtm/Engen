@@ -309,7 +309,7 @@ class SignatureStore:
 
         return saved
 
-    def mark_processed(self, wallet_address, signature):
+    def mark_processed(self, wallet_address, signature, *, advance_position=True):
         self._validate_wallet(wallet_address)
         self._validate_signature(signature)
 
@@ -335,10 +335,13 @@ class SignatureStore:
                        WHERE wallet_address = ? AND signature = ?""",
                     (wallet_address, signature),
                 )
-                position = connection.execute(
-                    "SELECT slot FROM seen_signatures WHERE wallet_address = ? AND signature = ?",
-                    (wallet_address, signature),
-                ).fetchone()
+                position = (
+                    connection.execute(
+                        "SELECT slot FROM seen_signatures WHERE wallet_address = ? AND signature = ?",
+                        (wallet_address, signature),
+                    ).fetchone()
+                    if advance_position else None
+                )
                 if position and position[0] is not None:
                     connection.execute(
                         """INSERT INTO wallet_positions (wallet_address, slot, signature)

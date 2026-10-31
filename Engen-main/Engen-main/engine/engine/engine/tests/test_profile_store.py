@@ -72,14 +72,14 @@ class ProfileStoreTests(unittest.TestCase):
             row = db.execute("SELECT raw_amount,token_decimals,observed_at FROM transactions").fetchone()
         self.assertEqual(row, ("000123", 6, "2026-01-02T03:04:05Z"))
 
-    def test_wallet_activity_retains_latest_1000_per_source_wallet(self):
+    def test_wallet_activity_retains_latest_1000_across_all_profile_wallets(self):
         profile = self.store.create_profile("Retention")
         second_wallet = "So11111111111111111111111111111111111111112"
         self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
         self.store.associate_source_wallet(profile, second_wallet)
         start = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
-        for index in range(1005):
+        for index in range(600):
             observed = (start + timedelta(seconds=index)).isoformat().replace("+00:00", "Z")
             self.store.save_transaction(
                 signature=f"wallet-a-{index:04d}",
@@ -92,30 +92,106 @@ class ProfileStoreTests(unittest.TestCase):
                 observed_at=observed,
             )
 
-        self.store.save_transaction(
-            "wallet-b-only", second_wallet, profile_ids=[profile],
-            observed_at="2026-01-02T00:00:00Z",
-        )
+        for index in range(600):
+            sequence = 600 + index
+            observed = (start + timedelta(seconds=sequence)).isoformat().replace("+00:00", "Z")
+            self.store.save_transaction(
+                signature=f"wallet-b-{index:04d}",
+                source_wallet_address=second_wallet,
+                classification="UNKNOWN",
+                status="observed",
+                slot=20000 + index,
+                block_time=1700000600 + index,
+                profile_ids=[profile],
+                observed_at=observed,
+            )
+
         with sqlite3.connect(self.path) as db:
-            total = db.execute(
-                "SELECT COUNT(*) FROM transactions WHERE source_wallet_address=?",
-                (PUBLIC_ADDRESS,),
+            total_links = db.execute(
+                "SELECT COUNT(*) FROM profile_transactions WHERE profile_id=?",
+                (profile,),
             ).fetchone()[0]
-            oldest = db.execute(
-                "SELECT COUNT(*) FROM transactions WHERE signature='wallet-a-0004'"
+            wallet_a_links = db.execute(
+                """SELECT COUNT(*) FROM profile_transactions p
+                   JOIN transactions t ON t.signature=p.signature
+                   WHERE p.profile_id=? AND t.source_wallet_address=?""",
+                (profile, PUBLIC_ADDRESS),
             ).fetchone()[0]
-            newest = db.execute(
-                "SELECT COUNT(*) FROM transactions WHERE signature='wallet-a-1004'"
+            wallet_b_links = db.execute(
+                """SELECT COUNT(*) FROM profile_transactions p
+                   JOIN transactions t ON t.signature=p.signature
+                   WHERE p.profile_id=? AND t.source_wallet_address=?""",
+                (profile, second_wallet),
             ).fetchone()[0]
-            second_wallet_total = db.execute(
-                "SELECT COUNT(*) FROM transactions WHERE source_wallet_address=?",
-                (second_wallet,),
+            oldest_link = db.execute(
+                "SELECT COUNT(*) FROM profile_transactions WHERE profile_id=? AND signature='wallet-a-0000'",
+                (profile,),
             ).fetchone()[0]
-        self.assertEqual(total, 1000)
-        self.assertEqual(oldest, 0)
-        self.assertEqual(newest, 1)
-        self.assertEqual(second_wallet_total, 1)
-        self.assertEqual(len(self.store.list_transactions(profile)), 1001)
+            latest_a_link = db.execute(
+                "SELECT COUNT(*) FROM profile_transactions WHERE profile_id=? AND signature='wallet-a-0599'",
+                (profile,),
+            ).fetchone()[0]
+            earliest_b_link = db.execute(
+                "SELECT COUNT(*) FROM profile_transactions WHERE profile_id=? AND signature='wallet-b-0000'",
+                (profile,),
+            ).fetchone()[0]
+            newest_b_link = db.execute(
+                "SELECT COUNT(*) FROM profile_transactions WHERE profile_id=? AND signature='wallet-b-0599'",
+                (profile,),
+            ).fetchone()[0]
+            old_transaction_still_exists = db.execute(
+                "SELECT COUNT(*) FROM transactions WHERE signature='wallet-a-0000'"
+            ).fetchone()[0]
+
+        self.assertEqual(total_links, 1000)
+        self.assertEqual(wallet_a_links, 400)
+        self.assertEqual(wallet_b_links, 600)
+        self.assertEqual(oldest_link, 0)
+        self.assertEqual(latest_a_link, 1)
+        self.assertEqual(earliest_b_link, 1)
+        self.assertEqual(newest_b_link, 1)
+        self.assertEqual(old_transaction_still_exists, 1)
+        self.assertEqual(len(self.store.list_transactions(profile)), 1000)
+
+    def test_pruning_one_profile_does_not_unlink_shared_history_from_another(self):
+        first = self.store.create_profile("First")
+        second = self.store.create_profile("Second")
+        self.store.associate_source_wallet(first, PUBLIC_ADDRESS)
+        self.store.associate_source_wallet(second, PUBLIC_ADDRESS)
+        self.store.save_transaction(
+            "shared-old-signature", PUBLIC_ADDRESS,
+            profile_ids=[first, second],
+            observed_at="2026-01-01T00:00:00Z",
+            block_time=1700000000,
+        )
+
+        start = datetime(2026, 1, 2, tzinfo=timezone.utc)
+        for index in range(1000):
+            observed = (start + timedelta(seconds=index)).isoformat().replace("+00:00", "Z")
+            self.store.save_transaction(
+                signature=f"first-only-{index:04d}",
+                source_wallet_address=PUBLIC_ADDRESS,
+                profile_ids=[first],
+                observed_at=observed,
+                block_time=1700001000 + index,
+            )
+
+        with sqlite3.connect(self.path) as db:
+            first_link = db.execute(
+                "SELECT COUNT(*) FROM profile_transactions WHERE profile_id=? AND signature=?",
+                (first, "shared-old-signature"),
+            ).fetchone()[0]
+            second_link = db.execute(
+                "SELECT COUNT(*) FROM profile_transactions WHERE profile_id=? AND signature=?",
+                (second, "shared-old-signature"),
+            ).fetchone()[0]
+            stored_transaction = db.execute(
+                "SELECT COUNT(*) FROM transactions WHERE signature='shared-old-signature'"
+            ).fetchone()[0]
+
+        self.assertEqual(first_link, 0)
+        self.assertEqual(second_link, 1)
+        self.assertEqual(stored_transaction, 1)
 
     def test_balance_snapshots_keep_history_and_latest_current(self):
         p = self.store.create_profile("Portfolio")

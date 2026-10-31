@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from dashboard.monitor_bridge import create_scan_function
+from engine.paper_copy_runner import queue_paper_orders
 
 
 WALLET = "11111111111111111111111111111111"
@@ -63,6 +64,25 @@ class MonitorBridgeRetryTests(unittest.TestCase):
         store, _, _ = self._scan_with(result, [])
 
         store.mark_processed.assert_not_called()
+
+    def test_historical_candidate_is_marked_processed_without_queue_retry(self):
+        result = {**candidate_result(), "historical_baseline": True}
+        store, _, output = self._scan_with(result, [])
+
+        store.mark_processed.assert_called_once_with(
+            WALLET, "synthetic-signature-for-bridge-test"
+        )
+        self.assertNotIn("paper_copy_status", output[0])
+
+    def test_paper_queue_rejects_historical_baseline_candidates(self):
+        simulator = Mock()
+        simulator.orders = {}
+        simulator.processed_signals = set()
+        result = {**candidate_result(), "historical_baseline": True}
+
+        queued = queue_paper_orders(WALLET, [result], simulator=simulator)
+
+        self.assertEqual(queued, [])
 
     def test_non_candidate_is_marked_processed_to_avoid_retry_loop(self):
         store, _, output = self._scan_with(candidate_result("UNKNOWN"), [])

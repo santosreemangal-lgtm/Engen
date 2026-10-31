@@ -784,7 +784,15 @@ def _classify_non_swap_activity(instructions):
         "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
         "11111111111111111111111111111111",
     }
-    if any(
+    known_non_swap_programs = {
+        "system", "spltoken", "token", "spltoken2022",
+        "splassociatedtokenaccount", "computebudget", "memo",
+    }
+    transfer_context_is_unambiguous = all(
+        program in known_non_swap_programs or program_id in token_program_ids
+        for program, program_id, _parsed_type in normalized
+    )
+    if transfer_context_is_unambiguous and any(
         parsed_type in transfer_types
         and (
             program in {"system", "spltoken", "token", "spltoken2022"}

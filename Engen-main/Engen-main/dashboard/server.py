@@ -538,7 +538,7 @@ def load_profile_paper_simulation_report(profile_id):
         "real_wallet_balances_included": False, "real_trading": False,
         "transaction_broadcast": False, "profile_id": profile_id,
         "database_available": False, "balances": {}, "orders": [], "fills": [], "pnl_events": [],
-        "archived_sessions": [],
+        "archived_sessions": [], "source_trade_refs": [],
         "available_balance": None, "available_balance_usd": None,
         "initial_balance": None, "portfolio_value_usd": None,
         "realized_pnl_usd": None, "unrealized_pnl_usd": None,
@@ -551,10 +551,26 @@ def load_profile_paper_simulation_report(profile_id):
         return base
     try:
         with sqlite3.connect("file:" + str(PROFILE_STORE_DB.resolve()) + "?mode=ro", uri=True) as db:
+            db.row_factory = sqlite3.Row
             profile = db.execute(
                 "SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
                 (profile_id,),
             ).fetchone()
+            if profile is not None:
+                tables = {row[0] for row in db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )}
+                if "source_trade_refs" in tables:
+                    base["source_trade_refs"] = [
+                        dict(row) for row in db.execute(
+                            """SELECT profile_id,order_id,source_wallet_address,
+                                      source_signature,side,asset_mint,source_slot,
+                                      source_block_time,created_at
+                               FROM source_trade_refs WHERE profile_id=?
+                               ORDER BY created_at DESC,order_id DESC LIMIT 5000""",
+                            (profile_id,),
+                        )
+                    ]
         if profile is None:
             base["error"] = "Profile not found."
             return base
@@ -605,10 +621,23 @@ def load_profile_paper_simulation_report(profile_id):
         base["available_balance"] = sim_balances.get("USD", legacy_balances.get("USD"))
         base["available_balance_usd"] = base["available_balance"]
         base["initial_balance"] = simulator_report.get("initial_balance")
-        simulator_orders = [
-            {**order, "simulated": True, "real_trading": False, "transaction_broadcast": False}
-            for order in sim_orders
-        ]
+        source_refs_by_order = {
+            item["order_id"]: item for item in base["source_trade_refs"]
+            if isinstance(item, dict) and isinstance(item.get("order_id"), str)
+        }
+        simulator_orders = []
+        for order in sim_orders:
+            item = {
+                **order, "simulated": True, "real_trading": False,
+                "transaction_broadcast": False,
+            }
+            order_id = item.get("order_id")
+            source_ref = source_refs_by_order.get(order_id)
+            if source_ref is not None:
+                details = dict(item.get("details") or {})
+                details["source_trade_ref"] = source_ref
+                item["details"] = details
+            simulator_orders.append(item)
         base["orders"] = sorted(
             simulator_orders + legacy_orders,
             key=lambda item: str(item.get("created_at") or ""), reverse=True

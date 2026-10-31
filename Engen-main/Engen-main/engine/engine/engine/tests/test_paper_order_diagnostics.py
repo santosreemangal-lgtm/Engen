@@ -94,6 +94,46 @@ class PaperOrderDiagnosticsTests(unittest.TestCase):
         self.assertNotIn("private provider detail", saved["reason"])
         self.assertEqual(simulator.fills, [])
 
+    def test_missing_liquidity_keeps_market_data_wait_status_with_specific_code(self):
+        simulator = PaperSimulator(initial_balances={"USD": "100"})
+        order = make_order(simulator)
+        price = MarketPrice(
+            mint=ASSET, price=Decimal("2"), currency="USD",
+            source="offline-test-fixture", observed_at=NOW,
+        )
+
+        outcomes = execute_pending_paper_orders(
+            WALLET, simulator, price_provider=lambda mint: price,
+        )
+
+        self.assertEqual(outcomes[0]["status"], "WAITING_FOR_MARKET_DATA")
+        saved = simulator.orders[order["order_id"]]
+        self.assertEqual(saved["details"]["diagnostic_code"], "LIQUIDITY_DATA_UNAVAILABLE")
+        self.assertEqual(saved["details"]["execution_state"], "WAITING_FOR_MARKET_DATA")
+        self.assertEqual(simulator.fills, [])
+
+    def test_stale_liquidity_keeps_market_data_wait_status_with_specific_code(self):
+        from datetime import timedelta
+        stale = (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat()
+        simulator = PaperSimulator(initial_balances={"USD": "100"})
+        order = make_order(simulator)
+        price = MarketPrice(
+            mint=ASSET, price=Decimal("2"), currency="USD",
+            source="offline-test-fixture", observed_at=NOW,
+            liquidity_usd=Decimal("50000"), liquidity_source="offline-test-fixture",
+            liquidity_observed_at=stale,
+        )
+
+        outcomes = execute_pending_paper_orders(
+            WALLET, simulator, price_provider=lambda mint: price,
+        )
+
+        self.assertEqual(outcomes[0]["status"], "WAITING_FOR_MARKET_DATA")
+        saved = simulator.orders[order["order_id"]]
+        self.assertEqual(saved["details"]["diagnostic_code"], "LIQUIDITY_DATA_STALE")
+        self.assertEqual(saved["details"]["execution_state"], "WAITING_FOR_MARKET_DATA")
+        self.assertEqual(simulator.fills, [])
+
     def test_low_liquidity_has_specific_wait_code_and_never_fills(self):
         simulator = PaperSimulator(initial_balances={"USD": "100"})
         order = make_order(simulator)

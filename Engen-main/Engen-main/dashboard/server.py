@@ -49,12 +49,15 @@ MAX_HISTORY_PAGE_SIZE = 100
 try:
     MONITOR_RPC_TIMEOUT_SECONDS = float(os.environ.get("MONITOR_RPC_TIMEOUT_SECONDS", "10"))
     MONITOR_SCAN_WORKERS = int(os.environ.get("MONITOR_SCAN_WORKERS", "4"))
+    MONITOR_MAX_SIGNATURE_PAGES = int(os.environ.get("MONITOR_MAX_SIGNATURE_PAGES", "100"))
 except (TypeError, ValueError) as exc:
     raise RuntimeError("Monitor timeout/workers configuration must be numeric.") from exc
 if not 1 <= MONITOR_RPC_TIMEOUT_SECONDS <= 60:
     raise RuntimeError("MONITOR_RPC_TIMEOUT_SECONDS must be between 1 and 60.")
 if not 1 <= MONITOR_SCAN_WORKERS <= 16:
     raise RuntimeError("MONITOR_SCAN_WORKERS must be between 1 and 16.")
+if not 1 <= MONITOR_MAX_SIGNATURE_PAGES <= 1000:
+    raise RuntimeError("MONITOR_MAX_SIGNATURE_PAGES must be between 1 and 1000.")
 HOST = os.environ.get("DASHBOARD_HOST", "127.0.0.1").strip() or "127.0.0.1"
 PORT = int(os.environ.get("PORT", "8000"))
 TRUST_PROXY = os.environ.get("DASHBOARD_TRUST_PROXY", "").strip().lower() == "true"
@@ -263,7 +266,7 @@ def is_valid_solana_address(value):
 
 # Creating services does not start monitoring or make RPC requests.
 monitor_service = MonitorService(
-    create_scan_function(timeout=MONITOR_RPC_TIMEOUT_SECONDS),
+    create_scan_function(timeout=MONITOR_RPC_TIMEOUT_SECONDS, max_pages=MONITOR_MAX_SIGNATURE_PAGES),
     interval=15,
     max_workers=MONITOR_SCAN_WORKERS,
 )
@@ -907,6 +910,7 @@ def get_profile_monitor_service(profile_id):
         profile_monitor_services[canonical] = MonitorService(
             create_scan_function(
                 timeout=MONITOR_RPC_TIMEOUT_SECONDS,
+                max_pages=MONITOR_MAX_SIGNATURE_PAGES,
                 side_getter=lambda: profile_copy_side(canonical),
                 settings_getter=lambda: profile_paper_settings(canonical),
                 simulator_getter=lambda: get_profile_paper_simulator(canonical),
@@ -936,6 +940,7 @@ def profile_monitor_report(profile_id):
         "monitor": {
             **status,
             "rpc_timeout_seconds": MONITOR_RPC_TIMEOUT_SECONDS,
+            "max_signature_pages_per_scan": MONITOR_MAX_SIGNATURE_PAGES,
         },
     }
 

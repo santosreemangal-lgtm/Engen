@@ -271,6 +271,7 @@ monitor_service = MonitorService(
 # wallet list remains profile-scoped in ProfileStore.
 profile_monitor_services = {}
 profile_paper_simulators = {}
+_PROFILE_PAPER_LOCKS = {}
 
 
 def load_monitor_state():
@@ -402,6 +403,13 @@ def profile_paper_db_path(profile_id):
     return PROFILE_DATA_DIR / canonical_profile_id(profile_id) / "paper_trading.db"
 
 
+def get_profile_paper_lock(profile_id):
+    """Return a per-profile simulator lock; the global lock protects only the registry."""
+    canonical = canonical_profile_id(profile_id)
+    with paper_simulator_lock:
+        return _PROFILE_PAPER_LOCKS.setdefault(canonical, threading.RLock())
+
+
 def get_profile_paper_simulator(profile_id):
     """Return one persistent simulator per profile; never share account balances."""
     canonical = canonical_profile_id(profile_id)
@@ -485,8 +493,8 @@ def set_profile_virtual_balance(profile_id, amount):
     if not value.is_finite() or value <= 0 or value > Decimal("1000000000"):
         raise ValueError("Virtual balance must be greater than zero and at most 1,000,000,000 USD.")
     initialize_profile_paper_ledger(profile_id)
-    with paper_simulator_lock:
-        simulator = get_profile_paper_simulator(profile_id)
+    simulator = get_profile_paper_simulator(profile_id)
+    with get_profile_paper_lock(profile_id):
         result = simulator.set_virtual_balance(format(value, "f"), "USD")
         # Keep the earlier balance table in sync for safe migration/diagnostics.
         path = profile_paper_db_path(profile_id)
@@ -529,8 +537,8 @@ def reset_profile_paper_session(profile_id, amount):
         profile_monitor_services.pop(profile_id, None)
 
     initialize_profile_paper_ledger(profile_id)
-    with paper_simulator_lock:
-        simulator = get_profile_paper_simulator(profile_id)
+    simulator = get_profile_paper_simulator(profile_id)
+    with get_profile_paper_lock(profile_id):
         result = simulator.reset_session(format(value, "f"), "USD")
 
     return {
@@ -574,8 +582,9 @@ def load_profile_paper_simulation_report(profile_id):
         path = profile_paper_db_path(profile_id)
         if not path.is_file():
             return base
-        with paper_simulator_lock:
-            simulator_report = get_profile_paper_simulator(profile_id).report()
+        simulator = get_profile_paper_simulator(profile_id)
+        with get_profile_paper_lock(profile_id):
+            simulator_report = simulator.report()
             sim_balances = dict(simulator_report.get("balances", {}))
             sim_orders = list(simulator_report.get("orders", []))
             sim_fills = list(simulator_report.get("fills", []))
@@ -651,8 +660,8 @@ def load_profile_paper_simulation_report(profile_id):
         ]
         # Snapshot cost basis under the simulator lock, then perform public
         # network lookups outside that lock so price APIs cannot stall paper fills.
-        with paper_simulator_lock:
-            simulator = get_profile_paper_simulator(profile_id)
+        simulator = get_profile_paper_simulator(profile_id)
+        with get_profile_paper_lock(profile_id):
             ledger = simulator.pnl_ledger
             ledger_positions = {
                 mint: ledger.snapshot(mint) for mint in mints_for_valuation
@@ -1204,8 +1213,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     skipped = []
                     sold_mints = set()
                     now = datetime.now(timezone.utc).isoformat()
-                    with paper_simulator_lock:
-                        simulator = get_profile_paper_simulator(profile_id)
+                    simulator = get_profile_paper_simulator(profile_id)
+                    with get_profile_paper_lock(profile_id):
                         # Only assets with an actual filled BUY from the automatic copy
                         # engine are eligible. Arbitrary/manual balances are never bulk-sold.
                         copied_mints = {

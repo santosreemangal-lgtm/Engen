@@ -95,6 +95,23 @@ class MonitorBaselineTests(unittest.TestCase):
         )
         self.assertTrue(self.store.has_seen(self.wallet, "1111111111111111111111111111111111111111111111111111111111111114"))
 
+    def test_older_processed_baseline_without_transaction_record_is_requeued_once(self):
+        signature = "1111111111111111111111111111111111111111111111111111111111111112"
+        self.store.mark_baseline(self.wallet)
+        self.store.save(self.wallet, signature, slot=100)
+        self.store.mark_processed(self.wallet, signature)
+        self.assertEqual(self.store.get_status(self.wallet, signature), "processed")
+
+        migrated_store = SignatureStore(db_path=self.db_path)
+
+        self.assertEqual(migrated_store.get_status(self.wallet, signature), "pending")
+        self.assertTrue(migrated_store.is_historical_baseline(self.wallet, signature))
+        self.assertEqual(migrated_store.get_pending_signatures(self.wallet), [signature])
+        # Once tagged, a subsequent restart does not reset its processing state.
+        migrated_store.mark_processed(self.wallet, signature)
+        reopened_again = SignatureStore(db_path=self.db_path)
+        self.assertEqual(reopened_again.get_status(self.wallet, signature), "processed")
+
     @patch("engine.wallet_monitor.get_wallet_signatures")
     def test_baseline_persists_after_store_reopens(
         self, mock_get_signatures

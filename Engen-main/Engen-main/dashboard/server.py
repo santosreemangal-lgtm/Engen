@@ -1217,9 +1217,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     sold_mints = set()
                     now = datetime.now(timezone.utc).isoformat()
                     simulator = get_profile_paper_simulator(profile_id)
-                    with get_profile_paper_lock(profile_id):
-                        # Only assets with an actual filled BUY from the automatic copy
-                        # engine are eligible. Arbitrary/manual balances are never bulk-sold.
+                    profile_lock = get_profile_paper_lock(profile_id)
+                    # Snapshot only the eligible virtual positions while locked.
+                    # Network price/liquidity lookups happen after releasing the lock.
+                    with profile_lock:
                         copied_mints = {
                             order.get("asset_mint")
                             for order in simulator.orders.values()
@@ -1227,35 +1228,68 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                             and order.get("status") == "FILLED"
                             and (order.get("details") or {}).get("origin") == "AUTOMATIC_WALLET_COPY"
                         }
+                        position_snapshot = {}
                         for mint in sorted(copied_mints):
                             try:
                                 quantity = Decimal(str(simulator.balances.get(mint, "0")))
                             except Exception:
                                 quantity = Decimal("0")
+                            if quantity.is_finite() and quantity > 0:
+                                position_snapshot[mint] = quantity
+
+                    valid_mints = []
+                    for mint in position_snapshot:
+                        try:
+                            validate_public_address(mint, "token mint")
+                            valid_mints.append(mint)
+                        except ValueError:
+                            skipped.append({
+                                "token": str(mint), "status": "SKIPPED",
+                                "reason": "Token mint is not a valid public Solana address.",
+                            })
+
+                    market_prices = {}
+                    market_price_errors = {}
+                    if valid_mints:
+                        with ThreadPoolExecutor(max_workers=min(6, len(valid_mints))) as pool:
+                            futures = {mint: pool.submit(fetch_market_price, mint) for mint in valid_mints}
+                            for mint, future in futures.items():
+                                try:
+                                    market_prices[mint] = future.result()
+                                except Exception as exc:
+                                    market_price_errors[mint] = type(exc).__name__
+
+                    for mint in valid_mints:
+                        market_price = market_prices.get(mint)
+                        error_type = market_price_errors.get(mint)
+                        if (
+                            not isinstance(market_price, MarketPrice)
+                            or market_price.mint != mint
+                            or str(market_price.currency).upper() != "USD"
+                        ):
+                            reason = (
+                                "Public market-data provider failed (" + error_type + ")."
+                                if error_type else "A fresh verified USD price is unavailable."
+                            )
+                            skipped.append({"token": mint, "status": "SKIPPED", "reason": reason})
+                            continue
+
+                        execution_now = datetime.now(timezone.utc).isoformat()
+                        if not market_price.is_fresh(max_age_seconds=60, now=execution_now):
+                            skipped.append({"token": mint, "status": "SKIPPED", "reason": "A fresh verified USD price is unavailable."})
+                            continue
+                        if market_price.liquidity_usd is None:
+                            skipped.append({"token": mint, "status": "SKIPPED", "reason": "Pool liquidity data is unavailable."})
+                            continue
+                        if market_price.liquidity_age_seconds(execution_now) > 60:
+                            skipped.append({"token": mint, "status": "SKIPPED", "reason": "Pool liquidity data is stale."})
+                            continue
+
+                        # Re-read the balance inside the profile lock because a
+                        # paper fill may have changed the position during lookup.
+                        with profile_lock:
+                            quantity = Decimal(str(simulator.balances.get(mint, "0")))
                             if not quantity.is_finite() or quantity <= 0:
-                                continue
-                            try:
-                                validate_public_address(mint, "token mint")
-                            except ValueError:
-                                skipped.append({"token": str(mint), "status": "SKIPPED", "reason": "Token mint is not a valid public Solana address."})
-                                continue
-                            try:
-                                market_price = fetch_market_price(mint)
-                            except Exception:
-                                market_price = None
-                            if (
-                                not isinstance(market_price, MarketPrice)
-                                or market_price.mint != mint
-                                or str(market_price.currency).upper() != "USD"
-                                or not market_price.is_fresh(max_age_seconds=60, now=now)
-                            ):
-                                skipped.append({"token": mint, "status": "SKIPPED", "reason": "A fresh verified USD price is unavailable."})
-                                continue
-                            if market_price.liquidity_usd is None:
-                                skipped.append({"token": mint, "status": "SKIPPED", "reason": "Pool liquidity data is unavailable."})
-                                continue
-                            if market_price.liquidity_age_seconds(now) > 60:
-                                skipped.append({"token": mint, "status": "SKIPPED", "reason": "Pool liquidity data is stale."})
                                 continue
                             estimated_notional = quantity * market_price.price
                             required_liquidity = max(
@@ -1274,7 +1308,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                 asset_mint=mint,
                                 quantity=format(quantity, "f"),
                                 quote_mint="USD",
-                                created_at=now,
+                                created_at=execution_now,
                                 details={
                                     "origin": "MANUAL_PAPER_SELL_ALL",
                                     "profile_id": profile_id,
@@ -1291,7 +1325,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                                 result = simulator.execute_order(
                                     order["order_id"],
                                     market_price,
-                                    now=now,
+                                    now=execution_now,
                                     max_price_age_seconds=60,
                                     slippage_bps=PAPER_SLIPPAGE_BPS,
                                     fee_bps=PAPER_FEE_BPS,

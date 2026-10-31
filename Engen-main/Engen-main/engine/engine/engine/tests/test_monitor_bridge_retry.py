@@ -179,5 +179,115 @@ class MonitorBridgeRetryTests(unittest.TestCase):
         self.assertNotIn("paper_copy_status", output[0])
 
 
+    def _persisted_history_kwargs(self, result, queued_orders=None):
+        import uuid
+
+        signature_store = Mock()
+        simulator = Mock()
+        simulator.orders = {}
+        simulator.processed_signals = set()
+        profile_store = Mock()
+        signature = "1" * 64
+        result = {**result, "signature": signature}
+        with (
+            patch("dashboard.monitor_bridge.SignatureStore", return_value=signature_store),
+            patch("dashboard.monitor_bridge.monitor_wallet", return_value=[result]),
+            patch(
+                "dashboard.monitor_bridge.queue_paper_orders",
+                return_value=queued_orders or [],
+            ),
+            patch("dashboard.monitor_bridge.execute_pending_paper_orders", return_value=[]),
+        ):
+            scan = create_scan_function(
+                side_getter=lambda: "BOTH",
+                settings_getter=lambda: {},
+                simulator_getter=lambda: simulator,
+                profile_id=str(uuid.uuid4()),
+                profile_store=profile_store,
+            )
+            scan(WALLET)
+        self.assertTrue(profile_store.save_transaction.called)
+        return profile_store.save_transaction.call_args.kwargs
+
+    def test_history_amount_aggregates_only_verified_asset_rows(self):
+        result = {
+            "status": "success",
+            "metadata_complete": True,
+            "retryable": False,
+            "signers": [WALLET],
+            "signature_observation": {"confirmation_status": "finalized"},
+            "trade_signal": {
+                "classification": "BUY_CANDIDATE",
+                "asset_mints": [ASSET],
+                "quote_mints": [QUOTE],
+            },
+            "token_balance_changes": [
+                {"owner": WALLET, "mint": ASSET, "decimals": 6, "delta_amount": "100"},
+                {"owner": WALLET, "mint": ASSET, "decimals": 6, "delta_amount": "250"},
+                {"owner": WALLET, "mint": QUOTE, "decimals": 6, "delta_amount": "-500"},
+                {"owner": "ANOTHER_WALLET", "mint": ASSET, "decimals": 6, "delta_amount": "999"},
+            ],
+        }
+        kwargs = self._persisted_history_kwargs(
+            result,
+            queued_orders=[{"signature": "1" * 64, "order_id": "paper-order-1", "side": "BUY"}],
+        )
+        self.assertEqual(kwargs["token_mint"], ASSET)
+        self.assertEqual(kwargs["token_decimals"], 6)
+        self.assertEqual(kwargs["raw_amount"], "350")
+        self.assertEqual(
+            kwargs["evidence"]["token_amount_attribution"],
+            "aggregated_wallet_owned_asset_rows",
+        )
+
+    def test_unknown_activity_never_gets_an_arbitrary_token_amount(self):
+        result = {
+            "status": "success",
+            "metadata_complete": True,
+            "retryable": False,
+            "signers": [WALLET],
+            "signature_observation": {"confirmation_status": "finalized"},
+            "trade_signal": {
+                "classification": "UNKNOWN",
+                "asset_mints": [],
+                "quote_mints": [],
+                "reason": "Could not prove a swap direction.",
+            },
+            "token_balance_changes": [
+                {"owner": WALLET, "mint": ASSET, "decimals": 6, "delta_amount": "100"},
+                {"owner": WALLET, "mint": QUOTE, "decimals": 6, "delta_amount": "-500"},
+            ],
+        }
+        kwargs = self._persisted_history_kwargs(result)
+        self.assertIsNone(kwargs["token_mint"])
+        self.assertIsNone(kwargs["token_decimals"])
+        self.assertIsNone(kwargs["raw_amount"])
+        self.assertEqual(
+            kwargs["evidence"]["token_amount_attribution"],
+            "unavailable_not_verified_swap",
+        )
+
+    def test_unconfirmed_candidate_never_gets_a_history_token_amount(self):
+        result = {
+            "status": "success",
+            "metadata_complete": False,
+            "retryable": True,
+            "signers": [WALLET],
+            "signature_observation": {"confirmation_status": "processed"},
+            "trade_signal": {
+                "classification": "BUY_CANDIDATE",
+                "asset_mints": [ASSET],
+                "quote_mints": [QUOTE],
+            },
+            "token_balance_changes": [
+                {"owner": WALLET, "mint": ASSET, "decimals": 6, "delta_amount": "100"},
+            ],
+        }
+        kwargs = self._persisted_history_kwargs(result)
+        self.assertIsNone(kwargs["token_mint"])
+        self.assertIsNone(kwargs["raw_amount"])
+        self.assertFalse(kwargs["evidence"]["verified_swap_for_paper_queue"])
+
+
 if __name__ == "__main__":
     unittest.main()

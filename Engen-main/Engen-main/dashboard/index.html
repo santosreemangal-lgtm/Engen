@@ -105,8 +105,10 @@ footer.hint{padding:10px 4px;line-height:1.7}
 .history-pill.sell{background:#332126;border-color:#78404a;color:#f3a0a8}
 .history-pill.failed,.history-pill.rejected{background:#321d26;border-color:#71404a;color:#f0a0ab}
 .history-pill.pending,.history-pill.created,.history-pill.waiting{background:#302b1e;border-color:#6e5e34;color:#e9ca81}
+.history-pill.needs_review{background:#352a1e;border-color:#896a36;color:#f0d28d}
 .history-link{color:#88b9ff;text-decoration:none;font-weight:700;white-space:nowrap}
 .history-link:hover{text-decoration:underline}
+.paper-source-link{display:block;margin-top:4px;font-size:10px;line-height:1.2}
 .history-token-cell{display:flex;align-items:center;gap:7px;min-width:150px;max-width:270px}
 .history-token-labels{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
 .history-token-primary{display:block;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e9f1ff;font-weight:800;font-size:12px}
@@ -1171,7 +1173,7 @@ async function loadTransactionHistory(){
    wallet.className="history-wallet-address";wallet.textContent=historyShortAddress(tx.source_wallet_address);
    wallet.title=tx.source_wallet_address||"";walletCell.append(wallet);row.append(walletCell);
    const statusCell=document.createElement("td");const status=String(tx.status||"unknown").toLowerCase();
-   statusCell.append(historyPill(status.toUpperCase(),["confirmed","failed","pending","observed"].includes(status)?status:""));row.append(statusCell);
+   statusCell.append(historyPill(status.toUpperCase(),["confirmed","failed","pending","observed","needs_review"].includes(status)?status:""));row.append(statusCell);
    const actionCell=document.createElement("td");
    if(tx.signature){const link=document.createElement("a");link.className="history-link";link.href="https://solscan.io/tx/"+encodeURIComponent(tx.signature);link.target="_blank";link.rel="noopener noreferrer";link.textContent="View tx ↗";actionCell.append(link);const sig=document.createElement("small");sig.className="history-sub";sig.textContent=historyShortAddress(tx.signature);sig.title=tx.signature;actionCell.append(sig);}
    else actionCell.textContent="—";
@@ -1361,7 +1363,18 @@ async function loadPaperTradeHistory(reportOverride){
    row.append(profitCell);
 
    const ageCell=historyCell(row,formatPaperAge(order.created_at),"paper-age");
-   if(order.created_at){ageCell.dataset.createdAt=order.created_at;ageCell.title="Order created: "+historyDate(order.created_at);}
+   if(order.created_at){ageCell.dataset.createdAt=order.created_at;ageCell.title="Paper order created: "+historyDate(order.created_at);}
+   const sourceSignature=typeof details.source_signature==="string"?details.source_signature:"";
+   if(/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(sourceSignature)){
+    const sourceLink=document.createElement("a");
+    sourceLink.className="history-link paper-source-link";
+    sourceLink.href="https://solscan.io/tx/"+encodeURIComponent(sourceSignature);
+    sourceLink.target="_blank";
+    sourceLink.rel="noopener noreferrer";
+    sourceLink.textContent="Source TX ↗";
+    sourceLink.title="Open the original monitored on-chain transaction. This link does not represent a real trade by the simulator.";
+    ageCell.append(sourceLink);
+   }
 
    const networkCost=fill?.network_cost;
    const gasCell=historyCell(row,networkCost===null||networkCost===undefined?"—":(Number(networkCost)===0?"0":formatPaperUsd(networkCost,false)));

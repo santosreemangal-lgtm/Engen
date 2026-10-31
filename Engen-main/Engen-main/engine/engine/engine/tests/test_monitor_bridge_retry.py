@@ -61,6 +61,47 @@ class MonitorBridgeRetryTests(unittest.TestCase):
         )
         self.assertNotIn("paper_copy_status", output[0])
 
+    def test_needs_review_rpc_error_is_persisted_without_being_marked_processed(self):
+        from uuid import uuid4
+
+        profile_store = Mock()
+        simulator = Mock()
+        simulator.orders = {}
+        simulator.processed_signals = set()
+        signature = "1" * 63 + "2"
+        result = {
+            "signature": signature,
+            "available": False,
+            "metadata_complete": False,
+            "metadata_status": "rpc_error",
+            "processing_status": "needs_review",
+            "error": "Public Solana RPC request failed.",
+            "retryable": False,
+        }
+        with (
+            patch("dashboard.monitor_bridge.SignatureStore") as store_class,
+            patch("dashboard.monitor_bridge.monitor_wallet", return_value=[result]),
+            patch("dashboard.monitor_bridge.queue_paper_orders", return_value=[]),
+            patch("dashboard.monitor_bridge.execute_pending_paper_orders", return_value=[]),
+        ):
+            store = store_class.return_value
+            scan = create_scan_function(
+                side_getter=lambda: "BOTH",
+                settings_getter=lambda: {},
+                simulator_getter=lambda: simulator,
+                profile_id=str(uuid4()),
+                profile_store=profile_store,
+            )
+            output = scan(WALLET)
+
+        self.assertEqual(output[0]["profile_history_status"], "saved")
+        self.assertEqual(profile_store.save_transaction.call_args.kwargs["status"], "needs_review")
+        self.assertEqual(
+            profile_store.save_transaction.call_args.kwargs["evidence"]["processing_status"],
+            "needs_review",
+        )
+        store.mark_processed.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

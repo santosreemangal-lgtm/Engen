@@ -9,10 +9,12 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 DEFAULT_DB_PATH = Path("data/profiles.db")
-MAX_WALLET_ACTIVITY_TRANSACTIONS = 1000
+MAX_PROFILE_ACTIVITY_TRANSACTIONS = 1000
+# Backward-compatible name for callers/tests that use the older constant.
+MAX_WALLET_ACTIVITY_TRANSACTIONS = MAX_PROFILE_ACTIVITY_TRANSACTIONS
 LABELS = {"BUY_CANDIDATE", "SELL_CANDIDATE", "TRANSFER", "UNKNOWN",
           "FAILED_TRANSACTION", "RENT", "LIQUIDITY_OPERATION"}
-STATUSES = {"observed", "confirmed", "failed", "pending", "unknown"}
+STATUSES = {"observed", "confirmed", "failed", "pending", "unknown", "needs_review"}
 ADDRESS_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
@@ -160,46 +162,63 @@ class ProfileStore:
                 db.execute("PRAGMA user_version=1")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_transactions_wallet_history
                 ON transactions(source_wallet_address, block_time DESC, observed_at DESC, signature DESC)""")
-            wallets = [row[0] for row in db.execute(
-                "SELECT DISTINCT source_wallet_address FROM transactions"
+            profile_ids = [row[0] for row in db.execute(
+                "SELECT profile_id FROM profiles"
             )]
             pruned = sum(
-                self._prune_wallet_transactions(db, wallet, MAX_WALLET_ACTIVITY_TRANSACTIONS)
-                for wallet in wallets
+                self._prune_profile_transactions(
+                    db, profile_id, MAX_PROFILE_ACTIVITY_TRANSACTIONS
+                )
+                for profile_id in profile_ids
             )
         if pruned:
             self._compact_after_retention()
 
     @staticmethod
-    def _prune_wallet_transactions(db, wallet_address, limit=MAX_WALLET_ACTIVITY_TRANSACTIONS):
-        """Keep the newest observed history rows per source wallet."""
+    def _prune_profile_transactions(
+        db, profile_id, limit=MAX_PROFILE_ACTIVITY_TRANSACTIONS
+    ):
+        """Keep the newest activity rows across all source wallets in one profile.
+
+        Remove only the selected profile's association. A transaction shared by
+        another profile remains available to that other profile.
+        """
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+            raise ValueError("Activity retention limit must be a positive integer.")
         count = db.execute(
-            "SELECT COUNT(*) FROM transactions WHERE source_wallet_address=?",
-            (wallet_address,),
+            "SELECT COUNT(*) FROM profile_transactions WHERE profile_id=?",
+            (profile_id,),
         ).fetchone()[0]
         if count <= limit:
             return 0
         stale = """
             SELECT signature FROM (
-                SELECT signature,
+                SELECT p.signature,
                        ROW_NUMBER() OVER (
-                           ORDER BY CASE WHEN block_time IS NULL THEN 1 ELSE 0 END,
-                                    block_time DESC, observed_at DESC, signature DESC
+                           ORDER BY CASE WHEN t.block_time IS NULL THEN 1 ELSE 0 END,
+                                    t.block_time DESC, t.observed_at DESC, t.signature DESC
                        ) AS retention_rank
-                FROM transactions
-                WHERE source_wallet_address=?
+                FROM profile_transactions p
+                JOIN transactions t ON t.signature=p.signature
+                WHERE p.profile_id=?
             ) ranked
             WHERE retention_rank>?
         """
-        db.execute(
-            "DELETE FROM profile_transactions WHERE signature IN (" + stale + ")",
-            (wallet_address, limit),
-        )
         before = db.total_changes
         db.execute(
-            "DELETE FROM transactions WHERE source_wallet_address=? AND signature IN (" + stale + ")",
-            (wallet_address, wallet_address, limit),
+            "DELETE FROM profile_transactions WHERE profile_id=? AND signature IN ("
+            + stale + ")",
+            (profile_id, profile_id, limit),
         )
+        # A transaction shared with another profile remains there. Delete only
+        # rows that no profile can see after this profile's retention pass.
+        db.execute("""
+            DELETE FROM transactions
+            WHERE NOT EXISTS (
+                SELECT 1 FROM profile_transactions p
+                WHERE p.signature=transactions.signature
+            )
+        """)
         return db.total_changes - before
 
     def _compact_after_retention(self):
@@ -412,7 +431,9 @@ class ProfileStore:
                     raise ValueError("Associate source wallet with profile before linking transaction.")
                 db.execute("INSERT OR IGNORE INTO profile_transactions VALUES(?,?,?)",
                            (pid,signature,utc_now()))
-            self._prune_wallet_transactions(db, source_wallet_address)
+                self._prune_profile_transactions(
+                    db, pid, MAX_PROFILE_ACTIVITY_TRANSACTIONS
+                )
         return signature
 
     def save_balance_snapshot(self, profile_id, wallet_address, token_mint, raw_amount,

@@ -1,4 +1,6 @@
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -65,6 +67,32 @@ class TransactionMonitorTests(unittest.TestCase):
             timeout=10,
         )
 
+    def test_fetches_transactions_concurrently_and_preserves_input_order(self):
+        barrier = threading.Barrier(2)
+        completed = []
+
+        def fetch(**kwargs):
+            signature = kwargs["signature"]
+            barrier.wait(timeout=2)
+            if signature == "sig-slow":
+                time.sleep(0.03)
+            completed.append(signature)
+            return {"signature": signature, "available": True}
+
+        with patch(
+            "engine.transaction_monitor.process_transaction_signature",
+            side_effect=fetch,
+        ):
+            results = process_new_signatures(
+                signatures=[
+                    {"signature": "sig-slow"},
+                    {"signature": "sig-fast"},
+                ],
+            )
+
+        self.assertEqual([item["signature"] for item in results], ["sig-slow", "sig-fast"])
+        self.assertEqual(completed, ["sig-fast", "sig-slow"])
+
     def test_rejects_non_list_input(self):
         with self.assertRaises(ValueError):
             process_new_signatures(
@@ -73,17 +101,18 @@ class TransactionMonitorTests(unittest.TestCase):
 
     @patch("engine.transaction_monitor.process_transaction_signature")
     def test_processes_multiple_signatures(self, mock_process):
-        mock_process.side_effect = [
-            {
+        responses = {
+            "sig-1": {
                 "signature": "sig-1",
                 "available": True,
             },
-            {
+            "sig-2": {
                 "signature": "sig-2",
                 "available": False,
                 "error": "Transaction data is not available yet.",
             },
-        ]
+        }
+        mock_process.side_effect = lambda **kwargs: responses[kwargs["signature"]]
 
         results = process_new_signatures(
             signatures=[

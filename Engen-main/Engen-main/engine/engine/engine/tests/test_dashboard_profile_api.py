@@ -37,6 +37,22 @@ class DashboardProfileApiTests(unittest.TestCase):
         dashboard_server.profile_monitor_services.pop(self.profile_id, None)
         self.temp.cleanup()
 
+    def _get_dashboard_api(self, path):
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), dashboard_server.DashboardHandler)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        request = Request("http://127.0.0.1:%s%s" % (httpd.server_port, path))
+        try:
+            try:
+                with urlopen(request, timeout=3) as response:
+                    return response.status, json.loads(response.read().decode("utf-8"))
+            except HTTPError as error:
+                return error.code, json.loads(error.read().decode("utf-8"))
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            thread.join(timeout=2)
+
     def _post_dashboard_api(self, path, payload):
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), dashboard_server.DashboardHandler)
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -238,6 +254,21 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertEqual(report["error"], "SolanaRPCError")
         self.assertFalse(report["transaction_broadcast"])
 
+    def test_uninitialized_virtual_cash_does_not_appear_as_zero_portfolio(self):
+        dashboard_server.profile_paper_simulators.pop(self.profile_id, None)
+        try:
+            dashboard_server.get_profile_paper_simulator(self.profile_id)
+            report = dashboard_server.load_profile_paper_simulation_report(self.profile_id)
+
+            self.assertTrue(report["database_available"])
+            self.assertIsNone(report["available_balance"])
+            self.assertIsNone(report["available_balance_usd"])
+            self.assertIsNone(report["portfolio_value_usd"])
+            self.assertEqual(report["realized_pnl_usd"], "0")
+            self.assertEqual(report["unrealized_pnl_usd"], "0")
+        finally:
+            dashboard_server.profile_paper_simulators.pop(self.profile_id, None)
+
     def test_virtual_usd_balance_can_be_changed_and_survives_reload(self):
         first = dashboard_server.set_profile_virtual_balance(self.profile_id, "1250.50")
         self.assertEqual(first["mint"], "USD")
@@ -340,6 +371,51 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertFalse(stored["simulated"])
         paper_report = dashboard_server.load_profile_paper_simulation_report(self.profile_id)
         self.assertEqual(paper_report["orders"], [])
+    def test_profile_paper_history_endpoint_is_database_only(self):
+        database = dashboard_server.profile_paper_db_path(self.profile_id)
+        database.parent.mkdir(parents=True, exist_ok=True)
+        database.touch()
+
+        expected_order = {
+            "order_id": "paper-order-1",
+            "side": "BUY",
+            "asset_mint": TOKEN_MINT,
+            "status": "FILLED",
+            "details": {"source_signature": "source-signature"},
+        }
+        expected_fill = {
+            "fill_id": "paper-fill-1",
+            "order_id": "paper-order-1",
+            "side": "BUY",
+            "asset_mint": TOKEN_MINT,
+            "quantity": "1.25",
+            "execution_price": "2",
+            "gross_quote": "2.5",
+            "net_quote": "2.51",
+            "created_at": "2026-10-31T09:00:00+00:00",
+        }
+
+        class FakeSimulator:
+            def report(self):
+                return {"orders": [expected_order], "fills": [expected_fill]}
+
+        with patch.object(
+            dashboard_server, "get_profile_paper_simulator",
+            return_value=FakeSimulator(),
+        ), patch.object(
+            dashboard_server, "fetch_market_price",
+            side_effect=AssertionError("Paper history must not wait for market prices."),
+        ):
+            status, body = self._get_dashboard_api(
+                "/api/profile-paper-history?profile_id=" + self.profile_id
+            )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["orders"][0]["order_id"], "paper-order-1")
+        self.assertEqual(body["fills"][0]["fill_id"], "paper-fill-1")
+        self.assertFalse(body["real_trading"])
+        self.assertFalse(body["transaction_broadcast"])
+
     def test_profile_paper_reports_keep_balances_and_history_separate(self):
         second_profile = self.store.create_profile("Second API profile")
         first_db = dashboard_server.profile_paper_db_path(self.profile_id)

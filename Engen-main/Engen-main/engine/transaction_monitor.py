@@ -1,5 +1,6 @@
 """Monitor public Solana wallet transactions without submitting trades."""
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 
 from engine.solana_public import DEFAULT_RPC_URL, SolanaRPCError, get_signature_status
@@ -40,6 +41,35 @@ def _unknown_signer_signal():
     }
 
 
+# RPC fetches are read-only and independent. Keep concurrency bounded so one
+# busy source wallet cannot create an unbounded burst against a public provider.
+MAX_TRANSACTION_FETCH_WORKERS = 4
+
+
+def _fetch_transaction_for_analysis(signature, rpc_url, timeout, latency_recorder):
+    """Fetch and locally analyze one signature without touching shared storage."""
+    try:
+        processor_options = {
+            "signature": signature,
+            "rpc_url": rpc_url,
+            "timeout": timeout,
+        }
+        if latency_recorder is not None:
+            processor_options["latency_recorder"] = latency_recorder
+        timer = (
+            latency_recorder.measure("transaction.process_total")
+            if latency_recorder is not None else nullcontext()
+        )
+        with timer:
+            return {"kind": "success", "result": process_transaction_signature(**processor_options)}
+    except ValueError:
+        return {"kind": "invalid_signature"}
+    except SolanaRPCError as exc:
+        return {"kind": "rpc_error", "error": str(exc)}
+    except Exception as exc:
+        return {"kind": "interpretation_error", "error_type": type(exc).__name__}
+
+
 def process_new_signatures(
     signatures,
     rpc_url=DEFAULT_RPC_URL,
@@ -55,31 +85,36 @@ def process_new_signatures(
         raise ValueError("Signatures must be provided as a list.")
 
     results = []
-
+    entries = []
     for item in signatures:
         if not isinstance(item, dict):
             continue
-
         signature = item.get("signature")
+        if isinstance(signature, str) and signature.strip():
+            entries.append((item, signature))
 
-        if not isinstance(signature, str) or not signature.strip():
-            continue
+    if len(entries) <= 1:
+        fetched = [
+            _fetch_transaction_for_analysis(signature, rpc_url, timeout, latency_recorder)
+            for _, signature in entries
+        ]
+    else:
+        worker_count = min(MAX_TRANSACTION_FETCH_WORKERS, len(entries))
+        with ThreadPoolExecutor(
+            max_workers=worker_count,
+            thread_name_prefix="solana-transaction-fetch",
+        ) as executor:
+            # executor.map preserves input order even when RPC requests finish
+            # in a different order. SQLite writes and classification stay serial.
+            fetched = list(executor.map(
+                lambda entry: _fetch_transaction_for_analysis(
+                    entry[1], rpc_url, timeout, latency_recorder
+                ),
+                entries,
+            ))
 
-        try:
-            processor_options = {
-                "signature": signature,
-                "rpc_url": rpc_url,
-                "timeout": timeout,
-            }
-            if latency_recorder is not None:
-                processor_options["latency_recorder"] = latency_recorder
-            timer = (
-                latency_recorder.measure("transaction.process_total")
-                if latency_recorder is not None else nullcontext()
-            )
-            with timer:
-                result = process_transaction_signature(**processor_options)
-        except ValueError:
+    for (item, signature), outcome in zip(entries, fetched):
+        if outcome["kind"] == "invalid_signature":
             # Invalid signatures are rejected before any transaction RPC call.
             results.append(_include_signature_observation({
                 "signature": signature,
@@ -90,13 +125,13 @@ def process_new_signatures(
                 "retryable": False,
             }, item))
             continue
-        except SolanaRPCError as exc:
+        if outcome["kind"] == "rpc_error":
             error_result = {
                 "signature": signature,
                 "available": False,
                 "metadata_complete": False,
                 "metadata_status": "rpc_error",
-                "error": str(exc),
+                "error": outcome["error"],
                 "retryable": True,
             }
             if (
@@ -106,12 +141,12 @@ def process_new_signatures(
             ):
                 failure = store.record_failure(
                     wallet_address, signature, "rpc_fetch",
-                    "rpc_error", str(exc),
+                    "rpc_error", outcome["error"],
                 )
                 error_result["processing_status"] = failure["status"]
             results.append(_include_signature_observation(error_result, item))
             continue
-        except Exception as exc:
+        if outcome["kind"] == "interpretation_error":
             error_result = {
                 "signature": signature,
                 "available": False,
@@ -127,11 +162,12 @@ def process_new_signatures(
             ):
                 failure = store.record_failure(
                     wallet_address, signature, "interpretation",
-                    type(exc).__name__, "Transaction interpretation failed.",
+                    outcome["error_type"], "Transaction interpretation failed.",
                 )
                 error_result["processing_status"] = failure["status"]
             results.append(_include_signature_observation(error_result, item))
             continue
+        result = outcome["result"]
 
         if (
             result.get("available") is False

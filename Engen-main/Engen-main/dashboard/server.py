@@ -6,6 +6,7 @@ import os
 import re
 import hmac
 import sqlite3
+import queue
 import uuid
 import sys
 import time
@@ -1002,6 +1003,45 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return
         if path.startswith("/api/") and not self._api_authorized():
             self.send_json(401, {"error": "Dashboard API authentication required."})
+            return
+
+        if path == "/api/profile-events":
+            query = parse_qs(urlparse(self.path).query)
+            profile_id = (query.get("profile_id") or [""])[0]
+            try:
+                canonical = canonical_profile_id(profile_id)
+                if get_profile_record(canonical) is None:
+                    self.send_json(404, {"error": "Profile not found."})
+                    return
+                service = get_profile_monitor_service(canonical)
+                subscriber = service.subscribe_events()
+            except ValueError as exc:
+                self.send_json(400, {"error": str(exc)})
+                return
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache, no-transform")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            try:
+                self.wfile.write(b": connected\n\n")
+                self.wfile.flush()
+                while True:
+                    try:
+                        event = subscriber.get(timeout=15)
+                        payload = json.dumps(event, separators=(",", ":"))
+                        self.wfile.write(
+                            ("event: monitor\ndata: " + payload + "\n\n").encode("utf-8")
+                        )
+                    except queue.Empty:
+                        self.wfile.write(b": keep-alive\n\n")
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                service.unsubscribe_events(subscriber)
             return
 
         if path == "/api/wallets":

@@ -17,6 +17,25 @@ class SignatureRetryBackoffTests(unittest.TestCase):
             store.save(WALLET, SIGNATURE)
             self.assertEqual(store.get_pending_signatures(WALLET), [SIGNATURE])
 
+    def test_newest_unattempted_signature_is_processed_first(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "signatures.db"
+            store = SignatureStore(path)
+            older = "1" * 63 + "2"
+            newer = "1" * 63 + "3"
+            store.save(WALLET, older)
+            store.save(WALLET, newer)
+            with sqlite3.connect(path) as db:
+                db.execute(
+                    "UPDATE seen_signatures SET first_seen_at='2026-10-31 09:00:00' WHERE signature=?",
+                    (older,),
+                )
+                db.execute(
+                    "UPDATE seen_signatures SET first_seen_at='2026-10-31 10:00:00' WHERE signature=?",
+                    (newer,),
+                )
+            self.assertEqual(store.get_pending_signatures(WALLET, limit=1), [newer])
+
     def test_retry_backoff_delays_repeated_rpc_failures(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "signatures.db"

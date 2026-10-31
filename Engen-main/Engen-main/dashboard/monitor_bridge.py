@@ -332,7 +332,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     and item.get("retryable") is not True
                     and (not is_candidate or item.get("historical_baseline") is True)
                 ):
-                    store.mark_processed(address, signature)
+                    mark_signature_processed(signature)
             results = [
                 {**item, "paper_copy_error": "Paper-copy order queue failed."}
                 for item in results

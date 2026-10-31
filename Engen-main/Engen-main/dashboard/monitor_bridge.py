@@ -17,10 +17,10 @@ from engine.solana_validation import is_valid_transaction_signature
 
 
 @contextmanager
-def _measured_paper_lock(latency_recorder, stage):
+def _measured_paper_lock(lock, latency_recorder, stage):
     """Measure lock wait separately from the short, mutation-only critical section."""
     waiting_since = perf_counter_ns()
-    PAPER_SIMULATOR_LOCK.acquire()
+    lock.acquire()
     latency_recorder.record(
         "dashboard.paper_lock_wait",
         (perf_counter_ns() - waiting_since) / 1_000_000,
@@ -29,12 +29,13 @@ def _measured_paper_lock(latency_recorder, stage):
         with latency_recorder.measure(stage):
             yield
     finally:
-        PAPER_SIMULATOR_LOCK.release()
+        lock.release()
 
 
 def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter=None,
                          simulator_getter=None, profile_id=None, profile_store=None,
-                         latency_recorder=None, price_provider=None):
+                         latency_recorder=None, price_provider=None,
+                         simulator_lock_getter=None):
     """Create a measured read-only scanner with short paper-ledger lock sections."""
     store = SignatureStore()
     latency_recorder = latency_recorder or LatencyRecorder()
@@ -148,10 +149,15 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             allowed_sides = side_getter() if side_getter is not None else "BOTH"
             copy_settings = settings_getter() if settings_getter is not None else {}
             simulator = simulator_getter() if simulator_getter is not None else get_paper_simulator()
+            simulator_lock = (
+                simulator_lock_getter()
+                if simulator_lock_getter is not None
+                else PAPER_SIMULATOR_LOCK
+            )
 
             # Queue mutations are protected, but public market-data requests are
             # deliberately performed after releasing the shared simulator lock.
-            with _measured_paper_lock(latency_recorder, "dashboard.paper_order_queue"):
+            with _measured_paper_lock(simulator_lock, latency_recorder, "dashboard.paper_order_queue"):
                 queued_orders = queue_paper_orders(
                     address, results, simulator=simulator,
                     allowed_sides=allowed_sides, copy_settings=copy_settings
@@ -161,7 +167,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
                 "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
             }
-            with _measured_paper_lock(latency_recorder, "dashboard.paper_order_snapshot"):
+            with _measured_paper_lock(simulator_lock, latency_recorder, "dashboard.paper_order_snapshot"):
                 pending_orders = [
                     dict(order, details=dict(order.get("details") or {}))
                     for order in simulator.orders.values()
@@ -214,7 +220,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
 
             # Re-enter only for in-memory validation, simulator state changes and
             # SQLite persistence. No network I/O occurs while this lock is held.
-            with _measured_paper_lock(latency_recorder, "dashboard.paper_simulation"):
+            with _measured_paper_lock(simulator_lock, latency_recorder, "dashboard.paper_simulation"):
                 execution_outcomes = execute_pending_paper_orders(
                     address, simulator=simulator, price_provider=prefetched_price
                 )
@@ -231,7 +237,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 if isinstance(item, dict) and isinstance(item.get("signature"), str)
             }
             allowed_mode = allowed_sides.upper() if isinstance(allowed_sides, str) else "NONE"
-            with _measured_paper_lock(latency_recorder, "dashboard.paper_result_commit"):
+            with _measured_paper_lock(simulator_lock, latency_recorder, "dashboard.paper_result_commit"):
                 processed_signals = getattr(simulator, "processed_signals", set())
                 for item in results:
                     signature = item.get("signature")

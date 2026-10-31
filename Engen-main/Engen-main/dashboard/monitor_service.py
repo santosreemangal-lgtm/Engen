@@ -1,6 +1,7 @@
 """Read-only wallet monitor with WebSocket notifications and polling fallback."""
 
 import os
+import queue
 import threading
 import time
 from datetime import datetime, timezone
@@ -34,6 +35,7 @@ class MonitorService:
         self._thread = None
         self._websocket_threads = {}
         self._pending_websocket_wallets = set()
+        self._event_subscribers = set()
         self._wallets = {}
         self._enabled = False
 
@@ -239,6 +241,37 @@ class MonitorService:
         stopped = all(worker is None or not worker.is_alive() for worker in workers)
         return {**self.status(), "worker_stopped": stopped}
 
+    def subscribe_events(self, maxsize=32):
+        """Subscribe to completed scans; each queue receives the newest event."""
+        if not isinstance(maxsize, int) or isinstance(maxsize, bool) or maxsize < 1:
+            raise ValueError("Event queue size must be a positive integer.")
+        subscriber = queue.Queue(maxsize=maxsize)
+        with self._lock:
+            self._event_subscribers.add(subscriber)
+        return subscriber
+
+    def unsubscribe_events(self, subscriber):
+        """Remove a dashboard event subscriber."""
+        with self._lock:
+            self._event_subscribers.discard(subscriber)
+
+    def _publish_event(self, event):
+        """Publish a bounded event after the scan function and paper pipeline finish."""
+        with self._lock:
+            subscribers = list(self._event_subscribers)
+        for subscriber in subscribers:
+            try:
+                subscriber.put_nowait(event)
+            except queue.Full:
+                try:
+                    subscriber.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    subscriber.put_nowait(event)
+                except queue.Full:
+                    pass
+
     def _scan_one(self, address, source):
         with self._lock:
             if address not in self._wallets or self._stop_event.is_set():
@@ -250,31 +283,46 @@ class MonitorService:
             results = self._scan_function(address)
             if not isinstance(results, list):
                 results = []
+            duration_ms = round((time.perf_counter_ns() - started_ns) / 1_000_000, 3)
+            completed_at = datetime.now(timezone.utc).isoformat()
             with self._lock:
                 if address in self._wallets:
                     self._wallets[address].update({
                         "state": "connected",
-                        "last_scan": scanned_at,
-                        "last_scan_duration_ms": round(
-                            (time.perf_counter_ns() - started_ns) / 1_000_000, 3
-                        ),
-                        "last_successful_check": scanned_at,
+                        "last_scan": completed_at,
+                        "last_scan_duration_ms": duration_ms,
+                        "last_successful_check": completed_at,
                         "last_error": None,
                         "latest_results": results[:20],
                         "last_scan_source": source,
                     })
+            self._publish_event({
+                "type": "wallet_scan_complete",
+                "wallet_address": address,
+                "source": source,
+                "scan_completed_at": completed_at,
+                "scan_duration_ms": duration_ms,
+                "result_count": len(results),
+            })
         except Exception:
+            duration_ms = round((time.perf_counter_ns() - started_ns) / 1_000_000, 3)
+            completed_at = datetime.now(timezone.utc).isoformat()
             with self._lock:
                 if address in self._wallets:
                     self._wallets[address].update({
                         "state": "error",
-                        "last_scan": scanned_at,
-                        "last_scan_duration_ms": round(
-                            (time.perf_counter_ns() - started_ns) / 1_000_000, 3
-                        ),
+                        "last_scan": completed_at,
+                        "last_scan_duration_ms": duration_ms,
                         "last_error": "Monitoring scan failed; sensitive error details are hidden.",
                         "last_scan_source": source,
                     })
+            self._publish_event({
+                "type": "wallet_scan_error",
+                "wallet_address": address,
+                "source": source,
+                "scan_completed_at": completed_at,
+                "scan_duration_ms": duration_ms,
+            })
 
     def _run(self):
         """Poll on schedule and immediately rescan wallets signalled by WebSocket."""

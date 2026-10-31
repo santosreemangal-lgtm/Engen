@@ -65,6 +65,27 @@ class TransactionMonitorTests(unittest.TestCase):
             timeout=10,
         )
 
+    @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_transaction_rpc_fetches_overlap_with_bounded_workers(self, mock_process):
+        import threading
+        from time import monotonic
+
+        barrier = threading.Barrier(4)
+
+        def process(**kwargs):
+            barrier.wait(timeout=2)
+            return {"signature": kwargs["signature"], "available": True}
+
+        mock_process.side_effect = process
+        signatures = [{"signature": "sig-" + str(index)} for index in range(4)]
+        started = monotonic()
+        results = process_new_signatures(signatures=signatures)
+        elapsed = monotonic() - started
+
+        self.assertEqual([item["signature"] for item in results], [item["signature"] for item in signatures])
+        self.assertEqual(mock_process.call_count, 4)
+        self.assertLess(elapsed, 1.5)
+
     def test_rejects_non_list_input(self):
         with self.assertRaises(ValueError):
             process_new_signatures(

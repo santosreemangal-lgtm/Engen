@@ -933,8 +933,10 @@ def profile_monitor_report(profile_id):
     return {
         "profile_id": canonical,
         "profile_status": profile["status"],
-        "rpc_timeout_seconds": MONITOR_RPC_TIMEOUT_SECONDS,
-        "monitor": status,
+        "monitor": {
+            **status,
+            "rpc_timeout_seconds": MONITOR_RPC_TIMEOUT_SECONDS,
+        },
     }
 
 

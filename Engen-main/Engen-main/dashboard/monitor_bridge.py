@@ -1,6 +1,7 @@
 
 """Bridge between the dashboard and the read-only Solana engine."""
 
+import re
 import sqlite3
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
@@ -82,31 +83,72 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             block_time = observation.get("block_time", item.get("block_time"))
             if not isinstance(block_time, int) or isinstance(block_time, bool) or block_time < 0:
                 block_time = None
-            # The engine represents delta_amount in raw base units (integers).
-            # Store that exact amount; the history API converts it using decimals.
+            # Never attach an arbitrary balance row to UNKNOWN/PENDING history.
+            # The history amount is populated only for a confirmed, signer-owned
+            # one-asset swap, and aggregates every SPL account row for that mint.
             token_mint = None
             token_decimals = None
             raw_amount = None
+            token_amount_attribution = "unavailable_not_verified_swap"
+            asset_mints = signal.get("asset_mints")
+            quote_mints = signal.get("quote_mints")
+            signers = item.get("signers")
+            verified_swap = (
+                classification in ("BUY_CANDIDATE", "SELL_CANDIDATE")
+                and item.get("status") == "success"
+                and item.get("metadata_complete") is True
+                and item.get("retryable") is not True
+                and confirmation in ("confirmed", "finalized")
+                and isinstance(signers, list)
+                and address in signers
+                and isinstance(asset_mints, list)
+                and len(asset_mints) == 1
+                and isinstance(quote_mints, list)
+                and len(quote_mints) == 1
+                and isinstance(asset_mints[0], str)
+                and isinstance(quote_mints[0], str)
+                and asset_mints[0] != quote_mints[0]
+            )
             changes = item.get("token_balance_changes")
-            if isinstance(changes, list):
-                candidate_mints = signal.get("asset_mints")
-                candidate_mints = candidate_mints if isinstance(candidate_mints, list) else []
-                ordered_changes = sorted(
-                    (change for change in changes if isinstance(change, dict)),
-                    key=lambda change: 0 if change.get("mint") in candidate_mints else 1,
-                )
-                for change in ordered_changes:
-                    mint = change.get("mint")
+            if verified_swap and isinstance(changes, list):
+                asset_mint = asset_mints[0]
+                matching_deltas = []
+                decimals_seen = set()
+                for change in changes:
+                    if (
+                        not isinstance(change, dict)
+                        or change.get("owner") != address
+                        or change.get("mint") != asset_mint
+                        or change.get("source") == "native_sol"
+                    ):
+                        continue
                     decimals = change.get("decimals")
                     raw_change = change.get("delta_amount")
-                    if not isinstance(mint, str) or not isinstance(decimals, int) or isinstance(decimals, bool) or not 0 <= decimals <= 30:
+                    if (
+                        not isinstance(decimals, int)
+                        or isinstance(decimals, bool)
+                        or not 0 <= decimals <= 30
+                    ):
                         continue
-                    if not isinstance(raw_change, str) or not (raw_change[1:].isdigit() if raw_change.startswith("-") else raw_change.isdigit()):
+                    if isinstance(raw_change, bool) or not isinstance(raw_change, (str, int)):
                         continue
-                    token_mint = mint
-                    token_decimals = decimals
-                    raw_amount = str(abs(int(raw_change)))
-                    break
+                    raw_text = str(raw_change)
+                    if re.fullmatch(r"-?\\d+", raw_text) is None:
+                        continue
+                    decimals_seen.add(decimals)
+                    matching_deltas.append(int(raw_text))
+                if len(decimals_seen) == 1 and matching_deltas:
+                    aggregate_delta = sum(matching_deltas)
+                    direction_matches = (
+                        aggregate_delta > 0
+                        if classification == "BUY_CANDIDATE"
+                        else aggregate_delta < 0
+                    )
+                    if direction_matches:
+                        token_mint = asset_mint
+                        token_decimals = next(iter(decimals_seen))
+                        raw_amount = str(abs(aggregate_delta))
+                        token_amount_attribution = "aggregated_wallet_owned_asset_rows"
             evidence = {
                 "metadata_status": str(item.get("metadata_status", "available"))[:80],
                 "processing_status": str(item.get("processing_status", "pending" if item.get("retryable") is True else "processed"))[:40],
@@ -116,7 +158,9 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 "activity_type": str(signal.get("activity_type", classification))[:60],
                 "confidence": str(signal.get("confidence", "unknown"))[:40],
                 "historical_baseline": item.get("historical_baseline") is True,
-                "monitored_wallet_is_signer": address in item.get("signers", []) if isinstance(item.get("signers"), list) else False,
+                "monitored_wallet_is_signer": address in signers if isinstance(signers, list) else False,
+                "token_amount_attribution": token_amount_attribution,
+                "verified_swap_for_paper_queue": verified_swap,
                 "real_trading": False,
                 "transaction_broadcast": False,
             }

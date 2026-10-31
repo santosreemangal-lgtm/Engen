@@ -6,6 +6,7 @@ and liquidity provider is connected.
 """
 import os
 import threading
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -33,6 +34,23 @@ PAPER_EXECUTION_COST_MULTIPLIER = (
     Decimal(10000 + PAPER_SLIPPAGE_BPS) / Decimal(10000)
     * Decimal(10000 + PAPER_FEE_BPS) / Decimal(10000)
 )
+
+MAX_SOURCE_TRADE_AGE_SECONDS = 60
+
+
+def source_trade_is_fresh(result, *, now=None, max_age_seconds=MAX_SOURCE_TRADE_AGE_SECONDS):
+    """Return true only when a verified source block time is no more than 60s old."""
+    if not isinstance(result, dict) or not isinstance(max_age_seconds, int) or isinstance(max_age_seconds, bool) or max_age_seconds < 0:
+        return False
+    observation = result.get("signature_observation")
+    block_time = observation.get("block_time") if isinstance(observation, dict) else None
+    if not isinstance(block_time, int) or isinstance(block_time, bool) or block_time < 0:
+        return False
+    current_time = time.time() if now is None else now
+    if not isinstance(current_time, (int, float)) or isinstance(current_time, bool):
+        return False
+    age_seconds = current_time - block_time
+    return 0 <= age_seconds <= max_age_seconds
 
 
 def _save_order_reason(simulator, order, reason, execution_state=None):
@@ -447,6 +465,7 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
             or observation.get("confirmation_status") not in ("confirmed", "finalized")
             or result.get("status") != "success"
             or result.get("metadata_complete") is not True
+            or not source_trade_is_fresh(result)
             or not isinstance(result.get("signers"), list)
             or wallet_address not in result.get("signers", [])
             or not isinstance(signal, dict)

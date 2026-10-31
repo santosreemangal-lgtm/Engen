@@ -289,9 +289,10 @@ function say(id,text){$(id).textContent=text;}
 function ordersForFillLookup(orders,fill){return Array.isArray(orders)?orders.find(order=>order.order_id===fill.order_id)||{}:{};}
 function notifyTradeExecution(fill,order){
  const notice=$("trade-notification");
- const side=String(order?.side||"TRADE").toUpperCase();
- const amount=fill?.gross_quote!==undefined?" · $"+historyAmount(fill.gross_quote):"";
- notice.textContent=side+" paper trade executed"+amount;
+ const side=String(fill?.side||order?.side||"TRADE").toUpperCase();
+ const amount=fill?.net_quote??fill?.gross_quote;
+ const amountText=amount===undefined||amount===null?"": " · "+(side==="BUY"?"Spent $":"Received $")+exactHistoryAmount(amount);
+ notice.textContent=side+" paper trade filled"+amountText;
  notice.hidden=false;
 }
 function post(path,payload){return api(path,{method:"POST",body:JSON.stringify(payload)});}

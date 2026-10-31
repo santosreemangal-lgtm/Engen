@@ -474,6 +474,44 @@ def set_profile_virtual_balance(profile_id, amount):
     return {"profile_id": profile_id, "mint": "USD", "amount": format(value, "f"),
             "balance_updated": True, "real_trading": False, "transaction_broadcast": False}
 
+def load_profile_paper_history(profile_id):
+    """Return persisted paper fills without waiting for external market prices."""
+    profile_id = canonical_profile_id(profile_id)
+    if get_profile_record(profile_id) is None:
+        raise ValueError("Profile not found.")
+
+    path = profile_paper_db_path(profile_id)
+    if not path.is_file():
+        return {
+            "profile_id": profile_id,
+            "database_available": True,
+            "initialized": False,
+            "orders": [],
+            "fills": [],
+            "real_trading": False,
+            "transaction_broadcast": False,
+        }
+
+    # This read is intentionally local-only: simulator.report() reads the
+    # already persisted ledger and does not call RPC or market-price providers.
+    with paper_simulator_lock:
+        report = get_profile_paper_simulator(profile_id).report()
+    return {
+        "profile_id": profile_id,
+        "database_available": True,
+        "initialized": True,
+        "orders": [
+            {**order, "simulated": True, "real_trading": False,
+             "transaction_broadcast": False}
+            for order in report.get("orders", [])
+        ],
+        "fills": list(report.get("fills", [])),
+        "real_trading": False,
+        "transaction_broadcast": False,
+    }
+
+
+
 def load_profile_paper_simulation_report(profile_id):
     """Read one profile's isolated paper simulator and preserve legacy paper history."""
     profile_id = canonical_profile_id(profile_id)
@@ -1084,6 +1122,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if path == "/api/rpc-health":
             report = rpc_health_report()
             self.send_json(200, report)
+            return
+
+        if path == "/api/profile-paper-history":
+            query = parse_qs(urlparse(self.path).query)
+            profile_id = (query.get("profile_id") or [""])[0]
+            try:
+                report = load_profile_paper_history(profile_id)
+                self.send_json(200, report)
+            except ValueError as exc:
+                status = 404 if str(exc) == "Profile not found." else 400
+                self.send_json(status, {"error": str(exc)})
+            except (OSError, sqlite3.Error, RuntimeError) as exc:
+                self.send_json(503, {"error": "Paper history is temporarily unavailable (" + type(exc).__name__ + ")."})
             return
 
         if path == "/api/paper-simulation":

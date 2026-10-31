@@ -1178,7 +1178,7 @@ async function loadHistoryTokenMetadata(mints){
  return historyTokenMetadataQueue;
 }
 function historyLabelForClassification(value){
- const labels={BUY_CANDIDATE:"BUY",SELL_CANDIDATE:"SELL",FAILED_TRANSACTION:"FAILED",TRANSFER:"TRANSFER",LIQUIDITY_OPERATION:"LIQUIDITY_OPERATION",UNKNOWN:"UNKNOWN",RENT:"RENT"};
+ const labels={BUY_CANDIDATE:"BUY",SELL_CANDIDATE:"SELL",FAILED_TRANSACTION:"FAILED",TRANSFER:"TRANSFER",LIQUIDITY_OPERATION:"LIQUIDITY_OPERATION",UNKNOWN:"UNKNOWN",RENT:"RENT",STAKING:"STAKING",ACCOUNT_ACTIVITY:"ACCOUNT ACTIVITY"};
  return labels[value]||String(value||"UNKNOWN").replaceAll("_"," ");
 }
 function historyClassificationKind(value){
@@ -1230,8 +1230,9 @@ async function loadTransactionHistory(){
    const ageCell=historyCell(row,formatPaperAge(tx.observed_at),"history-age");
    if(tx.observed_at){ageCell.dataset.createdAt=tx.observed_at;ageCell.title="Observed: "+historyDate(tx.observed_at);}
    const typeCell=document.createElement("td");
-   const typePill=historyPill(historyLabelForClassification(tx.classification),sideKind);
-   typePill.title=String(tx.classification||"UNKNOWN").replaceAll("_"," ");
+   const activityType=String(tx.evidence&&tx.evidence.activity_type||tx.classification||"UNKNOWN");
+   const typePill=historyPill(historyLabelForClassification(activityType),sideKind);
+   typePill.title=String(tx.classification||"UNKNOWN").replaceAll("_"," ")+(activityType!==tx.classification?" · "+activityType.replaceAll("_"," "):"");
    typeCell.append(typePill);row.append(typeCell);
    row.append(makeHistoryTokenCell(tx.token_mint));
    const amountCell=historyCell(row,historyAmount(tx.amount));

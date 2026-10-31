@@ -23,6 +23,7 @@ PAPER_SIMULATOR_DB = Path(
 )
 _SIMULATOR = None
 PAPER_SIMULATOR_LOCK = threading.RLock()
+PAPER_EXECUTION_PRICE_TIMEOUT_SECONDS = 3.0
 # Small paper orders may use smaller pools, but the required liquidity scales
 # with the simulated notional so larger orders still require deeper markets.
 MIN_PAPER_LIQUIDITY_USD = Decimal("1000")
@@ -127,10 +128,19 @@ def _quote_change_matches_side(amount, side):
     return amount < 0 if side == "BUY" else amount > 0
 
 
+def _fetch_execution_market_price(mint):
+    """Make one bounded public-price request; later scans retry transient misses."""
+    return fetch_market_price(
+        mint,
+        timeout=PAPER_EXECUTION_PRICE_TIMEOUT_SECONDS,
+        max_attempts=1,
+    )
+
+
 def execute_pending_paper_orders(wallet_address=None, simulator=None, price_provider=None):
     """Retry queued automatic paper orders using fresh public market snapshots."""
     simulator = simulator or get_paper_simulator()
-    price_provider = price_provider or fetch_market_price
+    price_provider = price_provider or _fetch_execution_market_price
     now = datetime.now(timezone.utc).isoformat()
     outcomes = []
 

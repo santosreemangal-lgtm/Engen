@@ -1038,7 +1038,7 @@ class TransactionAnalysisTests(unittest.TestCase):
             "transaction": {
                 "message": {
                     "instructions": [
-                        {"programId": "UnrecognizedSwapProgram111111111111111111111"},
+                        {"programId": "UnrecognizedProgram111111111111111111111111111"},
                         {
                             "program": "spl-token",
                             "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",

@@ -704,6 +704,7 @@ async function loadMonitor(){
   const performanceParts=[];
   if(Number.isFinite(Number(report.last_cycle_duration_ms)))performanceParts.push("Cycle "+Number(report.last_cycle_duration_ms).toFixed(1)+" ms");
   if(Number.isFinite(Number(report.last_cycle_wallet_count)))performanceParts.push((Number(report.last_cycle_wallet_count)||0)+" wallets / "+(Number(report.scan_workers)||1)+" workers");
+  if(Number.isFinite(Number(report.rpc_timeout_seconds)))performanceParts.push("RPC timeout "+Number(report.rpc_timeout_seconds).toFixed(1)+" s");
   const signatureLatency=latencyLabel("wallet.signature_fetch");if(signatureLatency)performanceParts.push("Signature RPC "+signatureLatency);
   const transactionLatency=latencyLabel("transaction.rpc_fetch");if(transactionLatency)performanceParts.push("Transaction RPC "+transactionLatency);
   const paperLatency=latencyLabel("dashboard.paper_simulation");if(paperLatency)performanceParts.push("Paper simulation "+paperLatency);

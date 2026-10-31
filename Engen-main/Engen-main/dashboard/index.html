@@ -1379,16 +1379,85 @@ async function sharePaperTrade(order,fill,pnlEvent,button){
   setTimeout(()=>{if(button.isConnected){button.textContent=original;button.title="Share or copy this paper trade summary";}},1600);
  }
 }
+function updatePaperSoundToggle(){
+ const button=$("paper-sound-toggle");
+ if(!button)return;
+ button.textContent=paperSoundEnabled?"Paper sound: On":"Paper sound: Off";
+ button.setAttribute("aria-pressed",paperSoundEnabled?"true":"false");
+ button.title=paperSoundEnabled
+  ?"Soft sound enabled for newly recorded paper fills only."
+  :"Enable a soft sound for newly recorded paper fills only.";
+}
+function setPaperSoundEnabled(enabled){
+ paperSoundEnabled=enabled===true;
+ try{localStorage.setItem("paper-fill-sound-enabled",paperSoundEnabled?"true":"false");}catch{}
+ if(paperSoundEnabled){
+  const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+  if(AudioContextClass){
+   try{
+    if(!paperAudioContext)paperAudioContext=new AudioContextClass();
+    if(paperAudioContext.state==="suspended")void paperAudioContext.resume();
+   }catch{paperAudioContext=null;}
+  }
+ }
+ updatePaperSoundToggle();
+}
+function playPaperFillSound(){
+ if(!paperSoundEnabled||!paperAudioContext||paperAudioContext.state!=="running")return;
+ const context=paperAudioContext;
+ const start=context.currentTime+0.02;
+ [[660,0],[880,0.14]].forEach(([frequency,offset])=>{
+  const oscillator=context.createOscillator();
+  const gain=context.createGain();
+  const toneStart=start+offset;
+  oscillator.type="sine";
+  oscillator.frequency.setValueAtTime(frequency,toneStart);
+  gain.gain.setValueAtTime(0.0001,toneStart);
+  gain.gain.exponentialRampToValueAtTime(0.025,toneStart+0.025);
+  gain.gain.exponentialRampToValueAtTime(0.0001,toneStart+0.13);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start(toneStart);
+  oscillator.stop(toneStart+0.14);
+ });
+}
+function trackNewPaperFills(profileId,fills){
+ if(!profileId)return;
+ const fillIds=(fills||[]).map(fill=>{
+  if(!fill||typeof fill!=="object")return null;
+  const stable=fill.fill_id||[
+   fill.order_id,fill.created_at,fill.quantity,fill.execution_price,fill.gross_quote
+  ].map(value=>String(value??"")).join("|");
+  return stable&&stable!=="||||"?"fill:"+String(stable):null;
+ }).filter(Boolean);
+ const existing=paperFillSoundStateByProfile.get(profileId);
+ if(!existing){
+  paperFillSoundStateByProfile.set(profileId,{ids:new Set(fillIds)});
+  return;
+ }
+ const fresh=fillIds.filter(id=>!existing.ids.has(id));
+ fillIds.forEach(id=>existing.ids.add(id));
+ if(fresh.length)playPaperFillSound();
+}
+$("paper-sound-toggle").addEventListener("click",()=>{
+ setPaperSoundEnabled(!paperSoundEnabled);
+ if(paperSoundEnabled&&!paperAudioContext){
+  say("paper-trade-history-message","This browser could not initialize audio notifications.");
+ }
+});
+updatePaperSoundToggle();
+
 async function loadPaperTradeHistory(reportOverride){
  const tbody=$("paper-trade-history-table");
- if(!selectedProfile){
+ const profileId=selectedProfile;
+ if(!profileId){
   historySetEmpty(tbody,9,"Select a profile to view simulated paper trades.");
   $("paper-trade-total").textContent="—";$("paper-fill-total").textContent="0 completed fills";
   say("paper-trade-history-message","");return;
  }
  try{
   let r=reportOverride;
-  if(!r){const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(selectedProfile));r=d.report||d;}
+  if(!r){const d=await api("/api/paper-simulation?profile_id="+encodeURIComponent(profileId));r=d.report||d;}
   if(r.error){historySetEmpty(tbody,9,"Paper history unavailable: "+r.error);say("paper-trade-history-message",r.error);return;}
   const activeOrders=Array.isArray(r.orders)?r.orders:[];
   const activeFills=Array.isArray(r.fills)?r.fills:[];
@@ -1403,6 +1472,7 @@ async function loadPaperTradeHistory(reportOverride){
   );
   const archivedFills=archivedSessions.flatMap(session=>Array.isArray(session.fills)?session.fills:[]);
   const archivedPnlEvents=archivedSessions.flatMap(session=>Array.isArray(session.pnl_events)?session.pnl_events:[]);
+  if(selectedProfile===profileId)trackNewPaperFills(profileId,[...activeFills,...archivedFills]);
   const allOrders=[...activeOrders,...archivedOrders].sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
   const orders=allOrders.slice(0,100);
   const visibleOrderIds=new Set(orders.map(order=>String(order.order_id||"")));

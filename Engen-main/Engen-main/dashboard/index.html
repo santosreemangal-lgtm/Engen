@@ -1242,6 +1242,7 @@ function paperOrderState(order,details,orders){
  if(order.status==="REJECTED"||details.execution_state==="REJECTED")return "FAILED TO EXECUTE";
  if(details.execution_state==="AWAITING_VIRTUAL_BALANCE")return "NEEDS PAPER BALANCE";
  if(details.execution_state==="WAITING_FOR_LIQUIDITY")return "CHECKING LIQUIDITY";
+ if(String(details.diagnostic_code||"").startsWith("LIQUIDITY_"))return "WAITING FOR LIQUIDITY DATA";
  if(details.execution_state==="AWAITING_VERIFIED_MARKET_DATA"||details.execution_state==="WAITING_FOR_MARKET_DATA")return "PREPARING TO EXECUTE";
  if(details.execution_state==="WAITING_FOR_POSITION"){
   const hasEarlierPendingBuy=orders.some(candidate=>{

@@ -222,6 +222,52 @@ class MonitorServiceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             MonitorService(lambda address: [], interval=14)
 
+    def test_wallet_scans_run_concurrently_with_bounded_workers(self):
+        first = "11111111111111111111111111111111"
+        second = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+        both_running = threading.Event()
+        release_scans = threading.Event()
+        state_lock = threading.Lock()
+        active = 0
+        maximum_active = 0
+
+        def concurrent_scan(address):
+            nonlocal active, maximum_active
+            with state_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+                if active >= 2:
+                    both_running.set()
+            release_scans.wait(timeout=3)
+            with state_lock:
+                active -= 1
+            return [{"signature": "result-" + address[:4], "available": True}]
+
+        service = MonitorService(concurrent_scan, interval=30, max_workers=2)
+        try:
+            service.start([first, second])
+            self.assertTrue(
+                both_running.wait(timeout=2),
+                "Both wallet scans should be in progress at the same time.",
+            )
+            self.assertEqual(service.status()["scan_workers"], 2)
+        finally:
+            release_scans.set()
+            service.stop_and_wait(timeout=3)
+
+        self.assertGreaterEqual(maximum_active, 2)
+        states = {item["address"]: item for item in service.status()["wallets"]}
+        self.assertGreater(states[first]["scan_duration_ms"], 0)
+        self.assertGreater(states[second]["scan_duration_ms"], 0)
+        self.assertEqual(states[first]["scan_count"], 1)
+        self.assertEqual(states[second]["scan_count"], 1)
+
+    def test_rejects_invalid_worker_count(self):
+        for workers in (0, -1, 17, True, "2"):
+            with self.subTest(workers=workers):
+                with self.assertRaises(ValueError):
+                    MonitorService(lambda address: [], max_workers=workers)
+
     def test_rejects_non_callable_scan_function(self):
         with self.assertRaises(ValueError):
             MonitorService(None)

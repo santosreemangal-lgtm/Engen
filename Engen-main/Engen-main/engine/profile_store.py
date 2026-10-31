@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from engine.solana_validation import is_valid_transaction_signature
+
 DEFAULT_DB_PATH = Path("data/profiles.db")
 MAX_WALLET_ACTIVITY_TRANSACTIONS = 1000
 LABELS = {"BUY_CANDIDATE", "SELL_CANDIDATE", "TRANSFER", "UNKNOWN",
@@ -158,6 +160,24 @@ class ProfileStore:
                 CREATE INDEX idx_transactions_observed ON transactions(observed_at);
                 """)
                 db.execute("PRAGMA user_version=1")
+            # This ledger intentionally has no foreign key to transactions:
+            # profile activity rows are pruned, while source links must survive.
+            db.execute("""CREATE TABLE IF NOT EXISTS source_trade_refs(
+                profile_id TEXT NOT NULL REFERENCES profiles(profile_id),
+                order_id TEXT NOT NULL,
+                source_wallet_address TEXT NOT NULL,
+                source_signature TEXT NOT NULL,
+                side TEXT NOT NULL CHECK(side IN ('BUY','SELL')),
+                asset_mint TEXT NOT NULL,
+                source_slot INTEGER,
+                source_block_time INTEGER,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(profile_id, order_id),
+                CHECK(source_slot IS NULL OR source_slot>=0),
+                CHECK(source_block_time IS NULL OR source_block_time>=0)
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_source_trade_refs_signature
+                ON source_trade_refs(profile_id, source_signature)""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_transactions_wallet_history
                 ON transactions(source_wallet_address, block_time DESC, observed_at DESC, signature DESC)""")
             wallets = [row[0] for row in db.execute(
@@ -414,6 +434,65 @@ class ProfileStore:
                            (pid,signature,utc_now()))
             self._prune_wallet_transactions(db, source_wallet_address)
         return signature
+
+    def save_source_trade_ref(self, profile_id, order_id, source_wallet_address,
+                              source_signature, side, asset_mint, *,
+                              source_slot=None, source_block_time=None, created_at=None):
+        """Persist a paper order's source link independently of prunable activity rows."""
+        if not isinstance(profile_id, str) or not profile_id.strip():
+            raise ValueError("A profile_id is required.")
+        if not isinstance(order_id, str) or not order_id.strip() or len(order_id) > 128:
+            raise ValueError("A valid paper order_id is required.")
+        validate_public_address(source_wallet_address, "source wallet address")
+        if not is_valid_transaction_signature(source_signature):
+            raise ValueError("A valid source transaction signature is required.")
+        if side not in {"BUY", "SELL"}:
+            raise ValueError("Source trade side must be BUY or SELL.")
+        validate_public_address(asset_mint, "asset mint")
+        for value, label in ((source_slot, "source slot"), (source_block_time, "source block time")):
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+                raise ValueError("Invalid " + label + ".")
+        timestamp = validate_timestamp(created_at or utc_now())
+        with self.session() as db:
+            if not db.execute(
+                "SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
+                (profile_id,),
+            ).fetchone():
+                raise ValueError("Profile not found.")
+            cursor = db.execute("""INSERT OR IGNORE INTO source_trade_refs(
+                profile_id,order_id,source_wallet_address,source_signature,side,
+                asset_mint,source_slot,source_block_time,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
+                (profile_id,order_id,source_wallet_address,source_signature,side,
+                 asset_mint,source_slot,source_block_time,timestamp))
+            stored = db.execute(
+                "SELECT source_wallet_address,source_signature,side,asset_mint "
+                "FROM source_trade_refs WHERE profile_id=? AND order_id=?",
+                (profile_id, order_id),
+            ).fetchone()
+            expected = (source_wallet_address, source_signature, side, asset_mint)
+            if stored is None or tuple(stored) != expected:
+                raise ValueError("Paper order_id is already linked to a different source trade.")
+        return cursor.rowcount == 1
+
+    def list_source_trade_refs(self, profile_id, limit=1000):
+        """List durable source links even after profile activity history is pruned."""
+        if not isinstance(profile_id, str) or not profile_id.strip():
+            raise ValueError("A profile_id is required.")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 5000:
+            raise ValueError("Source reference limit must be between 1 and 5000.")
+        with self.session() as db:
+            if not db.execute(
+                "SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
+                (profile_id,),
+            ).fetchone():
+                raise ValueError("Profile not found.")
+            rows = db.execute("""SELECT profile_id,order_id,source_wallet_address,
+                source_signature,side,asset_mint,source_slot,source_block_time,created_at
+                FROM source_trade_refs WHERE profile_id=?
+                ORDER BY created_at DESC, order_id DESC LIMIT ?""",
+                (profile_id, limit)).fetchall()
+        return [dict(row) for row in rows]
 
     def save_balance_snapshot(self, profile_id, wallet_address, token_mint, raw_amount,
                                token_decimals, *, source, observed_at=None,

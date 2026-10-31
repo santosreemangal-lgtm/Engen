@@ -413,6 +413,18 @@ class SignatureStore:
                 FROM seen_signatures
                 WHERE wallet_address = ?
                   AND status = 'pending'
+                  AND (
+                    last_checked_at IS NULL
+                    OR last_checked_at <= datetime(
+                        'now',
+                        CASE
+                            WHEN attempts <= 1 THEN '-15 seconds'
+                            WHEN attempts = 2 THEN '-30 seconds'
+                            WHEN attempts = 3 THEN '-60 seconds'
+                            ELSE '-120 seconds'
+                        END
+                    )
+                  )
                 ORDER BY first_seen_at ASC
                 LIMIT ?
                 """,

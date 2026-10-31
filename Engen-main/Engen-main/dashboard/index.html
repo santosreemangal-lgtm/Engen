@@ -1439,6 +1439,7 @@ function trackNewPaperFills(profileId,fills){
  const fresh=fillIds.filter(id=>!existing.ids.has(id));
  fillIds.forEach(id=>existing.ids.add(id));
  if(fresh.length)playPaperFillSound();
+ return fresh.length;
 }
 $("paper-sound-toggle").addEventListener("click",()=>{
  setPaperSoundEnabled(!paperSoundEnabled);
@@ -1484,7 +1485,8 @@ async function loadPaperTradeHistory(reportOverride){
   );
   const archivedFills=archivedSessions.flatMap(session=>Array.isArray(session.fills)?session.fills:[]);
   const archivedPnlEvents=archivedSessions.flatMap(session=>Array.isArray(session.pnl_events)?session.pnl_events:[]);
-  if(selectedProfile===profileId)trackNewPaperFills(profileId,[...activeFills,...archivedFills]);
+  const newlyRecordedPaperFills=selectedProfile===profileId
+   ?trackNewPaperFills(profileId,[...activeFills,...archivedFills]):0;
   const allOrders=[...activeOrders,...archivedOrders].sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")));
   const orders=allOrders.slice(0,100);
   const visibleOrderIds=new Set(orders.map(order=>String(order.order_id||"")));
@@ -1580,9 +1582,12 @@ async function loadPaperTradeHistory(reportOverride){
   });
   void loadHistoryTokenMetadata(orders.map(order=>order.asset_mint));
   refreshPaperTradeAges();
-  say("paper-trade-history-message",orders.length
+  const fillNotice=newlyRecordedPaperFills
+   ?" · "+newlyRecordedPaperFills+" new paper fill"+(newlyRecordedPaperFills===1?"":"s")+" recorded."
+   :"";
+  say("paper-trade-history-message",(orders.length
    ?"Showing "+orders.length+" of "+allOrders.length+" paper order(s); the 100 most recent are retained in History. Buy/Sell colors identify the side; Age updates every second. Total USD, Profit and simulated Gas are shown only when a fill exists. Market cap is shown only when verified data is available."
-   :"Paper orders appear after the copy engine queues them. Wallet Activity remains separate from simulated paper trades.");
+   :"Paper orders appear after the copy engine queues them. Wallet Activity remains separate from simulated paper trades.")+fillNotice);
  }catch(e){
   historySetEmpty(tbody,9,e.message||"Unable to load paper history.");
   say("paper-trade-history-message",e.message);

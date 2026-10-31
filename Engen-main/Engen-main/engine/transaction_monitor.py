@@ -1,6 +1,7 @@
 """Monitor public Solana wallet transactions without submitting trades."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 
 from engine.solana_public import DEFAULT_RPC_URL, SolanaRPCError, get_signature_status
 from engine.signature_store import SignatureStore

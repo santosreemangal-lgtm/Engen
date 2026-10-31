@@ -83,6 +83,20 @@ class SignatureStore:
                 """)
 
                 connection.execute("""
+                    CREATE TABLE IF NOT EXISTS wallet_scan_progress (
+                        wallet_address TEXT PRIMARY KEY,
+                        mode TEXT NOT NULL CHECK(mode IN ('baseline','catchup')),
+                        anchor_signature TEXT,
+                        newest_signature TEXT,
+                        newest_slot INTEGER,
+                        next_before_signature TEXT,
+                        pages_scanned INTEGER NOT NULL DEFAULT 0,
+                        error TEXT,
+                        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                connection.execute("""
                     CREATE TABLE IF NOT EXISTS transaction_records (
                         wallet_address TEXT NOT NULL,
                         signature TEXT NOT NULL,
@@ -481,6 +495,92 @@ class SignatureStore:
         if row is None:
             return None
         return {"slot": row[0], "signature": row[1], "updated_at": row[2]}
+
+    def get_scan_progress(self, wallet_address):
+        self._validate_wallet(wallet_address)
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """SELECT mode, anchor_signature, newest_signature, newest_slot,
+                          next_before_signature, pages_scanned, error, updated_at
+                   FROM wallet_scan_progress WHERE wallet_address=?""",
+                (wallet_address,),
+            ).fetchone()
+        if row is None:
+            return None
+        return dict(zip(
+            ("mode", "anchor_signature", "newest_signature", "newest_slot",
+             "next_before_signature", "pages_scanned", "error", "updated_at"),
+            row,
+        ))
+
+    def save_scan_progress(
+        self, wallet_address, *, mode, anchor_signature,
+        newest_signature, newest_slot, next_before_signature,
+        pages_scanned, error=None,
+    ):
+        self._validate_wallet(wallet_address)
+        if mode not in ("baseline", "catchup"):
+            raise ValueError("Scan progress mode must be baseline or catchup.")
+        self._validate_signature(next_before_signature)
+        if newest_signature is not None:
+            self._validate_signature(newest_signature)
+        if newest_slot is not None and (
+            not isinstance(newest_slot, int) or isinstance(newest_slot, bool)
+            or newest_slot < 0
+        ):
+            raise ValueError("Newest slot must be a non-negative integer.")
+        if not isinstance(pages_scanned, int) or isinstance(pages_scanned, bool) or pages_scanned < 0:
+            raise ValueError("pages_scanned must be a non-negative integer.")
+        safe_error = error[:240] if isinstance(error, str) else None
+        with closing(self._connect()) as connection:
+            with connection:
+                connection.execute(
+                    """INSERT INTO wallet_scan_progress
+                       (wallet_address,mode,anchor_signature,newest_signature,
+                        newest_slot,next_before_signature,pages_scanned,error)
+                       VALUES (?,?,?,?,?,?,?,?)
+                       ON CONFLICT(wallet_address) DO UPDATE SET
+                         mode=excluded.mode,
+                         anchor_signature=excluded.anchor_signature,
+                         newest_signature=excluded.newest_signature,
+                         newest_slot=excluded.newest_slot,
+                         next_before_signature=excluded.next_before_signature,
+                         pages_scanned=excluded.pages_scanned,
+                         error=excluded.error,
+                         updated_at=CURRENT_TIMESTAMP""",
+                    (wallet_address, mode, anchor_signature, newest_signature,
+                     newest_slot, next_before_signature, pages_scanned, safe_error),
+                )
+        return True
+
+    def clear_scan_progress(self, wallet_address):
+        self._validate_wallet(wallet_address)
+        with closing(self._connect()) as connection:
+            with connection:
+                cursor = connection.execute(
+                    "DELETE FROM wallet_scan_progress WHERE wallet_address=?",
+                    (wallet_address,),
+                )
+        return cursor.rowcount > 0
+
+    def set_position(self, wallet_address, slot, signature):
+        self._validate_wallet(wallet_address)
+        self._validate_signature(signature)
+        if not isinstance(slot, int) or isinstance(slot, bool) or slot < 0:
+            raise ValueError("Position slot must be a non-negative integer.")
+        with closing(self._connect()) as connection:
+            with connection:
+                connection.execute(
+                    """INSERT INTO wallet_positions(wallet_address,slot,signature)
+                       VALUES(?,?,?)
+                       ON CONFLICT(wallet_address) DO UPDATE SET
+                         slot=excluded.slot, signature=excluded.signature,
+                         updated_at=CURRENT_TIMESTAMP
+                       WHERE wallet_positions.slot IS NULL
+                          OR excluded.slot >= wallet_positions.slot""",
+                    (wallet_address, slot, signature),
+                )
+        return self.get_position(wallet_address)
 
     def get_seen_signatures(self, wallet_address, limit=1000):
         if not isinstance(limit, int) or isinstance(limit, bool):

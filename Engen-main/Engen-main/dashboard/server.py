@@ -596,10 +596,15 @@ def load_profile_paper_simulation_report(profile_id):
             unrealized_values.append(
                 quantity * market_price.price - Decimal(ledger_position["cost_basis"])
             )
-        cash_value = Decimal(str(base["available_balance"] or "0"))
-        if all(value is not None for value in token_values):
+        cash_value = (
+            Decimal(str(base["available_balance"]))
+            if base["available_balance"] is not None
+            else None
+        )
+        if cash_value is not None and all(value is not None for value in token_values):
             base["portfolio_value_usd"] = format(cash_value + sum(token_values, Decimal("0")), "f")
         else:
+            # An uninitialized virtual cash ledger is unknown, not a real $0 balance.
             base["portfolio_value_usd"] = None
         if all(value is not None for value in unrealized_values):
             base["unrealized_pnl_usd"] = format(sum(unrealized_values, Decimal("0")), "f")

@@ -245,8 +245,62 @@ class PaperPipelineEndToEndTests(unittest.TestCase):
                 recovered.balances["USD"],
             )
             self.assertGreater(Decimal(paper_history["realized_pnl_usd"]), Decimal("0"))
+            self.assertEqual(paper_history["realized_sell_fill_count"], 1)
+            self.assertEqual(paper_history["realized_pnl_status"], "calculated")
             self.assertFalse(paper_history["real_trading"])
             self.assertFalse(paper_history["transaction_broadcast"])
+
+    def test_buy_only_session_does_not_report_realized_profit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            profile_db = root / "profiles.db"
+            profile_data = root / "profile-data"
+            profile_store = ProfileStore(profile_db)
+            profile_id = profile_store.create_profile("Synthetic BUY-only")
+
+            paper_db = profile_data / profile_id / "paper_trading.db"
+            paper_db.parent.mkdir(parents=True)
+            simulator = PaperSimulator(db_path=paper_db)
+            simulator.set_initial_virtual_balance("1000", "USD")
+
+            price = fresh_market_price("TOKEN_A", "2")
+            order = simulator.create_order(
+                signal_id="buy-only-signal",
+                side="BUY",
+                asset_mint="TOKEN_A",
+                quantity="1",
+                quote_mint="USD",
+                created_at=price.observed_at,
+                details={"target_notional_usd": "10"},
+            )
+            result = simulator.execute_order(
+                order["order_id"],
+                price,
+                now=price.observed_at,
+            )
+            self.assertEqual(result["status"], "FILLED")
+            self.assertEqual(len(simulator.fills), 1)
+            self.assertEqual(simulator.fills[0]["side"], "BUY")
+
+            with (
+                patch("dashboard.server.PROFILE_STORE_DB", profile_db),
+                patch("dashboard.server.PROFILE_DATA_DIR", profile_data),
+                patch.dict("dashboard.server.profile_paper_simulators", {}, clear=True),
+                patch("dashboard.server.fetch_market_price", return_value=None),
+            ):
+                from dashboard.server import load_profile_paper_simulation_report
+
+                report = load_profile_paper_simulation_report(profile_id)
+
+            self.assertTrue(report["database_available"])
+            self.assertEqual(report["initial_balance"], "1000")
+            self.assertEqual(report["realized_sell_fill_count"], 0)
+            self.assertEqual(report["realized_pnl_status"], "no_sell_fills")
+            self.assertEqual(report["realized_pnl_usd"], "0")
+            self.assertEqual(len(report["fills"]), 1)
+            self.assertIsNone(report["unrealized_pnl_usd"])
+            self.assertFalse(report["real_trading"])
+            self.assertFalse(report["transaction_broadcast"])
 
     def test_monitor_scans_wallets_concurrently_and_reports_cycle_timing(self):
         rendezvous = threading.Barrier(2)

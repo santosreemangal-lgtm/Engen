@@ -1,8 +1,13 @@
 name: Paper simulation regression
+# SQLite ledger durability tests are part of this workflow.
 
 on:
+  push:
+    branches:
+      - feat/websocket-paper-latency-pipeline
   pull_request:
     branches:
+      - feat/websocket-paper-latency-pipeline
       - feature/paper-balance-dashboard-refresh
   workflow_dispatch:
 
@@ -47,6 +52,38 @@ jobs:
             python -m unittest discover -s engine/engine/engine/tests -v
           done
 
+      - name: Run latency measurement regressions ten times
+        working-directory: Engen-main/Engen-main
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run_number in {1..10}; do
+            echo "=== Latency regression run ${run_number}/10 ==="
+            python -m unittest engine.engine.engine.tests.test_latency -v
+          done
+
+      - name: Run isolated latency API integration tests ten times
+        working-directory: Engen-main/Engen-main
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run_number in {1..10}; do
+            echo "=== Latency API integration run ${run_number}/10 ==="
+            python -m unittest engine.engine.engine.tests.test_latency_integration -v
+          done
+
+      - name: Run SQLite atomicity and recovery regressions ten times
+        working-directory: Engen-main/Engen-main
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run_number in {1..10}; do
+            echo "=== SQLite regression run ${run_number}/10 ==="
+            python -m unittest \
+              engine.engine.engine.tests.test_paper_trader \
+              engine.engine.engine.tests.test_signature_store -v
+          done
+
       - name: Run focused market-data and proportional-sell regressions ten times
         working-directory: Engen-main/Engen-main
         shell: bash
@@ -57,4 +94,14 @@ jobs:
             python -m unittest \
               engine.engine.engine.tests.test_market_data \
               engine.engine.engine.tests.test_paper_sell_ratio_regression -v
+          done
+
+      - name: Run isolated end-to-end paper pipeline regressions ten times
+        working-directory: Engen-main/Engen-main
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run_number in {1..10}; do
+            echo "=== End-to-end paper pipeline run ${run_number}/10 ==="
+            python -m unittest engine.engine.engine.tests.test_paper_pipeline_e2e -v
           done

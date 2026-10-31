@@ -2,7 +2,7 @@ import json
 import unittest
 from decimal import Decimal
 from unittest.mock import patch
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 from engine import market_data
 
@@ -141,6 +141,77 @@ class MarketDataTests(unittest.TestCase):
                 self.assertIsNone(market_data.fetch_market_price("invalid"))
                 mocked.assert_not_called()
 
+
+
+
+    def test_retries_transient_network_error_then_returns_price(self):
+        raw = json.dumps([pair(price_usd="2.5")]).encode("utf-8")
+        response = FakeResponse(raw)
+        with patch("engine.market_data.urlopen", side_effect=[URLError("offline"), response]) as mocked:
+            with patch("engine.market_data.time.sleep") as sleeper:
+                result = market_data.fetch_market_price(TOKEN, max_attempts=3)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.price, Decimal("2.5"))
+        self.assertEqual(mocked.call_count, 2)
+        sleeper.assert_called_once_with(0.25)
+
+    def test_retries_http_429_and_5xx(self):
+        raw = json.dumps([pair(price_usd="3.5")]).encode("utf-8")
+        response = FakeResponse(raw)
+        rate_limited = HTTPError("https://example.test", 429, "rate limited", {}, None)
+        unavailable = HTTPError("https://example.test", 503, "unavailable", {}, None)
+        with patch("engine.market_data.urlopen", side_effect=[rate_limited, unavailable, response]) as mocked:
+            with patch("engine.market_data.time.sleep") as sleeper:
+                result = market_data.fetch_market_price(TOKEN, max_attempts=3)
+        self.assertEqual(result.price, Decimal("3.5"))
+        self.assertEqual(mocked.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleeper.call_args_list], [0.25, 0.5])
+
+    def test_retry_attempts_are_bounded(self):
+        with patch("engine.market_data.urlopen", side_effect=URLError("offline")) as mocked:
+            with patch("engine.market_data.time.sleep"):
+                result = market_data.fetch_market_price(TOKEN, max_attempts=2)
+        self.assertIsNone(result)
+        self.assertEqual(mocked.call_count, 2)
+
+    def test_non_retryable_http_error_fails_without_retry(self):
+        forbidden = HTTPError("https://example.test", 403, "forbidden", {}, None)
+        with patch("engine.market_data.urlopen", side_effect=forbidden) as mocked:
+            with patch("engine.market_data.time.sleep") as sleeper:
+                result = market_data.fetch_market_price(TOKEN, max_attempts=4)
+        self.assertIsNone(result)
+        mocked.assert_called_once()
+        sleeper.assert_not_called()
+
+    def test_timeout_is_passed_to_each_network_attempt(self):
+        raw = json.dumps([pair()]).encode("utf-8")
+        with patch("engine.market_data.urlopen", return_value=FakeResponse(raw)) as mocked:
+            result = market_data.fetch_market_price(TOKEN, timeout=1.75)
+        self.assertIsNotNone(result)
+        self.assertEqual(mocked.call_args.kwargs["timeout"], 1.75)
+
+    def test_backoff_is_capped(self):
+        with patch("engine.market_data.urlopen", side_effect=URLError("offline")) as mocked:
+            with patch("engine.market_data.time.sleep") as sleeper:
+                result = market_data.fetch_market_price(
+                    TOKEN, max_attempts=4,
+                    retry_backoff_seconds=0.5,
+                    max_backoff_seconds=0.75,
+                )
+        self.assertIsNone(result)
+        self.assertEqual(mocked.call_count, 4)
+        self.assertEqual([call.args[0] for call in sleeper.call_args_list], [0.5, 0.75, 0.75])
+
+    def test_invalid_retry_configuration_is_rejected(self):
+        for kwargs in (
+            {"max_attempts": 0},
+            {"max_attempts": True},
+            {"retry_backoff_seconds": -0.1},
+            {"max_backoff_seconds": -0.1},
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ValueError):
+                    market_data.fetch_market_price(TOKEN, **kwargs)
 
 if __name__ == "__main__":
     unittest.main()

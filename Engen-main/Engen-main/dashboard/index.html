@@ -120,7 +120,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 .history-pagination span{font-size:11px;color:#9aaec8;font-variant-numeric:tabular-nums}
 #observed-history-panel,#paper-history-panel{min-width:0}
 @media(max-width:760px){.history-toolbar{align-items:stretch}.history-tabs{width:100%}.history-tab{flex:1}.history-filters{display:grid;grid-template-columns:1fr 1fr;width:100%}.history-filters select,.history-filters input{max-width:none;min-width:0;width:100%;box-sizing:border-box}.history-filters input{grid-column:1 / -1}.history-filters button{width:100%}.history-table th,.history-table td{padding:10px}.history-overview{align-items:flex-start}}
-</style>
+.trade-notification{margin:10px 0;padding:12px 14px;border:1px solid #315c55;border-radius:12px;background:#102a2a;color:#baf3df;font-size:13px;font-weight:650}.trade-notification[hidden]{display:none}</style>
 </head>
 <body><main>
 <header><div class="brand">Paper trading · Read-only monitoring</div><h1>Solana Copy Engine</h1><p class="subtitle">A simple dashboard for tracked wallets and paper-copy settings.</p></header>
@@ -184,7 +184,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <button id="confirm-settings" class="confirm" type="button">Confirm Settings</button><p id="settings-message" class="message" role="status"></p>
 </section>
 
-<section class="panel"><div class="panel-head"><h2>History</h2></div>
+<section class="panel"><div class="panel-head"><h2>History</h2></div><div id="trade-notification" class="trade-notification" role="status" aria-live="polite" hidden></div>
 <details id="history-details" class="field" open><summary>Trade History</summary>
 <div class="history-toolbar">
  <div class="history-tabs" role="tablist" aria-label="History type">
@@ -222,6 +222,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <script>
 const $ = id => document.getElementById(id);
 let wallets = [], profiles = [], selectedProfile = "", backendReady = false, currentMonitor = false, currentMonitorWallets = [], balanceInputDirty = false, balanceSaveInProgress = false;
+let fillsBaselineProfile = "", knownFillIds = new Set();
 const headers = {"Content-Type":"application/json"};
 function apiRequestHeaders(extra={}) {
   let token = "";
@@ -284,6 +285,14 @@ function money(value){
  return (n<0?"-":"")+"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 }
 function say(id,text){$(id).textContent=text;}
+function ordersForFillLookup(orders,fill){return Array.isArray(orders)?orders.find(order=>order.order_id===fill.order_id)||{}:{};}
+function notifyTradeExecution(fill,order){
+ const notice=$("trade-notification");
+ const side=String(order?.side||"TRADE").toUpperCase();
+ const amount=fill?.gross_quote!==undefined?" · $"+historyAmount(fill.gross_quote):"";
+ notice.textContent=side+" paper trade executed"+amount;
+ notice.hidden=false;
+}
 function post(path,payload){return api(path,{method:"POST",body:JSON.stringify(payload)});}
 async function loadPortfolio(){
  try{
@@ -687,6 +696,21 @@ async function loadPaperTradeHistory(reportOverride){
   if(r.error){historySetEmpty(tbody,7,"Paper history unavailable: "+r.error);say("paper-trade-history-message",r.error);return;}
   const orders=Array.isArray(r.orders)?r.orders.slice().sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||""))):[];
   const fills=Array.isArray(r.fills)?r.fills:[];
+  if(fillsBaselineProfile!==selectedProfile){
+   fillsBaselineProfile=selectedProfile;
+   knownFillIds=new Set(fills.map(fill=>String(fill.order_id||fill.fill_id||"")).filter(Boolean));
+  }else{
+   const newFills=fills.filter(fill=>{
+    const id=String(fill.order_id||fill.fill_id||"");
+    return id&&!knownFillIds.has(id);
+   });
+   fills.forEach(fill=>{const id=String(fill.order_id||fill.fill_id||"");if(id)knownFillIds.add(id);});
+   if(newFills.length){
+    const latest=newFills[newFills.length-1];
+    const order=ordersForFillLookup(r.orders,latest);
+    notifyTradeExecution(latest,order);
+   }
+  }
   $("paper-trade-total").textContent=orders.length.toLocaleString();
   $("paper-fill-total").textContent=fills.length.toLocaleString()+" completed fill"+(fills.length===1?"":"s");
   tbody.replaceChildren();

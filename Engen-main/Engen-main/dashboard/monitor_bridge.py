@@ -2,9 +2,13 @@
 """Bridge between the dashboard and the read-only Solana engine."""
 
 import sqlite3
+from contextlib import nullcontext
+from datetime import datetime, timezone
+from time import time
 from decimal import Decimal, InvalidOperation
 
 from engine.signature_store import SignatureStore
+from engine.latency import LATENCY_RECORDER
 from engine.transaction_monitor import monitor_wallet
 from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders, get_paper_simulator, PAPER_SIMULATOR_LOCK
 from engine.profile_store import LABELS
@@ -100,7 +104,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
         return persisted
 
 
-    def scan_wallet(address):
+    def _scan_wallet(address):
         """Analyze new wallet signatures and queue eligible paper-copy orders."""
         results = monitor_wallet(
             wallet_address=address,
@@ -108,19 +112,23 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             limit=limit,
             timeout=timeout,
             defer_processed=True,
+            latency_recorder=LATENCY_RECORDER,
         )
-        results = persist_observed_transactions(address, results)
+        with LATENCY_RECORDER.measure("pipeline.profile_persistence"):
+            results = persist_observed_transactions(address, results)
         try:
             allowed_sides = side_getter() if side_getter is not None else "BOTH"
             copy_settings = settings_getter() if settings_getter is not None else {}
             simulator = simulator_getter() if simulator_getter is not None else get_paper_simulator()
             # Serialize order execution and balance writes against dashboard requests.
             with PAPER_SIMULATOR_LOCK:
-                queued_orders = queue_paper_orders(
-                    address, results, simulator=simulator,
-                    allowed_sides=allowed_sides, copy_settings=copy_settings
-                )
-                execution_outcomes = execute_pending_paper_orders(address, simulator=simulator)
+                with LATENCY_RECORDER.measure("paper.order_queue"):
+                    queued_orders = queue_paper_orders(
+                        address, results, simulator=simulator,
+                        allowed_sides=allowed_sides, copy_settings=copy_settings
+                    )
+                with LATENCY_RECORDER.measure("paper.order_execution"):
+                    execution_outcomes = execute_pending_paper_orders(address, simulator=simulator)
             outcomes_by_signal = {
                 item["signal_id"]: item for item in execution_outcomes
                 if item.get("signal_id")
@@ -212,6 +220,23 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 {**item, "paper_copy_error": "Paper-copy order queue failed."}
                 for item in results
             ]
+        # Chain-to-paper latency is an approximate wall-clock age from the
+        # Solana blockTime, not pure internal processing time. BlockTime has
+        # second-level precision and depends on the RPC provider clock.
+        now_epoch = time()
+        for item in results:
+            observation = item.get("signature_observation")
+            block_time = observation.get("block_time") if isinstance(observation, dict) else item.get("block_time")
+            if isinstance(block_time, int) and not isinstance(block_time, bool) and block_time > 0:
+                age_ms = max(0.0, (now_epoch - block_time) * 1000.0)
+                item["latency"] = {
+                    "chain_to_paper_decision_ms": round(age_ms, 3),
+                    "source": "Solana blockTime to paper decision; approximate",
+                }
         return results
+
+    def scan_wallet(address):
+        with LATENCY_RECORDER.measure("pipeline.scan_total"):
+            return _scan_wallet(address)
 
     return scan_wallet

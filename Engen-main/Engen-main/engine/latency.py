@@ -81,3 +81,8 @@ class LatencyRecorder:
                 "p99_ms": round(self._percentile(ordered, 0.99), 3),
             }
         return result
+
+
+# One process-wide recorder shared by dashboard monitor workers and API reads.
+# Samples are in-memory, bounded, and intentionally reset when the process restarts.
+LATENCY_RECORDER = LatencyRecorder(max_samples=10000)

@@ -1,0 +1,35 @@
+name: Paper pipeline E2E regression
+
+on:
+  push:
+    branches:
+      - feat/websocket-paper-latency-pipeline
+  pull_request:
+    branches:
+      - feat/websocket-paper-latency-pipeline
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  paper-pipeline-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run isolated end-to-end paper pipeline regressions ten times
+        working-directory: Engen-main/Engen-main
+        shell: bash
+        run: |
+          set -euo pipefail
+          for run_number in {1..10}; do
+            echo "=== End-to-end paper pipeline run ${run_number}/10 ==="
+            python -m unittest engine.engine.engine.tests.test_paper_pipeline_e2e -v
+          done

@@ -1,6 +1,10 @@
-"""Paper trading with optional SQLite persistence. Never submits real trades."""
+"""Read-only paper-trading ledger with SQLite atomicity and recovery.
+
+The module only updates virtual balances. It never signs or submits transactions.
+"""
 
 import sqlite3
+import threading
 from collections.abc import Mapping
 from contextlib import closing
 from decimal import Decimal
@@ -51,18 +55,23 @@ class PaperTrader:
         self.processed_signatures = set()
         self.trades = []
         self.db_path = Path(db_path) if db_path is not None else None
+        self._lock = threading.RLock()
 
         if self.db_path is not None:
             self._initialize_storage()
 
     def _connect(self):
-        return sqlite3.connect(self.db_path)
+        connection = sqlite3.connect(self.db_path, timeout=10)
+        connection.execute("PRAGMA busy_timeout = 10000")
+        connection.execute("PRAGMA synchronous = FULL")
+        return connection
 
     def _initialize_storage(self):
         """Create the ledger and restore previously saved state, if any."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         with closing(self._connect()) as connection:
+            connection.execute("PRAGMA journal_mode = WAL")
             with connection:
                 connection.execute("""
                     CREATE TABLE IF NOT EXISTS paper_meta (
@@ -106,67 +115,76 @@ class PaperTrader:
                     connection.execute(
                         "INSERT INTO paper_meta (key, value) VALUES ('initialized', '1')"
                     )
-                else:
-                    rows = connection.execute(
-                        "SELECT mint, amount FROM paper_balances"
-                    ).fetchall()
-                    self.balances = {
-                        mint: Decimal(amount) for mint, amount in rows
-                    }
 
-                rows = connection.execute("""
-                    SELECT signature, side, asset_mint, asset_amount,
-                           quote_mint, quote_amount, status
-                    FROM paper_trades
-                    ORDER BY id
-                """).fetchall()
+                self._restore_state(connection)
 
-                self.trades = [
-                    {
-                        "signature": row[0],
-                        "side": row[1],
-                        "asset_mint": row[2],
-                        "asset_amount": row[3],
-                        "quote_mint": row[4],
-                        "quote_amount": row[5],
-                        "status": row[6],
-                    }
-                    for row in rows
-                ]
-                self.processed_signatures = {
-                    trade["signature"] for trade in self.trades
-                }
+    def _restore_state(self, connection):
+        """Reload the committed ledger while holding the SQLite write lock."""
+        rows = connection.execute(
+            "SELECT mint, amount FROM paper_balances"
+        ).fetchall()
+        self.balances = {mint: Decimal(amount) for mint, amount in rows}
 
-    def _persist_trade(self, trade, balances):
-        """Save the balance changes and trade together in one transaction."""
-        if self.db_path is None:
-            return
+        rows = connection.execute("""
+            SELECT signature, side, asset_mint, asset_amount,
+                   quote_mint, quote_amount, status
+            FROM paper_trades
+            ORDER BY id
+        """).fetchall()
+        self.trades = [
+            {
+                "signature": row[0],
+                "side": row[1],
+                "asset_mint": row[2],
+                "asset_amount": row[3],
+                "quote_mint": row[4],
+                "quote_amount": row[5],
+                "status": row[6],
+            }
+            for row in rows
+        ]
+        self.processed_signatures = {
+            trade["signature"] for trade in self.trades
+        }
 
-        with closing(self._connect()) as connection:
-            with connection:
-                connection.executemany("""
-                    INSERT INTO paper_balances (mint, amount)
-                    VALUES (?, ?)
-                    ON CONFLICT(mint) DO UPDATE SET amount = excluded.amount
-                """, [
-                    (mint, str(amount))
-                    for mint, amount in balances.items()
-                ])
+    def _persist_trade(self, trade, balances, connection=None):
+        """Atomically reserve the signature and persist all virtual balances."""
+        if connection is None:
+            if self.db_path is None:
+                return True
+            with closing(self._connect()) as owned_connection:
+                with owned_connection:
+                    owned_connection.execute("BEGIN IMMEDIATE")
+                    return self._persist_trade(
+                        trade, balances, connection=owned_connection
+                    )
 
-                connection.execute("""
-                    INSERT INTO paper_trades (
-                        signature, side, asset_mint, asset_amount,
-                        quote_mint, quote_amount, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    trade["signature"],
-                    trade["side"],
-                    trade["asset_mint"],
-                    trade["asset_amount"],
-                    trade["quote_mint"],
-                    trade["quote_amount"],
-                    trade["status"],
-                ))
+        cursor = connection.execute("""
+            INSERT OR IGNORE INTO paper_trades (
+                signature, side, asset_mint, asset_amount,
+                quote_mint, quote_amount, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            trade["signature"],
+            trade["side"],
+            trade["asset_mint"],
+            trade["asset_amount"],
+            trade["quote_mint"],
+            trade["quote_amount"],
+            trade["status"],
+        ))
+        if cursor.rowcount != 1:
+            return False
+
+        connection.executemany("""
+            INSERT INTO paper_balances (mint, amount)
+            VALUES (?, ?)
+            ON CONFLICT(mint) DO UPDATE SET amount = excluded.amount
+        """, [
+            (mint, str(amount))
+            for mint, amount in balances.items()
+        ])
+        return True
 
     @staticmethod
     def _delta_for_mint(changes, mint):
@@ -205,7 +223,25 @@ class PaperTrader:
         return Decimal(raw_total) / (Decimal(10) ** decimals)
 
     def process(self, result):
-        """Process one successful candidate without submitting a real trade."""
+        """Serialize ledger updates and recover the latest committed state."""
+        with self._lock:
+            if self.db_path is None:
+                return self._process_unlocked(result)
+
+            with closing(self._connect()) as connection:
+                with connection:
+                    # Read only after SQLite grants the write reservation.
+                    connection.execute("BEGIN IMMEDIATE")
+                    self._restore_state(connection)
+                    outcome = self._process_unlocked(
+                        result, connection=connection
+                    )
+                # Publish memory state only after SQLite confirms the commit.
+                self._restore_state(connection)
+                return outcome
+
+    def _process_unlocked(self, result, connection=None):
+        """Process one candidate inside the caller's serialized ledger scope."""
         if not isinstance(result, Mapping):
             return {"status": "SKIPPED", "reason": "Invalid transaction result."}
 
@@ -325,17 +361,23 @@ class PaperTrader:
         new_balances[asset_mint] = new_asset_balance
         new_balances[quote_mint] = new_quote_balance
 
-        # Persist first, so a database error cannot partially update memory.
-        self._persist_trade(trade, new_balances)
-
-        self.balances = new_balances
-        self.processed_signatures.add(signature)
-        self.trades.append(trade)
+        # The wrapper publishes database-backed memory only after commit.
+        if connection is not None:
+            if not self._persist_trade(trade, new_balances, connection=connection):
+                return {"status": "DUPLICATE", "signature": signature}
+        elif self.db_path is not None:
+            if not self._persist_trade(trade, new_balances):
+                return {"status": "DUPLICATE", "signature": signature}
+        else:
+            self.balances = new_balances
+            self.processed_signatures.add(signature)
+            self.trades.append(trade)
         return trade
 
     def get_balances(self):
         """Return a safe copy of virtual balances as strings."""
-        return {mint: str(amount) for mint, amount in self.balances.items()}
+        with self._lock:
+            return {mint: str(amount) for mint, amount in self.balances.items()}
 
 
 if __name__ == "__main__":

@@ -17,10 +17,14 @@ class SignatureStore:
         self._initialize()
 
     def _connect(self):
-        return sqlite3.connect(self.db_path)
+        connection = sqlite3.connect(self.db_path, timeout=10)
+        connection.execute("PRAGMA busy_timeout = 10000")
+        connection.execute("PRAGMA synchronous = FULL")
+        return connection
 
     def _initialize(self):
         with closing(self._connect()) as connection:
+            connection.execute("PRAGMA journal_mode = WAL")
             with connection:
                 connection.execute(
                     """
@@ -181,13 +185,23 @@ class SignatureStore:
         return saved
 
     def save_many(self, wallet_address, signatures):
-        saved = 0
-
+        """Insert a batch atomically; database errors roll back every row."""
+        self._validate_wallet(wallet_address)
+        signatures = list(signatures)
         for signature in signatures:
-            if self.save(wallet_address, signature):
-                saved += 1
+            self._validate_signature(signature)
 
-        return saved
+        with closing(self._connect()) as connection:
+            with connection:
+                cursor = connection.executemany(
+                    """
+                    INSERT OR IGNORE INTO seen_signatures
+                        (wallet_address, signature, status)
+                    VALUES (?, ?, 'pending')
+                    """,
+                    [(wallet_address, signature) for signature in signatures],
+                )
+                return max(cursor.rowcount, 0)
 
     def mark_processed(self, wallet_address, signature):
         self._validate_wallet(wallet_address)

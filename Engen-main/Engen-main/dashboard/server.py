@@ -30,7 +30,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
+from engine.solana_websocket import DEFAULT_WS_URL
 from engine.logger import redact
+from engine.latency import LATENCY_RECORDER
 from engine.pnl import MarketPrice, realized_pnl_from_fills
 from engine.market_data import fetch_market_price
 from engine.paper_copy_runner import (get_paper_simulator, MIN_PAPER_LIQUIDITY_USD, PAPER_SIMULATOR_LOCK as paper_simulator_lock)
@@ -218,7 +220,7 @@ def is_valid_solana_address(value):
 
 
 # Creating services does not start monitoring or make RPC requests.
-monitor_service = MonitorService(create_scan_function(), interval=15)
+monitor_service = MonitorService(create_scan_function(), interval=15, websocket_endpoint=DEFAULT_WS_URL)
 # Each saved profile gets its own in-memory monitor lifecycle. The saved source
 # wallet list remains profile-scoped in ProfileStore.
 profile_monitor_services = {}
@@ -811,6 +813,7 @@ def get_profile_monitor_service(profile_id):
                 profile_store=ProfileStore(PROFILE_STORE_DB),
             ),
             interval=15,
+            websocket_endpoint=DEFAULT_WS_URL,
         )
     return profile_monitor_services[canonical]
 
@@ -1007,6 +1010,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/monitor":
             self.send_json(200, monitor_service.status())
+            return
+
+        if path == "/api/latency":
+            self.send_json(200, {
+                "mode": "PAPER_ONLY",
+                "samples": LATENCY_RECORDER.summary(),
+                "sample_scope": "This dashboard process only; in-memory bounded samples reset on restart.",
+                "chain_to_paper_note": "Per-transaction chain_to_paper_decision_ms uses Solana blockTime and is approximate; blockTime has second-level precision and is not pure processing latency.",
+                "live_execution_latency": False,
+                "transaction_broadcast": False,
+            })
             return
 
         if path == "/api/rpc-health":

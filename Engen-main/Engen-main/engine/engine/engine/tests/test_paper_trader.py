@@ -1,4 +1,7 @@
 import subprocess
+import sqlite3
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import tempfile
 import unittest
@@ -10,12 +13,12 @@ from engine.transaction_analysis import WRAPPED_SOL_MINT
 
 class PaperTraderTests(unittest.TestCase):
 
-    def make_result(self, side="BUY_CANDIDATE"):
+    def make_result(self, side="BUY_CANDIDATE", signature="demo-signature"):
         asset_delta = "500" if side == "BUY_CANDIDATE" else "-250"
         quote_delta = "-1000000" if side == "BUY_CANDIDATE" else "500000"
 
         return {
-            "signature": "demo-signature",
+            "signature": signature,
             "available": True,
             "status": "success",
             "trade_signal": {
@@ -288,6 +291,94 @@ class PaperTraderTests(unittest.TestCase):
             duplicate = restarted.process(transaction)
             self.assertEqual(duplicate["status"], "DUPLICATE")
             self.assertEqual(len(restarted.trades), 1)
+
+    def test_balance_and_trade_roll_back_together_on_persistence_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "atomic_failure.db"
+            trader = PaperTrader({"USDC": "10"}, db_path=db_path)
+            before = trader.get_balances()
+
+            with sqlite3.connect(db_path) as connection:
+                connection.execute("""
+                    CREATE TRIGGER force_balance_failure
+                    BEFORE UPDATE ON paper_balances
+                    BEGIN
+                        SELECT RAISE(ABORT, 'forced persistence failure');
+                    END
+                """)
+
+            with self.assertRaises(sqlite3.IntegrityError):
+                trader.process(self.make_result())
+
+            self.assertEqual(trader.get_balances(), before)
+            self.assertEqual(trader.trades, [])
+            with sqlite3.connect(db_path) as connection:
+                balances = dict(connection.execute(
+                    "SELECT mint, amount FROM paper_balances"
+                ).fetchall())
+                trade_count = connection.execute(
+                    "SELECT COUNT(*) FROM paper_trades"
+                ).fetchone()[0]
+            self.assertEqual(balances, {"USDC": "10"})
+            self.assertEqual(trade_count, 0)
+
+    def test_concurrent_duplicate_execution_across_instances_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "concurrent_duplicate.db"
+            traders = [
+                PaperTrader({"USDC": "10"}, db_path=db_path)
+                for _ in range(2)
+            ]
+            transaction = self.make_result(signature="same-concurrent-signature")
+            barrier = threading.Barrier(2)
+
+            def execute(trader):
+                barrier.wait()
+                return trader.process(transaction)
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(execute, traders))
+
+            statuses = sorted(result["status"] for result in results)
+            self.assertEqual(statuses, ["DUPLICATE", "PAPER_FILLED"])
+            recovered = PaperTrader({"USDC": "999"}, db_path=db_path)
+            self.assertEqual(
+                recovered.get_balances(),
+                {"USDC": "9", "TOKEN_A": "5"},
+            )
+            self.assertEqual(len(recovered.trades), 1)
+
+    def test_concurrent_distinct_trades_use_latest_committed_balance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "concurrent_distinct.db"
+            traders = [
+                PaperTrader({"USDC": "10"}, db_path=db_path)
+                for _ in range(2)
+            ]
+            transactions = [
+                self.make_result(signature="concurrent-trade-one"),
+                self.make_result(signature="concurrent-trade-two"),
+            ]
+            barrier = threading.Barrier(2)
+
+            def execute(item):
+                trader, transaction = item
+                barrier.wait()
+                return trader.process(transaction)
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(execute, zip(traders, transactions)))
+
+            self.assertEqual(
+                [result["status"] for result in results],
+                ["PAPER_FILLED", "PAPER_FILLED"],
+            )
+            recovered = PaperTrader({"USDC": "999"}, db_path=db_path)
+            self.assertEqual(
+                recovered.get_balances(),
+                {"USDC": "8", "TOKEN_A": "10"},
+            )
+            self.assertEqual(len(recovered.trades), 2)
 
 
 if __name__ == "__main__":

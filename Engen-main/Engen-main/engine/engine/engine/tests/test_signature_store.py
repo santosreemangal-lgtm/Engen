@@ -241,6 +241,46 @@ class SignatureStoreTests(unittest.TestCase):
             ["new_sig"],
         )
 
+    def test_save_many_rolls_back_entire_batch_on_database_failure(self):
+        with sqlite3.connect(self.store.db_path) as connection:
+            connection.execute("""
+                CREATE TRIGGER reject_one_signature
+                BEFORE INSERT ON seen_signatures
+                WHEN NEW.signature = 'sig_force_failure'
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced batch failure');
+                END
+            """)
+
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.store.save_many(
+                "wallet_A",
+                ["sig_batch_one", "sig_force_failure", "sig_batch_three"],
+            )
+
+        self.assertFalse(self.store.has_seen("wallet_A", "sig_batch_one"))
+        self.assertFalse(self.store.has_seen("wallet_A", "sig_force_failure"))
+        self.assertFalse(self.store.has_seen("wallet_A", "sig_batch_three"))
+
+    def test_concurrent_duplicate_signature_saves_are_idempotent(self):
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+
+        barrier = threading.Barrier(8)
+
+        def save_one(_):
+            barrier.wait()
+            return self.store.save("wallet_concurrent", "same_signature")
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            outcomes = list(executor.map(save_one, range(8)))
+
+        self.assertEqual(sum(outcomes), 1)
+        self.assertEqual(
+            self.store.get_status("wallet_concurrent", "same_signature"),
+            "pending",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,7 @@
 """Monitor public Solana wallet transactions without submitting trades."""
 
+from contextlib import nullcontext
+
 from engine.solana_public import DEFAULT_RPC_URL, SolanaRPCError, get_signature_status
 from engine.signature_store import SignatureStore
 from engine.solana_validation import is_valid_solana_address, is_valid_transaction_signature
@@ -71,7 +73,12 @@ def process_new_signatures(
             }
             if latency_recorder is not None:
                 processor_options["latency_recorder"] = latency_recorder
-            result = process_transaction_signature(**processor_options)
+            timer = (
+                latency_recorder.measure("transaction.process_total")
+                if latency_recorder is not None else nullcontext()
+            )
+            with timer:
+                result = process_transaction_signature(**processor_options)
         except ValueError:
             # Invalid signatures are rejected before any transaction RPC call.
             results.append(_include_signature_observation({

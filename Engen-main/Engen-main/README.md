@@ -9,9 +9,12 @@ Engen is a read-only monitoring and research project for public Solana wallet ac
 - **Engine overview:** read-only mode, monitor status, last successful scan, and RPC health.
 - **Wallet watchlist:** add/remove public addresses; address input is validated and the saved list is bounded.
 - **Independent wallet profiles:** each profile stores its own public wallet address, monitored-trader list, settings, stored balance observations, transaction history, and read-only monitor lifecycle.
+  - Profiles can be archived from the selected-profile panel; archiving stops that profile's monitor and preserves its transaction and paper-history records.
 - **Profile paper ledger:** when the paper-only runner is started with a saved profile ID, that profile uses its own persistent virtual balances and paper-trade history; configured position-size and open-position limits are enforced by the simulator.
 - **Transaction history:** paginated records with classification, status, and token-mint filters.
+  - Parsed non-swap activity may be labeled as transfer, staking, account activity, or liquidity activity; ambiguous protocol activity remains unknown and is never promoted to a BUY/SELL candidate.
 - **Paper simulation:** separate simulated balances, orders, fills, and realized P&L; the report reads its database without creating or mutating it.
+  - The History panel offers an opt-in soft sound for newly observed paper fills. Its per-profile fill-ID tracking suppresses duplicate notifications; it does not indicate a live blockchain transaction.
 - **Failure handling:** backend/API failures are surfaced to the UI; no stale transaction-history results should be treated as fresh after a failed request.
 
 ## Run locally

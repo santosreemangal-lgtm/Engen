@@ -788,7 +788,7 @@ def _classify_non_swap_activity(instructions):
         return {
             "classification": "UNKNOWN",
             "activity_type": "ACCOUNT_ACTIVITY",
-            "reason": "Parsed account creation or token-account lifecycle instructions were found; this is not classified as a swap.",
+            "reason": "Parsed account creation or token-account lifecycle instructions were found. Associated native SOL movement may represent rent or a transfer; this is not classified as a swap.",
         }
 
     transfer_types = {"transfer", "transferchecked", "transfercheckedwithfee"}

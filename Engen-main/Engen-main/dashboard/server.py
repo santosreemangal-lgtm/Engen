@@ -17,7 +17,7 @@ from urllib.request import Request, urlopen
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 
 from engine.profile_store import ProfileStore, LABELS, STATUSES, validate_public_address, settings_json

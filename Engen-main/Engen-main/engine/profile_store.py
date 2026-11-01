@@ -401,14 +401,16 @@ class ProfileStore:
             if not isinstance(previous_evidence, dict):
                 previous_evidence = {}
             incoming_evidence = evidence if isinstance(evidence, dict) else {}
-            old_review_terminal = (
+            old_needs_review = (
+                old_status == "unknown"
+                and previous_evidence.get("processing_status") == "needs_review"
+                and previous_evidence.get("retry_exhausted") is True
+            )
+            old_terminal_unknown = (
                 old_status == "unknown"
                 and (
                     previous_evidence.get("terminal_status") is True
-                    or (
-                        previous_evidence.get("processing_status") == "needs_review"
-                        and previous_evidence.get("retry_exhausted") is True
-                    )
+                    or old_needs_review
                 )
             )
             incoming_review_terminal = (
@@ -419,7 +421,7 @@ class ProfileStore:
             )
             if old_status in {"confirmed", "failed"}:
                 effective_status = old_status
-            elif old_review_terminal and status == "pending":
+            elif old_terminal_unknown and status == "pending":
                 effective_status = "unknown"
             elif status == "unknown":
                 effective_status = "unknown" if incoming_review_terminal else old_status
@@ -429,13 +431,14 @@ class ProfileStore:
                 classification if classification != "UNKNOWN" else stored["classification"]
             )
             merged_evidence = {**previous_evidence, **incoming_evidence}
-            if old_review_terminal and status == "pending":
-                # Keep the review checkpoint and its audit marker in lockstep
-                # with the terminal unknown profile status.
-                merged_evidence["processing_status"] = "needs_review"
-                merged_evidence["signature_queue_status"] = "needs_review"
-                merged_evidence["retry_exhausted"] = True
+            if old_terminal_unknown and status == "pending":
+                # Keep terminal-unknown evidence in lockstep with the profile
+                # status; only retry-exhausted rows carry needs_review markers.
                 merged_evidence["terminal_status"] = True
+                if old_needs_review:
+                    merged_evidence["processing_status"] = "needs_review"
+                    merged_evidence["signature_queue_status"] = "needs_review"
+                    merged_evidence["retry_exhausted"] = True
             merged_evidence_json = json.dumps(merged_evidence, sort_keys=True, allow_nan=False)
             token_changed = token_mint is not None and stored["token_mint"] not in (None, token_mint)
             effective_amount = (

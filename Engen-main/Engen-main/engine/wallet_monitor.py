@@ -328,6 +328,7 @@ def get_and_store_new_wallet_signatures(
                 limit=MAX_HISTORY_SIGNATURES_PER_SCAN,
                 history_cap=MAX_HISTORY_SIGNATURES_PER_WALLET,
                 exclude_signatures=fresh_signatures,
+                before_block_time=int(current_time - max_source_age),
             )
         except (TypeError, ValueError, OSError, RuntimeError):
             history_signatures = []

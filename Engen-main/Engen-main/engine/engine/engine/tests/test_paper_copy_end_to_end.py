@@ -172,12 +172,14 @@ class PaperCopyEndToEndTests(unittest.TestCase):
                 ],
             }
             observed_at = datetime.now(timezone.utc).isoformat()
+            market_price_value = {"value": Decimal("2")}
+            expected_source_refs = {"count": 1}
 
             def price_provider(mint):
                 self.assertEqual(mint, ASSET)
                 return MarketPrice(
                     mint=ASSET,
-                    price=Decimal("2"),
+                    price=market_price_value["value"],
                     currency="USD",
                     source="offline-e2e-test",
                     observed_at=observed_at,
@@ -189,7 +191,8 @@ class PaperCopyEndToEndTests(unittest.TestCase):
             def execute_with_test_market_data(wallet_address, simulator=None):
                 # The source link must be durable before execution begins.
                 self.assertEqual(
-                    len(profile_store.list_source_trade_refs(profile_id)), 1
+                    len(profile_store.list_source_trade_refs(profile_id)),
+                    expected_source_refs["count"],
                 )
                 return execute_real_paper_orders(
                     wallet_address, simulator=simulator,
@@ -230,10 +233,105 @@ class PaperCopyEndToEndTests(unittest.TestCase):
             self.assertFalse(report["real_trading"])
             self.assertFalse(report["transaction_broadcast"])
 
+            # Send a second, synthetic finalized SELL through the same monitor
+            # bridge. It sells 50% of the source wallet's pre-sell token balance.
+            sell_signature = "2" * 88
+            signature_store.save(WALLET, sell_signature, slot=123457)
+            market_price_value["value"] = Decimal("3")
+            expected_source_refs["count"] = 2
+            sell_block_time = int(time.time())
+            sell_result = {
+                **monitor_result,
+                "signature": sell_signature,
+                "signature_observation": {
+                    "confirmation_status": "finalized",
+                    "slot": 123457,
+                    "block_time": sell_block_time,
+                },
+                "trade_signal": {
+                    **monitor_result["trade_signal"],
+                    "classification": "SELL_CANDIDATE",
+                    "reason": "Synthetic test sell",
+                },
+                "token_balance_changes": [
+                    {
+                        "owner": WALLET, "mint": ASSET, "decimals": 9,
+                        "delta_amount": "-1250000000",
+                        "pre_amount": "2500000000", "post_amount": "1250000000",
+                    },
+                    {
+                        "owner": WALLET, "mint": QUOTE, "decimals": 6,
+                        "delta_amount": "5000000",
+                    },
+                ],
+            }
+            with (
+                patch("dashboard.monitor_bridge.SignatureStore", return_value=signature_store),
+                patch("dashboard.monitor_bridge.monitor_wallet", return_value=[sell_result]),
+                patch(
+                    "dashboard.monitor_bridge.execute_pending_paper_orders",
+                    side_effect=execute_with_test_market_data,
+                ),
+            ):
+                sell_results = scan(WALLET)
+
+            self.assertEqual(len(sell_results), 1)
+            self.assertEqual(
+                sell_results[0]["trade_signal"]["classification"], "SELL_CANDIDATE"
+            )
+            self.assertEqual(sell_results[0]["paper_copy_order"]["side"], "SELL")
+            self.assertEqual(
+                sell_results[0]["paper_copy_order"]["execution_status"], "FILLED"
+            )
+            self.assertEqual(
+                signature_store.get_status(WALLET, sell_signature), "processed"
+            )
+
+            report = simulator.report()
+            self.assertEqual(len(report["orders"]), 2)
+            self.assertEqual(len(report["fills"]), 2)
+            buy_fill = next(fill for fill in report["fills"] if fill["side"] == "BUY")
+            sell_fill = next(fill for fill in report["fills"] if fill["side"] == "SELL")
+            self.assertEqual(Decimal(buy_fill["reference_price"]), Decimal("2"))
+            self.assertEqual(Decimal(buy_fill["execution_price"]), Decimal("2.01"))
+            self.assertEqual(Decimal(sell_fill["reference_price"]), Decimal("3"))
+            self.assertEqual(Decimal(sell_fill["execution_price"]), Decimal("2.985"))
+            self.assertGreater(Decimal(buy_fill["quantity"]), Decimal("0"))
+            self.assertEqual(
+                Decimal(sell_fill["quantity"]),
+                Decimal(buy_fill["quantity"]) / Decimal("2"),
+            )
+            self.assertGreater(Decimal(buy_fill["gross_quote"]), Decimal("0"))
+            self.assertGreater(Decimal(sell_fill["gross_quote"]), Decimal("0"))
+            self.assertGreater(Decimal(buy_fill["fee"]), Decimal("0"))
+            self.assertGreater(Decimal(sell_fill["fee"]), Decimal("0"))
+            self.assertEqual(Decimal(buy_fill["network_cost"]), Decimal("0"))
+            self.assertEqual(Decimal(sell_fill["network_cost"]), Decimal("0"))
+            self.assertGreater(Decimal(report["balances"]["USD"]), Decimal("0"))
+            self.assertGreater(Decimal(report["balances"][ASSET]), Decimal("0"))
+            self.assertLess(Decimal(report["balances"][ASSET]), Decimal(buy_fill["quantity"]))
+            self.assertEqual(len(report["pnl_events"]), 2)
+            sell_pnl_event = next(
+                event for event in report["pnl_events"] if event["type"] == "SELL"
+            )
+            self.assertIsNotNone(sell_pnl_event["realized_pnl"])
+            self.assertGreater(Decimal(sell_pnl_event["realized_pnl"]), Decimal("0"))
+            self.assertEqual(
+                Decimal(report["pnl"]["realized_by_mint"][ASSET]["pnl"]),
+                Decimal(sell_pnl_event["realized_pnl"]),
+            )
+            self.assertFalse(report["real_trading"])
+            self.assertFalse(report["transaction_broadcast"])
+
             source_refs = profile_store.list_source_trade_refs(profile_id)
-            self.assertEqual(len(source_refs), 1)
-            self.assertEqual(source_refs[0]["source_signature"], SIGNATURE)
-            self.assertEqual(source_refs[0]["order_id"], report["orders"][0]["order_id"])
+            self.assertEqual(len(source_refs), 2)
+            self.assertEqual(
+                {ref["source_signature"] for ref in source_refs},
+                {SIGNATURE, sell_signature},
+            )
+            self.assertEqual(
+                {ref["side"] for ref in source_refs}, {"BUY", "SELL"}
+            )
 
             # Simulate application restart by rebuilding every persistent store
             # from the temporary test databases, without touching user data.
@@ -243,14 +341,20 @@ class PaperCopyEndToEndTests(unittest.TestCase):
 
             self.assertEqual(restarted_signatures.get_status(WALLET, SIGNATURE), "processed")
             self.assertEqual(
-                restarted_profiles.list_source_trade_refs(profile_id)[0]["source_signature"],
-                SIGNATURE,
+                restarted_signatures.get_status(WALLET, sell_signature), "processed"
+            )
+            restarted_refs = restarted_profiles.list_source_trade_refs(profile_id)
+            self.assertEqual(len(restarted_refs), 2)
+            self.assertEqual(
+                {ref["source_signature"] for ref in restarted_refs},
+                {SIGNATURE, sell_signature},
             )
             restarted_report = restarted_simulator.report()
-            self.assertEqual(len(restarted_report["orders"]), 1)
-            self.assertEqual(restarted_report["orders"][0]["status"], "FILLED")
-            self.assertEqual(len(restarted_report["fills"]), 1)
+            self.assertEqual(len(restarted_report["orders"]), 2)
+            self.assertTrue(all(order["status"] == "FILLED" for order in restarted_report["orders"]))
+            self.assertEqual(len(restarted_report["fills"]), 2)
             self.assertEqual(restarted_report["balances"], report["balances"])
+            self.assertEqual(restarted_report["pnl_events"], report["pnl_events"])
 
 
 if __name__ == "__main__":

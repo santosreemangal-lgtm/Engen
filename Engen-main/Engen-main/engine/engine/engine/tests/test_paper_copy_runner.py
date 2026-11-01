@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from unittest.mock import patch
 
+from engine.config import ConfigError, load_max_source_age_seconds
 from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders, source_trade_is_fresh
 from engine.paper_simulator import PaperSimulator
 from engine.pnl import MarketPrice
@@ -235,20 +236,51 @@ class PaperCopyRunnerTests(unittest.TestCase):
                 copy_settings={"sizing_mode": "UNSUPPORTED", "sizing_value": 10},
             )
 
-    def test_source_trade_must_have_block_time_and_be_at_most_60_seconds_old(self):
+    def test_source_trade_freshness_uses_60_second_window_and_five_second_future_skew(self):
         stale = candidate_result()
         stale["signature_observation"]["block_time"] = 138
         missing_time = candidate_result()
         missing_time["signature_observation"].pop("block_time")
 
-        self.assertTrue(source_trade_is_fresh({"signature_observation": {"block_time": 140}}, now=200))
-        self.assertFalse(source_trade_is_fresh({"signature_observation": {"block_time": 139}}, now=200))
-        self.assertFalse(source_trade_is_fresh({"signature_observation": {}}, now=200))
-        self.assertFalse(source_trade_is_fresh({"signature_observation": {"block_time": 201}}, now=200))
+        fresh = {"signature_observation": {"block_time": 140}}
+        self.assertTrue(source_trade_is_fresh(fresh, now=200))
+        self.assertTrue(source_trade_is_fresh(
+            {"signature_observation": {"block_time": 205}}, now=200
+        ))
+        self.assertFalse(source_trade_is_fresh(
+            {"signature_observation": {"block_time": 206}}, now=200
+        ))
+        self.assertFalse(source_trade_is_fresh(
+            {"signature_observation": {"block_time": 139}}, now=200
+        ))
+        self.assertFalse(source_trade_is_fresh(
+            {"signature_observation": {}}, now=200
+        ))
 
         simulator = FakeSimulator()
         self.assertEqual(queue_paper_orders(WALLET, [stale, missing_time], simulator), [])
         self.assertEqual(simulator.orders, {})
+
+    def test_history_backfill_is_never_queued_as_a_copy_trade(self):
+        simulator = FakeSimulator()
+        historical = candidate_result()
+        historical["history_backfill"] = True
+        historical["copy_eligible"] = False
+        self.assertEqual(queue_paper_orders(WALLET, [historical], simulator), [])
+        self.assertEqual(simulator.orders, {})
+
+    def test_source_age_environment_setting_defaults_and_fails_closed(self):
+        self.assertEqual(load_max_source_age_seconds({}), 60)
+        self.assertEqual(
+            load_max_source_age_seconds({"ENGEN_MAX_SOURCE_AGE_SECONDS": "75"}),
+            75,
+        )
+        for value in ("", "abc", "0", "-1", "1.5"):
+            with self.subTest(value=value):
+                with self.assertRaises(ConfigError):
+                    load_max_source_age_seconds({
+                        "ENGEN_MAX_SOURCE_AGE_SECONDS": value
+                    })
 
     def test_queued_order_is_rejected_when_source_expires_before_execution(self):
         simulator = PaperSimulator(initial_balances={"USD": "1000"})
@@ -265,12 +297,12 @@ class PaperCopyRunnerTests(unittest.TestCase):
                 WALLET, simulator, price_provider=unexpected_price_lookup
             )
 
-        self.assertEqual(outcome[0]["status"], "REJECTED")
-        self.assertEqual(outcome[0]["execution_state"], "STALE_SOURCE")
+        self.assertEqual(outcome[0]["status"], "EXPIRED")
+        self.assertEqual(outcome[0]["execution_state"], "EXPIRED_SOURCE")
         order = simulator.report()["orders"][0]
-        self.assertEqual(order["status"], "REJECTED")
-        self.assertEqual(order["details"]["execution_state"], "STALE_SOURCE")
-        self.assertIn("older than 60 seconds", order["reason"])
+        self.assertEqual(order["status"], "EXPIRED")
+        self.assertEqual(order["details"]["execution_state"], "EXPIRED_SOURCE")
+        self.assertIn("older than the configured 60-second window", order["reason"])
 
         # A rejected stale order is terminal and cannot be retried on later scans.
         with patch("engine.paper_copy_runner.time.time", return_value=source_time + 120):
@@ -300,9 +332,9 @@ class PaperCopyRunnerTests(unittest.TestCase):
                 WALLET, simulator, price_provider=lambda _mint: None
             )
 
-        self.assertEqual(outcome[0]["status"], "REJECTED")
-        self.assertEqual(outcome[0]["execution_state"], "STALE_SOURCE")
-        self.assertEqual(simulator.report()["orders"][0]["status"], "REJECTED")
+        self.assertEqual(outcome[0]["status"], "EXPIRED")
+        self.assertEqual(outcome[0]["execution_state"], "EXPIRED_SOURCE")
+        self.assertEqual(simulator.report()["orders"][0]["status"], "EXPIRED")
         self.assertEqual(simulator.report()["fills"], [])
 
     def test_legacy_queued_order_without_source_timestamp_is_rejected(self):
@@ -329,11 +361,11 @@ class PaperCopyRunnerTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(outcome[0]["status"], "REJECTED")
-        self.assertEqual(outcome[0]["execution_state"], "STALE_SOURCE")
+        self.assertEqual(outcome[0]["status"], "EXPIRED")
+        self.assertEqual(outcome[0]["execution_state"], "EXPIRED_SOURCE")
         stored = simulator.report()["orders"][0]
-        self.assertEqual(stored["status"], "REJECTED")
-        self.assertEqual(stored["details"]["execution_state"], "STALE_SOURCE")
+        self.assertEqual(stored["status"], "EXPIRED")
+        self.assertEqual(stored["details"]["execution_state"], "EXPIRED_SOURCE")
         self.assertEqual(simulator.report()["fills"], [])
 
     def test_unconfirmed_or_unknown_transaction_is_not_copied(self):
@@ -767,6 +799,79 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertEqual(mirrored[0]["execution_state"], "AWAITING_VERIFIED_MARKET_DATA")
         self.assertEqual(len(mirror_simulator.orders), 1)
 
+
+    def test_fill_commit_rechecks_source_age_and_does_not_change_balances(self):
+        simulator = PaperSimulator(initial_balances={"USD": "1000"})
+        source_time = int(datetime.now(timezone.utc).timestamp())
+        order = simulator.create_order(
+            signal_id="wallet-copy:" + WALLET + ":commit-age",
+            side="BUY",
+            asset_mint=ASSET,
+            quantity="1",
+            quote_mint="USD",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            details={
+                "origin": "AUTOMATIC_WALLET_COPY",
+                "source_wallet": WALLET,
+                "source_signature": "1" * 64,
+                "source_block_time": source_time,
+                "source_slot": 123,
+                "target_notional_usd": "10",
+            },
+        )
+        observed_at = datetime.now(timezone.utc).isoformat()
+        market = MarketPrice(
+            mint=ASSET, price=Decimal("2"), currency="USD",
+            source="test-provider", observed_at=observed_at,
+            liquidity_usd=Decimal("5000"), liquidity_source="test-provider",
+            liquidity_observed_at=observed_at,
+        )
+        before = dict(simulator.balances)
+        with patch("engine.paper_simulator.time.time", return_value=source_time + 61):
+            result = simulator.execute_order(
+                order["order_id"], market, now=observed_at,
+                min_liquidity_usd=0, max_liquidity_age_seconds=60,
+                require_liquidity=True,
+            )
+        self.assertEqual(result["status"], "EXPIRED")
+        self.assertEqual(simulator.orders[order["order_id"]]["status"], "EXPIRED")
+        self.assertEqual(simulator.balances, before)
+        self.assertEqual(simulator.fills, [])
+
+    def test_expired_buy_rejects_later_dependent_sell(self):
+        simulator = PaperSimulator(initial_balances={"USD": "1000"})
+        stale_time = int(datetime.now(timezone.utc).timestamp()) - 61
+        buy = simulator.create_order(
+            signal_id="wallet-copy:" + WALLET + ":expired-buy",
+            side="BUY", asset_mint=ASSET, quantity="1", quote_mint="USD",
+            created_at="2026-11-01T00:00:00+00:00",
+            details={
+                "origin": "AUTOMATIC_WALLET_COPY", "source_wallet": WALLET,
+                "source_signature": "1" * 64, "source_block_time": stale_time,
+                "source_slot": 100,
+            },
+        )
+        sell = simulator.create_order(
+            signal_id="wallet-copy:" + WALLET + ":dependent-sell",
+            side="SELL", asset_mint=ASSET, quantity="1", quote_mint="USD",
+            created_at="2026-11-01T00:00:01+00:00",
+            details={
+                "origin": "AUTOMATIC_WALLET_COPY", "source_wallet": WALLET,
+                "source_signature": "2" * 64, "source_block_time": stale_time + 1,
+                "source_slot": 101,
+            },
+        )
+        outcomes = execute_pending_paper_orders(
+            WALLET, simulator,
+            price_provider=lambda _mint: self.fail("Expired dependent orders must not request a price."),
+        )
+        self.assertEqual(simulator.orders[buy["order_id"]]["status"], "EXPIRED")
+        self.assertEqual(simulator.orders[sell["order_id"]]["status"], "REJECTED")
+        self.assertEqual(
+            simulator.orders[sell["order_id"]]["details"]["dependency_order_id"],
+            buy["order_id"],
+        )
+        self.assertEqual(simulator.fills, [])
 
 if __name__ == "__main__":
     unittest.main()

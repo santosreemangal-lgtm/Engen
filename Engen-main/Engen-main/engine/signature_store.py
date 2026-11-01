@@ -341,6 +341,14 @@ class SignatureStore:
                        WHERE wallet_address = ? AND signature = ?""",
                     (status, attempts, stage, safe_code, safe_message, wallet_address, signature),
                 )
+                if status == "needs_review":
+                    connection.execute(
+                        """UPDATE transaction_records
+                           SET processing_status = 'needs_review',
+                               updated_at = CURRENT_TIMESTAMP
+                           WHERE wallet_address = ? AND signature = ?""",
+                        (wallet_address, signature),
+                    )
         return {"status": status, "attempts": attempts}
 
     def save_transaction_record(

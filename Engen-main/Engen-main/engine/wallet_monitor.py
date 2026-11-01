@@ -362,7 +362,15 @@ def get_and_store_new_wallet_signatures(
 
     if return_batches:
         return {"fresh": fresh, "history": history}
-    return fresh + history
+    # Preserve the original flat-list API for callers that have not opted into
+    # the explicit Fresh/History result structure.
+    legacy_results = []
+    for item in fresh + history:
+        legacy_results.append({
+            key: value for key, value in item.items()
+            if key not in {"copy_eligible", "history_backfill"}
+        })
+    return legacy_results
 
 
 if __name__ == "__main__":

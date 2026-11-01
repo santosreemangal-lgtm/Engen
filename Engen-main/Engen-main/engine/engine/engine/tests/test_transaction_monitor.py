@@ -471,6 +471,38 @@ class TransactionMonitorTests(unittest.TestCase):
         self.assertTrue(result["retryable"])
 
     @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_signature_list_execution_error_is_terminal_failed_not_retryable(
+        self, mock_process,
+    ):
+        wallet = "11111111111111111111111111111111"
+        signature = "1" * 64
+        mock_process.return_value = {
+            "signature": signature,
+            "available": True,
+            "metadata_complete": True,
+            "status": "success",
+            "signers": [wallet],
+            "token_balance_changes": [],
+        }
+
+        result = process_new_signatures(
+            signatures=[{
+                "signature": signature,
+                "confirmationStatus": "confirmed",
+                "err": {"InstructionError": [0, "Custom"]},
+            }],
+            wallet_address=wallet,
+        )[0]
+
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse(result["retryable"])
+        self.assertEqual(
+            result["signature_observation"]["signature_error"],
+            {"InstructionError": [0, "Custom"]},
+        )
+        self.assertEqual(result["trade_signal"]["classification"], "UNKNOWN")
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
     def test_rpc_failure_does_not_create_a_success_transaction_record(
         self, mock_process,
     ):

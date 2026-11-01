@@ -566,7 +566,8 @@ class SignatureStore:
 
 
     def get_history_pending_signatures(
-        self, wallet_address, limit=25, history_cap=1000, exclude_signatures=()
+        self, wallet_address, limit=25, history_cap=1000, exclude_signatures=(),
+        before_block_time=None,
     ):
         """Select newest pending history only from the wallet's newest bounded window."""
         self._validate_wallet(wallet_address)
@@ -576,6 +577,14 @@ class SignatureStore:
             or not 1 <= history_cap <= 1000
             or not isinstance(exclude_signatures, (list, tuple))
             or len(exclude_signatures) > 50
+            or (
+                before_block_time is not None
+                and (
+                    not isinstance(before_block_time, int)
+                    or isinstance(before_block_time, bool)
+                    or before_block_time < 0
+                )
+            )
         ):
             raise ValueError("Invalid bounded history selection.")
         excluded = []
@@ -585,6 +594,12 @@ class SignatureStore:
                 excluded.append(signature)
         exclusion_sql = ""
         params = [wallet_address, history_cap]
+        fresh_exclusion_sql = ""
+        if before_block_time is not None:
+            # Exclude every still-fresh row, not just the first 50 selected for
+            # this scan. The remaining fresh signatures must stay Fresh next scan.
+            fresh_exclusion_sql = " AND (block_time IS NULL OR block_time < ?)"
+            params.append(before_block_time)
         if excluded:
             exclusion_sql = " AND signature NOT IN (" + ",".join("?" for _ in excluded) + ")"
             params.extend(excluded)
@@ -593,7 +608,7 @@ class SignatureStore:
             rows = connection.execute(
                 """
                 WITH newest_window AS (
-                    SELECT signature, status, first_seen_at
+                    SELECT signature, status, first_seen_at, block_time
                     FROM seen_signatures
                     WHERE wallet_address = ?
                     ORDER BY first_seen_at DESC, signature DESC
@@ -601,7 +616,7 @@ class SignatureStore:
                 )
                 SELECT signature
                 FROM newest_window
-                WHERE status = 'pending'""" + exclusion_sql + """
+                WHERE status = 'pending'""" + fresh_exclusion_sql + exclusion_sql + """
                 ORDER BY first_seen_at DESC, signature DESC
                 LIMIT ?
                 """,

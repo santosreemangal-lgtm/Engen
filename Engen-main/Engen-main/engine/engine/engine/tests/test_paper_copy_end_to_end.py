@@ -230,6 +230,7 @@ class PaperCopyEndToEndTests(unittest.TestCase):
             self.assertEqual(len(report["fills"]), 1)
             self.assertLess(Decimal(report["balances"]["USD"]), Decimal("1000"))
             self.assertGreater(Decimal(report["balances"][ASSET]), Decimal("0"))
+            buy_cash_balance = Decimal(report["balances"]["USD"])
             self.assertFalse(report["real_trading"])
             self.assertFalse(report["transaction_broadcast"])
 
@@ -307,7 +308,7 @@ class PaperCopyEndToEndTests(unittest.TestCase):
             self.assertGreater(Decimal(sell_fill["fee"]), Decimal("0"))
             self.assertEqual(Decimal(buy_fill["network_cost"]), Decimal("0"))
             self.assertEqual(Decimal(sell_fill["network_cost"]), Decimal("0"))
-            self.assertGreater(Decimal(report["balances"]["USD"]), Decimal("0"))
+            self.assertGreater(Decimal(report["balances"]["USD"]), buy_cash_balance)
             self.assertGreater(Decimal(report["balances"][ASSET]), Decimal("0"))
             self.assertLess(Decimal(report["balances"][ASSET]), Decimal(buy_fill["quantity"]))
             self.assertEqual(len(report["pnl_events"]), 2)

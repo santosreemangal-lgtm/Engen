@@ -440,6 +440,9 @@ def monitor_wallet(
     if store is None:
         store = SignatureStore()
 
+    # Start the per-wallet deadline before discovery so pagination cannot
+    # consume the entire cycle and starve later wallets.
+    deadline = time.monotonic() + WALLET_SCAN_BUDGET_SECONDS
     signature_options = {
         "wallet_address": wallet_address,
         "store": store,
@@ -447,6 +450,7 @@ def monitor_wallet(
         "rpc_url": rpc_url,
         "timeout": timeout,
         "return_batches": True,
+        "deadline": deadline,
     }
     if latency_recorder is not None:
         signature_options["latency_recorder"] = latency_recorder
@@ -454,9 +458,8 @@ def monitor_wallet(
     if not isinstance(batches, dict):
         batches = {"fresh": batches if isinstance(batches, list) else [], "history": []}
 
-    # A single per-wallet deadline bounds fresh processing plus history backfill.
+    # A single per-wallet deadline bounds discovery, fresh processing and history.
     # Fresh source swaps always get the first share of the wallet's scan budget.
-    deadline = time.monotonic() + WALLET_SCAN_BUDGET_SECONDS
     common_options = {
         "rpc_url": rpc_url,
         "timeout": timeout,

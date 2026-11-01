@@ -439,8 +439,15 @@ class DashboardProfileApiTests(unittest.TestCase):
         }
 
         class FakeSignatureStore:
+            def __init__(self):
+                self.statuses = {}
+
+            def get_status(self, wallet_address, stored_signature):
+                return self.statuses.get(stored_signature, "pending")
+
             def mark_processed(self, wallet_address, stored_signature):
                 self.last_processed = (wallet_address, stored_signature)
+                self.statuses[stored_signature] = "processed"
 
         with patch.object(monitor_bridge, "SignatureStore", FakeSignatureStore), patch.object(
             monitor_bridge, "monitor_wallet", return_value=[observation]
@@ -464,6 +471,8 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertEqual(stored["token_mint"], TOKEN_MINT)
         self.assertEqual(stored["token_decimals"], 6)
         self.assertEqual(stored["amount"], "1.25")
+        self.assertEqual(stored["status"], "confirmed")
+        self.assertEqual(stored["evidence"]["signature_queue_status"], "processed")
         self.assertFalse(stored["simulated"])
         paper_report = dashboard_server.load_profile_paper_simulation_report(self.profile_id)
         self.assertEqual(paper_report["orders"], [])

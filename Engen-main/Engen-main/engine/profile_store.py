@@ -403,8 +403,13 @@ class ProfileStore:
             incoming_evidence = evidence if isinstance(evidence, dict) else {}
             old_review_terminal = (
                 old_status == "unknown"
-                and previous_evidence.get("processing_status") == "needs_review"
-                and previous_evidence.get("retry_exhausted") is True
+                and (
+                    previous_evidence.get("terminal_status") is True
+                    or (
+                        previous_evidence.get("processing_status") == "needs_review"
+                        and previous_evidence.get("retry_exhausted") is True
+                    )
+                )
             )
             incoming_review_terminal = (
                 incoming_evidence.get("terminal_status") is True

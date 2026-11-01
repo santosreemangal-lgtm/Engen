@@ -121,7 +121,9 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             return 0
         try:
             signatures = pending_reader(address, limit=250)
-        except (ValueError, OSError, RuntimeError, sqlite3.Error):
+        except (TypeError, ValueError, OSError, RuntimeError, sqlite3.Error):
+            return 0
+        if not isinstance(signatures, (list, tuple)):
             return 0
         reconciled = 0
         for signature in signatures:

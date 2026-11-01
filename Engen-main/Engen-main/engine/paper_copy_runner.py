@@ -301,7 +301,13 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
         list(simulator.orders.values()),
         key=_source_order_time_key,
     )
-    for order in ordered_orders:
+    for queued_snapshot in ordered_orders:
+        # Earlier fills/expirations can terminalize dependent orders while this
+        # pass is iterating its initial snapshot. Always re-read the live order.
+        order_id = queued_snapshot.get("order_id")
+        order = simulator.orders.get(order_id, queued_snapshot)
+        if order.get("status") != "CREATED":
+            continue
         details = order.get("details") or {}
         if (
             order.get("status") != "CREATED"

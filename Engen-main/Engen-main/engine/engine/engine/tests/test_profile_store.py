@@ -222,6 +222,33 @@ class ProfileStoreTests(unittest.TestCase):
         transaction = self.store.get_transaction(signature, profile_id=profile)
         self.assertEqual(transaction["status"], "pending")
 
+    def test_terminal_unknown_without_review_marker_stays_unknown(self):
+        profile = self.store.create_profile("Terminal unknown")
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        signature = "5" * 64
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="unknown",
+            evidence={
+                "terminal_status": True,
+                "processing_status": "unknown",
+                "signature_queue_status": "processed",
+            },
+            profile_ids=[profile],
+        )
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="pending",
+            evidence={
+                "processing_status": "pending",
+                "signature_queue_status": "pending",
+            },
+            profile_ids=[profile],
+        )
+        transaction = self.store.get_transaction(signature, profile_id=profile)
+        self.assertEqual(transaction["status"], "unknown")
+        self.assertTrue(transaction["evidence"]["terminal_status"])
+        self.assertEqual(transaction["evidence"]["processing_status"], "unknown")
+        self.assertEqual(transaction["evidence"]["signature_queue_status"], "processed")
+
     def test_soft_delete_preserves_history(self):
         p = self.store.create_profile("History")
         self.store.associate_source_wallet(p, PUBLIC_ADDRESS)

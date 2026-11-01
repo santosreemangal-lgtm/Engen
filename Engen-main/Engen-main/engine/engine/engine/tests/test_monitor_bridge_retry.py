@@ -82,6 +82,32 @@ class MonitorBridgeRetryTests(unittest.TestCase):
         self.assertEqual(output[0]["paper_copy_status"], "SKIPPED_STALE_SOURCE")
         self.assertNotIn("RETRYING_QUEUE", output[0].get("paper_copy_status", ""))
 
+    def test_stale_candidate_is_terminally_skipped_even_when_queue_raises(self):
+        result = candidate_result()
+        result["signature_observation"]["block_time"] = int(time.time()) - 61
+        store = Mock()
+        simulator = Mock()
+        simulator.report.return_value = {"orders": []}
+        with (
+            patch("dashboard.monitor_bridge.SignatureStore", return_value=store),
+            patch("dashboard.monitor_bridge.monitor_wallet", return_value=[result]),
+            patch(
+                "dashboard.monitor_bridge.queue_paper_orders",
+                side_effect=RuntimeError("temporary queue failure"),
+            ),
+            patch("dashboard.monitor_bridge.execute_pending_paper_orders", return_value=[]),
+        ):
+            scan = create_scan_function(
+                side_getter=lambda: "BOTH",
+                settings_getter=lambda: {},
+                simulator_getter=lambda: simulator,
+            )
+            output = scan(WALLET)
+
+        store.mark_processed.assert_called_once_with(WALLET, "1" * 64)
+        self.assertEqual(output[0]["paper_copy_status"], "SKIPPED_STALE_SOURCE")
+        self.assertIn("paper_copy_error", output[0])
+
     def test_missing_source_timestamp_is_skipped_and_marked_processed(self):
         result = candidate_result()
         result["signature_observation"].pop("block_time")

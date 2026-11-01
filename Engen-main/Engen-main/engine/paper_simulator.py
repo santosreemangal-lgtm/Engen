@@ -610,29 +610,35 @@ class PaperSimulator:
                 self._persist(terminal)
                 self.orders[order_id] = terminal
                 if terminal_status == "EXPIRED":
-                    buy_key = (
-                        details.get("source_block_time")
-                        if isinstance(details.get("source_block_time"), int) else 2**63,
-                        details.get("source_slot")
-                        if isinstance(details.get("source_slot"), int) else 2**63,
-                        str(order.get("created_at") or ""),
-                    )
                     for candidate in list(self.orders.values()):
                         candidate_details = candidate.get("details") or {}
-                        candidate_time = (
-                            candidate_details.get("source_block_time")
-                            if isinstance(candidate_details.get("source_block_time"), int) else 2**63,
-                            candidate_details.get("source_slot")
-                            if isinstance(candidate_details.get("source_slot"), int) else 2**63,
-                            str(candidate.get("created_at") or ""),
-                        )
+                        candidate_slot = candidate_details.get("source_slot")
+                        buy_slot = details.get("source_slot")
+                        candidate_time = candidate_details.get("source_block_time")
+                        buy_time = details.get("source_block_time")
+                        if (
+                            isinstance(candidate_slot, int) and not isinstance(candidate_slot, bool)
+                            and isinstance(buy_slot, int) and not isinstance(buy_slot, bool)
+                            and candidate_slot != buy_slot
+                        ):
+                            follows_buy = candidate_slot > buy_slot
+                        elif (
+                            isinstance(candidate_time, int) and not isinstance(candidate_time, bool)
+                            and isinstance(buy_time, int) and not isinstance(buy_time, bool)
+                            and candidate_time != buy_time
+                        ):
+                            follows_buy = candidate_time > buy_time
+                        else:
+                            candidate_created = str(candidate.get("created_at") or "")
+                            buy_created = str(order.get("created_at") or "")
+                            follows_buy = bool(candidate_created and buy_created and candidate_created > buy_created)
                         if (
                             candidate.get("status") == "CREATED"
                             and candidate.get("side") == "SELL"
                             and candidate.get("asset_mint") == order.get("asset_mint")
                             and candidate_details.get("origin") == "AUTOMATIC_WALLET_COPY"
                             and candidate_details.get("source_wallet") == details.get("source_wallet")
-                            and candidate_time > buy_key
+                            and follows_buy
                         ):
                             rejected = dict(
                                 candidate,

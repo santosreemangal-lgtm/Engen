@@ -113,22 +113,35 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             return 0
         pending_reader = getattr(profile_store, "get_pending_transaction_signatures", None)
         review_writer = getattr(profile_store, "mark_transaction_needs_review", None)
+        status_batch_reader = getattr(store, "get_statuses", None)
         status_reader = getattr(store, "get_status", None)
         error_reader = getattr(store, "get_error_record", None)
         if not all(callable(item) for item in (
-            pending_reader, review_writer, status_reader, error_reader
-        )):
+            pending_reader, review_writer, error_reader
+        )) or not (callable(status_batch_reader) or callable(status_reader)):
             return 0
         try:
-            signatures = pending_reader(address, limit=250)
+            signatures = pending_reader(address, limit=1000)
         except (TypeError, ValueError, OSError, RuntimeError, sqlite3.Error):
             return 0
         if not isinstance(signatures, (list, tuple)):
             return 0
         reconciled = 0
+        statuses = None
+        if callable(status_batch_reader):
+            try:
+                candidate_statuses = status_batch_reader(address, signatures)
+                if isinstance(candidate_statuses, dict):
+                    statuses = candidate_statuses
+            except (TypeError, ValueError, OSError, RuntimeError, sqlite3.Error):
+                statuses = None
         for signature in signatures:
             try:
-                if status_reader(address, signature) != "needs_review":
+                signature_status = (
+                    statuses.get(signature) if statuses is not None
+                    else status_reader(address, signature)
+                )
+                if signature_status != "needs_review":
                     continue
                 error = error_reader(address, signature) or {}
                 changed = review_writer(

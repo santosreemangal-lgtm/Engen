@@ -1,5 +1,7 @@
 """Monitor public Solana wallet transactions without submitting trades."""
 
+import json
+
 from engine.solana_public import DEFAULT_RPC_URL, SolanaRPCError, get_signature_status
 from engine.signature_store import SignatureStore
 from engine.solana_validation import is_valid_solana_address, is_valid_transaction_signature

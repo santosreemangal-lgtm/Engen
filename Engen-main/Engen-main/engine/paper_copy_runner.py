@@ -41,7 +41,7 @@ MAX_SOURCE_FUTURE_SKEW_SECONDS = 5
 
 
 def source_trade_is_fresh(result, *, now=None, max_age_seconds=MAX_SOURCE_TRADE_AGE_SECONDS):
-    """Return true only when a verified source block time is no more than 60s old."""
+    """Return true only inside the configured source-age window plus 5s future skew."""
     if not isinstance(result, dict) or not isinstance(max_age_seconds, int) or isinstance(max_age_seconds, bool) or max_age_seconds < 0:
         return False
     observation = result.get("signature_observation")
@@ -316,8 +316,10 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
         }}
         if not source_trade_is_fresh(source_observation):
             reason = (
-                "Source transaction timestamp is missing, invalid, in the future, "
-                "or older than 60 seconds; the paper order was permanently rejected."
+                "Source transaction timestamp is missing or invalid, more than "
+                f"{MAX_SOURCE_FUTURE_SKEW_SECONDS} seconds in the future, or older "
+                f"than the configured {MAX_SOURCE_TRADE_AGE_SECONDS}-second window; "
+                "the paper order was permanently rejected."
             )
             outcomes.append(_reject_stale_source_order(simulator, order, reason))
             continue
@@ -388,7 +390,8 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
             # lookup consumed the remaining source-copy window.
             if not source_trade_is_fresh(source_observation):
                 reason = (
-                    "Source transaction exceeded the 60-second copy window during "
+                    "Source transaction exceeded the configured "
+                    f"{MAX_SOURCE_TRADE_AGE_SECONDS}-second copy window during "
                     "quote-price lookup; the paper order was permanently rejected."
                 )
                 outcomes.append(_reject_stale_source_order(simulator, order, reason))
@@ -494,7 +497,8 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
         # so an order cannot fill after its 60-second copy window expires mid-scan.
         if not source_trade_is_fresh(source_observation):
             reason = (
-                "Source transaction exceeded the 60-second copy window during "
+                "Source transaction exceeded the configured "
+                f"{MAX_SOURCE_TRADE_AGE_SECONDS}-second copy window during "
                 "market-data lookup; the paper order was permanently rejected."
             )
             outcomes.append(_reject_stale_source_order(simulator, order, reason))

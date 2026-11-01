@@ -18,7 +18,7 @@ def sell_signal(signature, source_before, source_sold):
         "status": "success",
         "metadata_complete": True,
         "signers": [WALLET],
-        "signature_observation": {"confirmation_status": "finalized", "slot": 1},
+        "signature_observation": {"confirmation_status": "finalized", "slot": 1, "block_time": int(datetime.now(timezone.utc).timestamp())},
         "trade_signal": {
             "classification": "SELL_CANDIDATE",
             "asset_mints": [ASSET],

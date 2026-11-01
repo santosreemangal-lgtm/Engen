@@ -6,7 +6,8 @@ from decimal import Decimal, InvalidOperation
 
 from engine.signature_store import SignatureStore
 from engine.transaction_monitor import monitor_wallet
-from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders, get_paper_simulator, PAPER_SIMULATOR_LOCK
+from engine.paper_copy_runner import (queue_paper_orders, execute_pending_paper_orders,
+    get_paper_simulator, PAPER_SIMULATOR_LOCK, source_trade_is_fresh)
 from engine.profile_store import LABELS
 from engine.solana_validation import is_valid_transaction_signature
 
@@ -15,6 +16,51 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                          simulator_getter=None, profile_id=None, profile_store=None):
     """Create a read-only scanner with profile-specific paper execution and history."""
     store = SignatureStore()
+
+    def reconcile_pending_review_rows(address):
+        """Close legacy profile pending rows whose signature retries are exhausted."""
+        if profile_id is None or profile_store is None:
+            return 0
+        list_pending = getattr(profile_store, "list_pending_transaction_signatures", None)
+        get_review_records = getattr(store, "get_needs_review_records", None)
+        if not callable(list_pending) or not callable(get_review_records):
+            return 0
+        try:
+            pending = list_pending(profile_id, address, limit=1000)
+            if not isinstance(pending, (list, tuple)) or not pending:
+                return 0
+            records = get_review_records(address, pending)
+            if not isinstance(records, list):
+                return 0
+        except (ValueError, OSError, RuntimeError, sqlite3.Error):
+            # This is a history-repair operation; a transient DB error must not
+            # stop the read-only monitor from continuing its normal scan.
+            return 0
+
+        reconciled = 0
+        for record in records:
+            evidence = {
+                "processing_status": "needs_review",
+                "retry_attempts": record.get("attempts"),
+                "retry_last_checked_at": record.get("last_checked_at"),
+                "retry_error_stage": record.get("error_stage"),
+                "retry_error_code": record.get("error_code"),
+                "retry_error_message": record.get("error_message"),
+                "real_trading": False,
+                "transaction_broadcast": False,
+            }
+            try:
+                profile_store.save_transaction(
+                    record["signature"], address,
+                    classification="UNKNOWN", status="unknown",
+                    evidence=evidence, profile_ids=(profile_id,),
+                    terminal_status=True,
+                )
+                reconciled += 1
+            except (ValueError, OSError, RuntimeError, sqlite3.Error, KeyError):
+                continue
+        return reconciled
+
 
     def persist_observed_transactions(address, results):
         """Save observed on-chain transactions separately from simulated orders."""
@@ -39,6 +85,11 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             confirmation = observation.get("confirmation_status")
             if item.get("status") == "failed":
                 status = "failed"
+            elif item.get("processing_status") == "needs_review":
+                # Profile history has no needs_review enum. Map the exhausted
+                # retry state to unknown, not pending, so the UI does not imply
+                # the engine will keep retrying it automatically.
+                status = "unknown"
             elif confirmation in ("confirmed", "finalized") and item.get("metadata_complete") is True:
                 status = "confirmed"
             elif item.get("retryable") is True or item.get("metadata_complete") is False:
@@ -80,6 +131,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     break
             evidence = {
                 "metadata_status": str(item.get("metadata_status", "available"))[:80],
+                "processing_status": str(item.get("processing_status", "unknown"))[:40],
                 "confirmation_status": confirmation,
                 "classification_reason": str(signal.get("reason", ""))[:400],
                 "confidence": str(signal.get("confidence", "unknown"))[:40],
@@ -93,6 +145,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     evidence=evidence, slot=slot, block_time=block_time,
                     raw_amount=raw_amount, token_mint=token_mint, token_decimals=token_decimals,
                     profile_ids=(profile_id,),
+                    terminal_status=item.get("processing_status") == "needs_review",
                 )
                 persisted.append({**item, "profile_history_status": "saved"})
             except (ValueError, OSError, RuntimeError, sqlite3.Error):
@@ -100,8 +153,60 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
         return persisted
 
 
+    def persist_source_trade_refs(address, simulator):
+        """Reconcile paper orders into the durable profile source-reference ledger."""
+        if profile_id is None or profile_store is None:
+            return 0
+        reporter = getattr(simulator, "report", None)
+        if not callable(reporter):
+            return 0
+        try:
+            report = reporter()
+        except Exception:
+            return 0
+        orders = list(report.get("orders", [])) if isinstance(report, dict) and isinstance(report.get("orders"), list) else []
+        archives = report.get("archived_sessions", []) if isinstance(report, dict) else []
+        # Session resets archive orders before clearing the active simulator list.
+        # Reconcile those orders too, so a restart/reset cannot erase the source link.
+        if isinstance(archives, list):
+            for archive in archives:
+                if isinstance(archive, dict) and isinstance(archive.get("orders"), list):
+                    orders.extend(archive["orders"])
+        saved = 0
+        for order in orders:
+            if not isinstance(order, dict):
+                continue
+            details = order.get("details")
+            details = details if isinstance(details, dict) else {}
+            if details.get("origin") != "AUTOMATIC_WALLET_COPY":
+                continue
+            signature = details.get("source_signature")
+            order_id = order.get("order_id")
+            side = order.get("side")
+            asset_mint = order.get("asset_mint")
+            if not is_valid_transaction_signature(signature):
+                continue
+            try:
+                created = profile_store.save_source_trade_ref(
+                    profile_id, order_id, details.get("source_wallet", address),
+                    signature, side, asset_mint,
+                    source_slot=details.get("source_slot"),
+                    source_block_time=details.get("source_block_time"),
+                )
+                saved += int(bool(created))
+            except (ValueError, OSError, RuntimeError, sqlite3.Error):
+                # The order is already safely persisted in the paper ledger.
+                # A later scan reconciles it again; never lose that order due
+                # to a transient source-reference write failure.
+                continue
+        return saved
+
+
     def scan_wallet(address):
         """Analyze new wallet signatures and queue eligible paper-copy orders."""
+        # Repair old profile-history pending labels from the durable signature
+        # retry state before fetching this scan's still-pending signatures.
+        reconcile_pending_review_rows(address)
         results = monitor_wallet(
             wallet_address=address,
             store=store,
@@ -120,6 +225,10 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     address, results, simulator=simulator,
                     allowed_sides=allowed_sides, copy_settings=copy_settings
                 )
+                # Persist the source link immediately after the order is durable,
+                # before attempting its fill. A subsequent scan also reconciles
+                # active and archived orders if the process stops between steps.
+                persist_source_trade_refs(address, simulator)
                 execution_outcomes = execute_pending_paper_orders(address, simulator=simulator)
             outcomes_by_signal = {
                 item["signal_id"]: item for item in execution_outcomes
@@ -155,7 +264,23 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     signature in queued_signatures
                     or signal_id in processed_signals
                 )
+                if item.get("processing_status") == "needs_review":
+                    item["paper_copy_status"] = "NEEDS_REVIEW"
+                    item["paper_copy_message"] = (
+                        "Automatic retries are exhausted; this signature needs manual review."
+                    )
+                    # needs_review is already excluded from pending scans.
+                    # Keep its signature-store error diagnostics instead of
+                    # converting it to processed (which clears those fields).
+                    continue
                 if side_enabled and not already_queued:
+                    if not source_trade_is_fresh(item):
+                        item["paper_copy_status"] = "SKIPPED_STALE_SOURCE"
+                        item["paper_copy_message"] = (
+                            "Source block time is missing or older than 60 seconds; no paper order was created."
+                        )
+                        store.mark_processed(address, signature)
+                        continue
                     item["paper_copy_status"] = "RETRYING_QUEUE"
                     item["paper_copy_message"] = (
                         "Eligible swap was not queued; signature remains pending for retry."
@@ -206,6 +331,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     isinstance(signature, str)
                     and item.get("retryable") is not True
                     and not is_candidate
+                    and item.get("processing_status") != "needs_review"
                 ):
                     store.mark_processed(address, signature)
             results = [

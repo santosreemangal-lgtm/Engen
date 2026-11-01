@@ -2,6 +2,7 @@
 """Read-only monitoring service for saved public Solana wallets."""
 
 import threading
+import time
 
 from engine.solana_validation import is_valid_solana_address
 from datetime import datetime, timezone
@@ -29,6 +30,7 @@ class MonitorService:
         self._thread = None
         self._wallets = {}
         self._enabled = False
+        self._last_cycle_duration_seconds = None
 
     @staticmethod
     def _new_wallet_state():
@@ -38,6 +40,9 @@ class MonitorService:
             "last_successful_check": None,
             "last_error": None,
             "latest_results": [],
+            "scan_count": 0,
+            "last_scan_duration_seconds": None,
+            "last_result_count": 0,
         }
 
     def _status_details(self, details):
@@ -60,6 +65,7 @@ class MonitorService:
             return {
                 "enabled": self._enabled,
                 "interval_seconds": self._interval,
+                "last_cycle_duration_seconds": self._last_cycle_duration_seconds,
                 "wallets": [
                     {
                         "address": address,
@@ -176,6 +182,7 @@ class MonitorService:
                 with self._lock:
                     addresses = list(self._wallets.keys())
 
+                cycle_started = time.monotonic()
                 for address in addresses:
                     if self._stop_event.is_set():
                         break
@@ -186,17 +193,22 @@ class MonitorService:
 
                         self._wallets[address]["state"] = "scanning"
 
+                    scan_started = time.monotonic()
                     try:
                         results = self._scan_function(address)
 
                         if not isinstance(results, list):
                             results = []
 
+                        scan_duration = max(0.0, time.monotonic() - scan_started)
                         with self._lock:
                             if address in self._wallets:
                                 self._wallets[address].update(
                                     {
                                         "state": "connected",
+                                        "scan_count": self._wallets[address].get("scan_count", 0) + 1,
+                                        "last_scan_duration_seconds": round(scan_duration, 3),
+                                        "last_result_count": len(results),
                                         "last_scan": datetime.now(
                                             timezone.utc
                                         ).isoformat(),
@@ -209,11 +221,14 @@ class MonitorService:
                                 )
 
                     except Exception:
+                        scan_duration = max(0.0, time.monotonic() - scan_started)
                         with self._lock:
                             if address in self._wallets:
                                 self._wallets[address].update(
                                     {
                                         "state": "error",
+                                        "scan_count": self._wallets[address].get("scan_count", 0) + 1,
+                                        "last_scan_duration_seconds": round(scan_duration, 3),
                                         "last_scan": datetime.now(
                                             timezone.utc
                                         ).isoformat(),
@@ -221,6 +236,12 @@ class MonitorService:
                                     }
                                 )
 
+                # Cycle duration excludes the configured idle interval and reports
+                # actual wallet sweep time, including provider/network latency.
+                with self._lock:
+                    self._last_cycle_duration_seconds = round(
+                        max(0.0, time.monotonic() - cycle_started), 3
+                    )
                 self._stop_event.wait(self._interval)
 
         finally:

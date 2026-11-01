@@ -11,6 +11,10 @@ from engine.signature_store import SignatureStore
 from engine.solana_validation import is_valid_solana_address, is_valid_transaction_signature
 
 
+MAX_DISCOVERY_PAGES = 5
+MAX_PENDING_SIGNATURES_PER_SCAN = 50
+
+
 def get_wallet_signatures(
     wallet_address,
     limit=10,
@@ -173,7 +177,7 @@ def get_and_store_new_wallet_signatures(
             if anchor_signature and signature == anchor_signature:
                 anchor_found = True
                 break
-        if anchor_found or len(page) < limit or pages >= 5 or not page:
+        if anchor_found or len(page) < limit or pages >= MAX_DISCOVERY_PAGES or not page:
             break
         next_before = page[-1].get("signature") if isinstance(page[-1], dict) else None
         if not is_valid_transaction_signature(next_before):
@@ -189,8 +193,12 @@ def get_and_store_new_wallet_signatures(
             page_options["latency_recorder"] = latency_recorder
         page = get_wallet_signatures(**page_options)
 
+    # The discovery loop can collect up to five pages. Process a bounded batch
+    # of pending work instead of only one page, otherwise a backlog drains too
+    # slowly and newer signatures wait behind old entries indefinitely.
+    pending_limit = min(limit * MAX_DISCOVERY_PAGES, MAX_PENDING_SIGNATURES_PER_SCAN)
     pending_signatures = store.get_pending_signatures(
-        wallet_address, limit=limit
+        wallet_address, limit=pending_limit
     )
     return [
         records_by_signature.get(signature, {"signature": signature})

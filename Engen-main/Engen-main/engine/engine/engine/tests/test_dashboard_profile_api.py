@@ -499,6 +499,22 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertFalse(first_report["real_trading"])
         self.assertFalse(first_report["transaction_broadcast"])
 
+    def test_profile_paper_report_exposes_permanent_source_trade_refs(self):
+        signature = "1" * 64
+        self.store.save_source_trade_ref(
+            self.profile_id, "paper-order-retained", PUBLIC_WALLET,
+            signature, "BUY", TOKEN_MINT, source_slot=123,
+            source_block_time=1700000000,
+        )
+
+        report = dashboard_server.load_profile_paper_simulation_report(self.profile_id)
+
+        self.assertEqual(len(report["source_trade_refs"]), 1)
+        source_ref = report["source_trade_refs"][0]
+        self.assertEqual(source_ref["order_id"], "paper-order-retained")
+        self.assertEqual(source_ref["source_signature"], signature)
+        self.assertEqual(source_ref["asset_mint"], TOKEN_MINT)
+
     def test_profile_paper_report_rejects_non_uuid_profile_id(self):
         with self.assertRaises(ValueError):
             dashboard_server.load_paper_simulation_report("../../paper.db")

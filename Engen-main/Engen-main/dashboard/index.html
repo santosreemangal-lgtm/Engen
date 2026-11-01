@@ -589,7 +589,7 @@ function renderPortfolioMetrics(report){
 
  // All four cards remain visible. Capital is an unsigned amount;
  // only return and P&L metrics display positive/negative signs.
- setMetricValue("initial-deposit",currentCapital===null?"$—":money(Math.abs(currentCapital)),"neutral");
+ setMetricValue("initial-deposit",initial===null?"$—":money(Math.abs(initial)),"neutral");
  setMetricValue("total-return",hasPaperFills?signedPercent(returnPercent):"—",
   !hasPaperFills?"neutral":returnPercent>0?"positive":returnPercent<0?"negative":"neutral");
  setMetricValue("today-pnl",hasPaperFills?signedMoney(today):"—",
@@ -629,8 +629,13 @@ function renderWallets(){
    const state=String(monitor.state||"waiting").toLowerCase();
    const checked=monitor.last_successful_check?new Date(monitor.last_successful_check):null;
    const checkedLabel=checked&&!Number.isNaN(checked.getTime())?" · "+checked.toLocaleTimeString():"";
-   const resultCount=Array.isArray(monitor.latest_results)?monitor.latest_results.length:0;
-   monitorStatus.textContent=state.replaceAll("_"," ")+checkedLabel+(resultCount?" · "+resultCount+" recent":"");
+   const resultCount=Number.isInteger(monitor.last_result_count)?monitor.last_result_count:(Array.isArray(monitor.latest_results)?monitor.latest_results.length:0);
+   const scanCount=Number.isInteger(monitor.scan_count)?monitor.scan_count:0;
+   const scanDuration=Number(monitor.last_scan_duration_seconds);
+   const resultLabel=" · "+resultCount+" results";
+   const scanLabel=scanCount?" · "+scanCount+" scans":"";
+   const durationLabel=Number.isFinite(scanDuration)?" · "+scanDuration.toFixed(2)+"s scan":"";
+   monitorStatus.textContent=state.replaceAll("_"," ")+checkedLabel+resultLabel+scanLabel+durationLabel;
    monitorStatus.dataset.state=state;
   }
   const actions=document.createElement("div");actions.className="wallet-actions";

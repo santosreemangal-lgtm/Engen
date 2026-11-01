@@ -284,7 +284,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     if not source_trade_is_fresh(item):
                         item["paper_copy_status"] = "SKIPPED_STALE_SOURCE"
                         item["paper_copy_message"] = (
-                            "Source block time is missing or older than 60 seconds; no paper order was created."
+                            "Source block time is missing, invalid, in the future, or older than 60 seconds; no paper order was created."
                         )
                         store.mark_processed(address, signature)
                         continue

@@ -642,6 +642,30 @@ class SignatureStore:
         return cursor.rowcount == 1
 
 
+    def touch_pending_signatures(self, wallet_address, signatures):
+        """Rotate still-pending work behind untouched items after a completed scan."""
+        self._validate_wallet(wallet_address)
+        if not isinstance(signatures, (list, tuple)) or len(signatures) > 75:
+            raise ValueError("Pending scan touch batch must contain at most 75 signatures.")
+        cleaned = []
+        for signature in signatures:
+            self._validate_signature(signature)
+            if signature not in cleaned:
+                cleaned.append(signature)
+        if not cleaned:
+            return 0
+        placeholders = ",".join("?" for _ in cleaned)
+        with closing(self._connect()) as connection:
+            with connection:
+                cursor = connection.execute(
+                    "UPDATE seen_signatures SET last_checked_at=CURRENT_TIMESTAMP "
+                    "WHERE wallet_address=? AND status='pending' "
+                    "AND signature IN (" + placeholders + ")",
+                    [wallet_address, *cleaned],
+                )
+        return cursor.rowcount
+
+
     def requeue_recoverable_needs_review(
         self, wallet_address, limit=10, cooldown_seconds=30, history_cap=1000
     ):

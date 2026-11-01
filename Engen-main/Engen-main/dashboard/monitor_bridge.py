@@ -17,6 +17,45 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
     """Create a read-only scanner with profile-specific paper execution and history."""
     store = SignatureStore()
 
+    def reconcile_pending_review_rows(address):
+        """Close legacy profile pending rows whose signature retries are exhausted."""
+        if profile_id is None or profile_store is None:
+            return 0
+        try:
+            pending = profile_store.list_pending_transaction_signatures(
+                profile_id, address, limit=1000
+            )
+            records = store.get_needs_review_records(address, pending)
+        except (ValueError, OSError, RuntimeError, sqlite3.Error):
+            # This is a history-repair operation; a transient DB error must not
+            # stop the read-only monitor from continuing its normal scan.
+            return 0
+
+        reconciled = 0
+        for record in records:
+            evidence = {
+                "processing_status": "needs_review",
+                "retry_attempts": record.get("attempts"),
+                "retry_last_checked_at": record.get("last_checked_at"),
+                "retry_error_stage": record.get("error_stage"),
+                "retry_error_code": record.get("error_code"),
+                "retry_error_message": record.get("error_message"),
+                "real_trading": False,
+                "transaction_broadcast": False,
+            }
+            try:
+                profile_store.save_transaction(
+                    record["signature"], address,
+                    classification="UNKNOWN", status="unknown",
+                    evidence=evidence, profile_ids=(profile_id,),
+                    terminal_status=True,
+                )
+                reconciled += 1
+            except (ValueError, OSError, RuntimeError, sqlite3.Error, KeyError):
+                continue
+        return reconciled
+
+
     def persist_observed_transactions(address, results):
         """Save observed on-chain transactions separately from simulated orders."""
         if profile_id is None or profile_store is None:
@@ -159,6 +198,9 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
 
     def scan_wallet(address):
         """Analyze new wallet signatures and queue eligible paper-copy orders."""
+        # Repair old profile-history pending labels from the durable signature
+        # retry state before fetching this scan's still-pending signatures.
+        reconcile_pending_review_rows(address)
         results = monitor_wallet(
             wallet_address=address,
             store=store,

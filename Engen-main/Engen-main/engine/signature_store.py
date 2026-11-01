@@ -397,6 +397,44 @@ class SignatureStore:
             row,
         ))
 
+    def get_needs_review_records(self, wallet_address, signatures):
+        """Return retry-exhausted diagnostics for a bounded set of known signatures."""
+        self._validate_wallet(wallet_address)
+        if not isinstance(signatures, (list, tuple)):
+            raise ValueError("Signatures must be provided as a list or tuple.")
+        cleaned = list(dict.fromkeys(signatures))
+        if len(cleaned) > 5000:
+            raise ValueError("At most 5000 signatures can be checked at once.")
+        for signature in cleaned:
+            self._validate_signature(signature)
+        if not cleaned:
+            return []
+
+        records = []
+        with closing(self._connect()) as connection:
+            # Keep each IN clause below SQLite's conservative parameter limit.
+            for offset in range(0, len(cleaned), 500):
+                batch = cleaned[offset:offset + 500]
+                placeholders = ",".join("?" for _ in batch)
+                rows = connection.execute(
+                    """SELECT signature, attempts, last_checked_at, error_stage,
+                              error_code, error_message
+                       FROM seen_signatures
+                       WHERE wallet_address = ?
+                         AND status = 'needs_review'
+                         AND signature IN (""" + placeholders + ")",
+                    (wallet_address, *batch),
+                ).fetchall()
+                records.extend(
+                    dict(zip(
+                        ("signature", "attempts", "last_checked_at", "error_stage",
+                         "error_code", "error_message"),
+                        row,
+                    ))
+                    for row in rows
+                )
+        return records
+
     def get_pending_signatures(self, wallet_address, limit=1000):
         self._validate_wallet(wallet_address)
 

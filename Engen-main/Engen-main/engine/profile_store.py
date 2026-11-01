@@ -307,6 +307,32 @@ class ProfileStore:
                 raise ValueError("Profile not found.")
         return self.get_profile(profile_id)
 
+    def list_pending_transaction_signatures(self, profile_id, source_wallet_address, limit=1000):
+        """List profile-linked pending history rows for one source wallet."""
+        if not isinstance(profile_id, str) or not profile_id.strip():
+            raise ValueError("A profile_id is required.")
+        validate_public_address(source_wallet_address, "source wallet address")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 5000:
+            raise ValueError("Pending transaction limit must be between 1 and 5000.")
+        with self.session() as db:
+            if not db.execute(
+                "SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
+                (profile_id,),
+            ).fetchone():
+                raise ValueError("Profile not found.")
+            rows = db.execute(
+                """SELECT t.signature
+                   FROM transactions t
+                   JOIN profile_transactions p ON p.signature=t.signature
+                   WHERE p.profile_id=?
+                     AND t.source_wallet_address=?
+                     AND t.status='pending'
+                   ORDER BY t.observed_at ASC, t.signature ASC
+                   LIMIT ?""",
+                (profile_id, source_wallet_address, limit),
+            ).fetchall()
+        return [row[0] for row in rows]
+
     def get_transaction(self, signature, profile_id=None):
         with self.session() as db:
             if profile_id is None:

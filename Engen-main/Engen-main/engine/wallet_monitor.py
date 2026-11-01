@@ -177,7 +177,10 @@ def get_and_store_new_wallet_signatures(
             signature = item.get("signature")
             if not is_valid_transaction_signature(signature):
                 continue
-            store.save(wallet_address, signature, slot=item.get("slot"))
+            store.save(
+                wallet_address, signature, slot=item.get("slot"),
+                block_time=item.get("blockTime"),
+            )
             store.mark_processed(wallet_address, signature)
         store.mark_baseline(wallet_address)
         return []
@@ -203,7 +206,10 @@ def get_and_store_new_wallet_signatures(
                 if not is_valid_transaction_signature(signature):
                     continue
                 records_by_signature[signature] = item
-                store.save(wallet_address, signature, slot=item.get("slot"))
+                store.save(
+                    wallet_address, signature, slot=item.get("slot"),
+                    block_time=item.get("blockTime"),
+                )
                 if anchor_signature and signature == anchor_signature:
                     anchor_found = True
                     break
@@ -246,44 +252,39 @@ def get_and_store_new_wallet_signatures(
 
     current_time = time.time() if now is None else now
     max_source_age = load_max_source_age_seconds()
-    discovered = list(records_by_signature.values())
-    discovered.sort(
-        key=lambda item: (
-            item.get("blockTime") if isinstance(item.get("blockTime"), int) else -1,
-            item.get("slot") if isinstance(item.get("slot"), int) else -1,
-            str(item.get("signature") or ""),
-        ),
-        reverse=True,
-    )
-    discovered_signatures = [
-        item.get("signature") for item in discovered
-        if isinstance(item.get("signature"), str)
-    ]
-    status_reader = getattr(store, "get_statuses", None)
-    status_map = {}
-    if callable(status_reader) and discovered_signatures:
-        try:
-            status_map = status_reader(wallet_address, discovered_signatures)
-        except (TypeError, ValueError, OSError, RuntimeError):
-            status_map = {}
-
+    fresh_reader = getattr(store, "get_fresh_pending_signatures", None)
     fresh = []
-    for item in discovered:
-        signature = item.get("signature")
-        block_time = item.get("blockTime")
-        if (
-            not isinstance(signature, str)
-            or (status_map and status_map.get(signature) != "pending")
-            or not isinstance(block_time, int)
-            or isinstance(block_time, bool)
-        ):
-            continue
-        age = current_time - block_time
-        if -5 <= age <= max_source_age:
-            fresh.append({**item, "copy_eligible": True, "history_backfill": False})
-        if len(fresh) >= MAX_FRESH_SIGNATURES_PER_SCAN:
-            break
+    if callable(fresh_reader):
+        try:
+            fresh = fresh_reader(
+                wallet_address,
+                limit=MAX_FRESH_SIGNATURES_PER_SCAN,
+                max_age_seconds=max_source_age,
+                future_skew_seconds=5,
+                now=current_time,
+            )
+        except (TypeError, ValueError, OSError, RuntimeError):
+            fresh = []
+    else:
+        # Compatibility fallback for legacy test doubles; production stores the
+        # block_time column and retrieves pending fresh observations durably.
+        for item in records_by_signature.values():
+            block_time = item.get("blockTime")
+            if isinstance(block_time, int) and not isinstance(block_time, bool):
+                age = current_time - block_time
+                if -5 <= age <= max_source_age:
+                    fresh.append(dict(item))
+        fresh = fresh[:MAX_FRESH_SIGNATURES_PER_SCAN]
 
+    fresh = [
+        {
+            **records_by_signature.get(item["signature"], item),
+            "copy_eligible": True,
+            "history_backfill": False,
+        }
+        for item in fresh
+        if isinstance(item, dict) and isinstance(item.get("signature"), str)
+    ]
     fresh_signatures = [item["signature"] for item in fresh]
     history_reader = getattr(store, "get_history_pending_signatures", None)
     if callable(history_reader):

@@ -396,6 +396,16 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
             market_price = price_provider(order.get("asset_mint"))
         except Exception:
             market_price = None
+        # Market-data lookups may be slow. Re-check source age after the lookup
+        # so an order cannot fill after its 60-second copy window expires mid-scan.
+        if not source_trade_is_fresh(source_observation):
+            reason = (
+                "Source transaction exceeded the 60-second copy window during "
+                "market-data lookup; the paper order was permanently rejected."
+            )
+            outcomes.append(_reject_stale_source_order(simulator, order, reason))
+            continue
+
         if market_price is None:
             reason = "No usable public USD price/liquidity snapshot; order remains queued for retry."
             _save_order_reason(simulator, order, reason, "WAITING_FOR_MARKET_DATA")

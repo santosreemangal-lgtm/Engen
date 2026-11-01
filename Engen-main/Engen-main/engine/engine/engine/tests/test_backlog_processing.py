@@ -128,6 +128,22 @@ class BacklogProcessingTests(unittest.TestCase):
             )
         self.assertEqual(results[0]["discovery_warning"], DISCOVERY_WARNING)
 
+    def test_signature_statuses_are_read_in_one_bounded_batch(self):
+        processed = "1" * 64
+        review = "2" * 64
+        self.store.save(WALLET, processed)
+        self.store.save(WALLET, review)
+        self.store.mark_processed(WALLET, processed)
+        for _ in range(5):
+            self.store.record_failure(
+                WALLET, review, "rpc_fetch", "rpc_error", "provider unavailable"
+            )
+
+        self.assertEqual(
+            self.store.get_statuses(WALLET, [processed, review, "3" * 64]),
+            {processed: "processed", review: "needs_review"},
+        )
+
     def test_backlog_stats_include_status_counts_age_and_retry_pressure(self):
         pending = "1" * 64
         needs_review = "2" * 64

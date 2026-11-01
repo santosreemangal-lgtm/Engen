@@ -68,11 +68,34 @@ def _source_order_time_key(order):
     )
 
 
+def _source_order_is_after(candidate, earlier):
+    candidate_details = candidate.get("details") or {}
+    earlier_details = earlier.get("details") or {}
+    candidate_slot = candidate_details.get("source_slot")
+    earlier_slot = earlier_details.get("source_slot")
+    if (
+        isinstance(candidate_slot, int) and not isinstance(candidate_slot, bool)
+        and isinstance(earlier_slot, int) and not isinstance(earlier_slot, bool)
+        and candidate_slot != earlier_slot
+    ):
+        return candidate_slot > earlier_slot
+    candidate_time = candidate_details.get("source_block_time")
+    earlier_time = earlier_details.get("source_block_time")
+    if (
+        isinstance(candidate_time, int) and not isinstance(candidate_time, bool)
+        and isinstance(earlier_time, int) and not isinstance(earlier_time, bool)
+        and candidate_time != earlier_time
+    ):
+        return candidate_time > earlier_time
+    candidate_created = str(candidate.get("created_at") or "")
+    earlier_created = str(earlier.get("created_at") or "")
+    return bool(candidate_created and earlier_created and candidate_created > earlier_created)
+
+
 def _reject_dependent_sells(simulator, expired_buy, reason):
     buy_details = expired_buy.get("details") or {}
     buy_wallet = buy_details.get("source_wallet")
     buy_mint = expired_buy.get("asset_mint")
-    buy_key = _source_order_time_key(expired_buy)
     for candidate in list(getattr(simulator, "orders", {}).values()):
         details = candidate.get("details") or {}
         if (
@@ -81,7 +104,7 @@ def _reject_dependent_sells(simulator, expired_buy, reason):
             or candidate.get("asset_mint") != buy_mint
             or details.get("origin") != "AUTOMATIC_WALLET_COPY"
             or details.get("source_wallet") != buy_wallet
-            or _source_order_time_key(candidate) <= buy_key
+            or not _source_order_is_after(candidate, expired_buy)
         ):
             continue
         dependent_reason = (

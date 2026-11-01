@@ -3,7 +3,10 @@
 from contextlib import nullcontext
 import time
 
-from engine.config import load_max_source_age_seconds
+from engine.config import (
+    MAX_SOURCE_FUTURE_SKEW_SECONDS,
+    load_max_source_age_seconds,
+)
 from engine.solana_public import (
     DEFAULT_RPC_URL,
     SolanaRPCError,
@@ -296,7 +299,7 @@ def get_and_store_new_wallet_signatures(
                 wallet_address,
                 limit=MAX_FRESH_SIGNATURES_PER_SCAN,
                 max_age_seconds=max_source_age,
-                future_skew_seconds=5,
+                future_skew_seconds=MAX_SOURCE_FUTURE_SKEW_SECONDS,
                 now=current_time,
             )
         except (TypeError, ValueError, OSError, RuntimeError):

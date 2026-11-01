@@ -91,6 +91,12 @@ class SignatureStore:
                     )
                 """)
                 connection.execute("""
+                    CREATE TABLE IF NOT EXISTS rpc_cooldown_state (
+                        state_id INTEGER PRIMARY KEY CHECK(state_id=1),
+                        cooldown_until REAL NOT NULL
+                    )
+                """)
+                connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_seen_signatures_wallet_status_first_seen
                     ON seen_signatures(wallet_address, status, first_seen_at)
                 """)
@@ -524,6 +530,39 @@ class SignatureStore:
             {"signature": row[0], "slot": row[1], "blockTime": row[2]}
             for row in rows
         ]
+
+
+    def set_global_rpc_cooldown(self, seconds):
+        """Persist a process-wide provider cooldown so restarts do not bypass 429 backoff."""
+        if (
+            not isinstance(seconds, (int, float))
+            or isinstance(seconds, bool)
+            or seconds < 0
+            or seconds != seconds
+            or seconds == float("inf")
+        ):
+            raise ValueError("RPC cooldown must be a finite non-negative number.")
+        deadline = time.time() + float(seconds)
+        with closing(self._connect()) as connection:
+            with connection:
+                connection.execute(
+                    """
+                    INSERT INTO rpc_cooldown_state(state_id,cooldown_until)
+                    VALUES(1,?)
+                    ON CONFLICT(state_id) DO UPDATE SET
+                        cooldown_until=MAX(rpc_cooldown_state.cooldown_until,excluded.cooldown_until)
+                    """,
+                    (deadline,),
+                )
+
+    def get_global_rpc_cooldown_remaining(self):
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT cooldown_until FROM rpc_cooldown_state WHERE state_id=1"
+            ).fetchone()
+        if row is None:
+            return 0.0
+        return max(0.0, float(row[0]) - time.time())
 
 
     def get_history_pending_signatures(

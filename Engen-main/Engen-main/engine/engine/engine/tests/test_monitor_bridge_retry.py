@@ -89,6 +89,22 @@ class MonitorBridgeRetryTests(unittest.TestCase):
         store.mark_processed.assert_not_called()
         self.assertEqual(output[0]["paper_copy_status"], "NEEDS_REVIEW")
 
+    def test_reconciles_legacy_profile_pending_rows_to_terminal_review(self):
+        result = candidate_result()
+        result["signature"] = "2" * 64
+        profile_store = Mock()
+        profile_store.get_pending_transaction_signatures.return_value = [
+            result["signature"]
+        ]
+        store, _, _ = self._scan_with(
+            result, [], profile_store=profile_store, profile_id="profile-test",
+        )
+        store.get_status.assert_called_with(WALLET, result["signature"])
+        profile_store.mark_transaction_needs_review.assert_called_once_with(
+            result["signature"], WALLET,
+            attempts=None, error_stage=None, error_code=None, error_message=None,
+        )
+
     def test_reconciles_paper_orders_to_durable_source_trade_refs(self):
         profile_store = Mock()
         order = {

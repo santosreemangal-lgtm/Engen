@@ -86,6 +86,57 @@ class MonitorBridgeRetryTests(unittest.TestCase):
             with self.subTest(expected=expected, result=result):
                 self.assertEqual(_map_profile_transaction_status(result), expected)
 
+    def test_bridge_persists_pending_profile_status_for_retryable_metadata(self):
+        result = candidate_result()
+        result["metadata_complete"] = False
+        result["retryable"] = True
+        result["signature_observation"]["confirmation_status"] = "processed"
+        profile_store = Mock()
+
+        store, _, _ = self._scan_with(
+            result, [], profile_store=profile_store, profile_id="profile-test",
+            signature_status="pending",
+        )
+
+        self.assertEqual(profile_store.save_transaction.call_args.kwargs["status"], "pending")
+        self.assertEqual(
+            profile_store.save_transaction.call_args.kwargs["evidence"]["signature_queue_status"],
+            "pending",
+        )
+        store.mark_processed.assert_not_called()
+
+    def test_bridge_persists_confirmed_transaction_without_confusing_queue_pending(self):
+        result = candidate_result()
+        profile_store = Mock()
+
+        store, _, _ = self._scan_with(
+            result, [], profile_store=profile_store, profile_id="profile-test",
+            signature_status="pending",
+        )
+
+        saved = profile_store.save_transaction.call_args.kwargs
+        self.assertEqual(saved["status"], "confirmed")
+        self.assertEqual(saved["evidence"]["signature_queue_status"], "pending")
+        store.mark_processed.assert_not_called()
+
+    def test_bridge_persists_on_chain_failure_as_failed_and_finishes_queue(self):
+        result = candidate_result()
+        result["status"] = "failed"
+        result["signature_observation"]["signature_error"] = {
+            "InstructionError": [0, "Custom"]
+        }
+        profile_store = Mock()
+
+        store, _, _ = self._scan_with(
+            result, [], profile_store=profile_store, profile_id="profile-test",
+            signature_status="processed",
+        )
+
+        saved = profile_store.save_transaction.call_args.kwargs
+        self.assertEqual(saved["status"], "failed")
+        self.assertEqual(saved["evidence"]["signature_queue_status"], "processed")
+        store.mark_processed.assert_called_once_with(WALLET, "1" * 64)
+
     def test_needs_review_profile_evidence_tracks_signature_queue_status(self):
         result = candidate_result()
         result["metadata_complete"] = False

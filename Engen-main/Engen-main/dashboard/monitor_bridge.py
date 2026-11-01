@@ -287,4 +287,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             ]
         return results
 
+    # MonitorService reads this hook after each scan to expose durable per-wallet
+    # backlog size, age, retry pressure, and net drain rate in its status API.
+    scan_wallet.metrics_function = store.get_backlog_stats
     return scan_wallet

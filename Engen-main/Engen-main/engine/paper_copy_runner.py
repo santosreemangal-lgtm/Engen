@@ -300,6 +300,17 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                                 target = source_quote * price_value
                         except Exception:
                             target = None
+            # MIRROR_AMOUNT may call a quote/USD price provider above. Do not
+            # leave an expired source order waiting for another retry if that
+            # lookup consumed the remaining source-copy window.
+            if not source_trade_is_fresh(source_observation):
+                reason = (
+                    "Source transaction exceeded the 60-second copy window during "
+                    "quote-price lookup; the paper order was permanently rejected."
+                )
+                outcomes.append(_reject_stale_source_order(simulator, order, reason))
+                continue
+
             if target is None or not target.is_finite() or target <= 0:
                 waiting_for_price = (
                     details.get("sizing_mode") == "MIRROR_AMOUNT"

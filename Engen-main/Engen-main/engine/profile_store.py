@@ -390,23 +390,39 @@ class ProfileStore:
                               (signature,)).fetchone()
             if stored["source_wallet_address"] != source_wallet_address:
                 raise ValueError("Signature already stored for a different source wallet.")
-            # An RPC scan may first observe a pending signature and later receive
-            # confirmed metadata. Refresh details without downgrading terminal states.
+            # A pending signature may later become confirmed, failed, or
+            # terminally unknown after retry exhaustion. Preserve true terminal
+            # outcomes and never reopen a needs-review row as pending.
             old_status = stored["status"]
+            try:
+                previous_evidence = json.loads(stored["evidence_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                previous_evidence = {}
+            if not isinstance(previous_evidence, dict):
+                previous_evidence = {}
+            incoming_evidence = evidence if isinstance(evidence, dict) else {}
+            old_review_terminal = (
+                old_status == "unknown"
+                and previous_evidence.get("processing_status") == "needs_review"
+                and previous_evidence.get("retry_exhausted") is True
+            )
+            incoming_review_terminal = (
+                incoming_evidence.get("processing_status") == "needs_review"
+                or incoming_evidence.get("signature_queue_status") == "needs_review"
+                or incoming_evidence.get("retry_exhausted") is True
+            )
             if old_status in {"confirmed", "failed"}:
                 effective_status = old_status
+            elif old_review_terminal and status == "pending":
+                effective_status = "unknown"
             elif status == "unknown":
-                effective_status = old_status
+                effective_status = "unknown" if incoming_review_terminal else old_status
             else:
                 effective_status = status
             effective_classification = (
                 classification if classification != "UNKNOWN" else stored["classification"]
             )
-            try:
-                previous_evidence = json.loads(stored["evidence_json"] or "{}")
-            except (TypeError, json.JSONDecodeError):
-                previous_evidence = {}
-            merged_evidence = {**previous_evidence, **(evidence or {})}
+            merged_evidence = {**previous_evidence, **incoming_evidence}
             merged_evidence_json = json.dumps(merged_evidence, sort_keys=True, allow_nan=False)
             token_changed = token_mint is not None and stored["token_mint"] not in (None, token_mint)
             effective_amount = (

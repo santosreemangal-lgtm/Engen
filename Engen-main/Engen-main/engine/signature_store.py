@@ -527,7 +527,9 @@ class SignatureStore:
         ):
             raise ValueError("Invalid bounded needs-review requeue policy.")
         cutoff = "-%d seconds" % cooldown_seconds
-        recoverable_codes = ("http_429", "http_error", "timeout", "network_error")
+        recoverable_codes = (
+            "http_429", "http_429_cooldown", "http_error", "timeout", "network_error"
+        )
         with closing(self._connect()) as connection:
             with connection:
                 rows = connection.execute(
@@ -544,7 +546,7 @@ class SignatureStore:
                     FROM newest_window
                     WHERE status = 'needs_review'
                       AND requeue_count < 1
-                      AND error_code IN (?,?,?,?)
+                      AND error_code IN (?,?,?,?,?)
                       AND last_checked_at <= datetime('now', ?)
                     ORDER BY last_checked_at ASC, first_seen_at DESC, signature DESC
                     LIMIT ?

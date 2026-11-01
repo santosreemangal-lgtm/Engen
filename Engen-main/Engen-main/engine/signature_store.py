@@ -60,6 +60,7 @@ class SignatureStore:
                     "error_stage": "TEXT",
                     "error_code": "TEXT",
                     "error_message": "TEXT",
+                    "requeue_count": "INTEGER NOT NULL DEFAULT 0",
                 }
                 for column, definition in migrations.items():
                     if column not in columns:
@@ -460,13 +461,120 @@ class SignatureStore:
                 FROM seen_signatures
                 WHERE wallet_address = ?
                   AND status = 'pending'
-                ORDER BY first_seen_at ASC
+                ORDER BY first_seen_at DESC, signature DESC
                 LIMIT ?
                 """,
                 (wallet_address, limit),
             ).fetchall()
 
         return [row[0] for row in rows]
+
+    def get_history_pending_signatures(
+        self, wallet_address, limit=25, history_cap=1000, exclude_signatures=()
+    ):
+        """Select newest pending history only from the wallet's newest bounded window."""
+        self._validate_wallet(wallet_address)
+        if (
+            not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 25
+            or not isinstance(history_cap, int) or isinstance(history_cap, bool)
+            or not 1 <= history_cap <= 1000
+            or not isinstance(exclude_signatures, (list, tuple))
+            or len(exclude_signatures) > 50
+        ):
+            raise ValueError("Invalid bounded history selection.")
+        excluded = []
+        for signature in exclude_signatures:
+            self._validate_signature(signature)
+            if signature not in excluded:
+                excluded.append(signature)
+        exclusion_sql = ""
+        params = [wallet_address, history_cap]
+        if excluded:
+            exclusion_sql = " AND signature NOT IN (" + ",".join("?" for _ in excluded) + ")"
+            params.extend(excluded)
+        params.append(limit)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                WITH newest_window AS (
+                    SELECT signature, status, first_seen_at
+                    FROM seen_signatures
+                    WHERE wallet_address = ?
+                    ORDER BY first_seen_at DESC, signature DESC
+                    LIMIT ?
+                )
+                SELECT signature
+                FROM newest_window
+                WHERE status = 'pending'""" + exclusion_sql + """
+                ORDER BY first_seen_at DESC, signature DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def requeue_recoverable_needs_review(
+        self, wallet_address, limit=10, cooldown_seconds=30, history_cap=1000
+    ):
+        """Requeue only known transient failures once, after cooldown, within recent history."""
+        self._validate_wallet(wallet_address)
+        if (
+            not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 10
+            or not isinstance(cooldown_seconds, int) or isinstance(cooldown_seconds, bool)
+            or cooldown_seconds < 30
+            or not isinstance(history_cap, int) or isinstance(history_cap, bool)
+            or not 1 <= history_cap <= 1000
+        ):
+            raise ValueError("Invalid bounded needs-review requeue policy.")
+        cutoff = "-%d seconds" % cooldown_seconds
+        recoverable_codes = ("http_429", "http_error", "timeout", "network_error")
+        with closing(self._connect()) as connection:
+            with connection:
+                rows = connection.execute(
+                    """
+                    WITH newest_window AS (
+                        SELECT wallet_address, signature, status, error_code,
+                               last_checked_at, requeue_count, first_seen_at
+                        FROM seen_signatures
+                        WHERE wallet_address = ?
+                        ORDER BY first_seen_at DESC, signature DESC
+                        LIMIT ?
+                    )
+                    SELECT signature
+                    FROM newest_window
+                    WHERE status = 'needs_review'
+                      AND requeue_count < 1
+                      AND error_code IN (?,?,?,?)
+                      AND last_checked_at <= datetime('now', ?)
+                    ORDER BY last_checked_at ASC, first_seen_at DESC, signature DESC
+                    LIMIT ?
+                    """,
+                    (wallet_address, history_cap, *recoverable_codes, cutoff, limit),
+                ).fetchall()
+                signatures = [row[0] for row in rows]
+                for signature in signatures:
+                    connection.execute(
+                        """
+                        UPDATE seen_signatures
+                        SET status='pending', attempts=0,
+                            last_checked_at=CURRENT_TIMESTAMP,
+                            requeue_count=requeue_count+1
+                        WHERE wallet_address=? AND signature=?
+                          AND status='needs_review' AND requeue_count < 1
+                        """,
+                        (wallet_address, signature),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE transaction_records
+                        SET processing_status='incomplete',
+                            updated_at=CURRENT_TIMESTAMP
+                        WHERE wallet_address=? AND signature=?
+                          AND processing_status='needs_review'
+                        """,
+                        (wallet_address, signature),
+                    )
+        return signatures
 
     def get_backlog_stats(self, wallet_address):
         """Return per-wallet queue counts and the age of its oldest pending item."""

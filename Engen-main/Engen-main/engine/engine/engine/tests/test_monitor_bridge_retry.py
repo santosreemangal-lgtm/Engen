@@ -2,7 +2,7 @@ import unittest
 import time
 from unittest.mock import Mock, patch
 
-from dashboard.monitor_bridge import create_scan_function
+from dashboard.monitor_bridge import create_scan_function, _map_profile_transaction_status
 
 
 WALLET = "11111111111111111111111111111111"
@@ -28,6 +28,80 @@ def candidate_result(classification="BUY_CANDIDATE"):
 
 
 class MonitorBridgeRetryTests(unittest.TestCase):
+    def test_profile_status_mapping_covers_pending_confirmed_failed_unknown(self):
+        cases = [
+            (
+                "pending",
+                {
+                    "status": "success", "metadata_complete": False,
+                    "retryable": True,
+                    "signature_observation": {"confirmation_status": "processed"},
+                },
+            ),
+            (
+                "confirmed",
+                {
+                    "status": "success", "metadata_complete": True,
+                    "retryable": False,
+                    "signature_observation": {"confirmation_status": "finalized"},
+                },
+            ),
+            (
+                "failed",
+                {
+                    "status": "failed", "metadata_complete": True,
+                    "retryable": False,
+                    "signature_observation": {"confirmation_status": "finalized"},
+                },
+            ),
+            (
+                "failed",
+                {
+                    "status": "success", "metadata_complete": True,
+                    "retryable": True,
+                    "signature_observation": {
+                        "confirmation_status": "confirmed",
+                        "signature_error": {"InstructionError": [0, "Custom"]},
+                    },
+                },
+            ),
+            (
+                "unknown",
+                {
+                    "status": "success", "metadata_complete": False,
+                    "retryable": False, "processing_status": "needs_review",
+                    "signature_observation": {"confirmation_status": "confirmed"},
+                },
+            ),
+            (
+                "unknown",
+                {
+                    "status": "success", "metadata_complete": True,
+                    "retryable": False,
+                    "signature_observation": {"confirmation_status": None},
+                },
+            ),
+        ]
+        for expected, result in cases:
+            with self.subTest(expected=expected, result=result):
+                self.assertEqual(_map_profile_transaction_status(result), expected)
+
+    def test_needs_review_profile_evidence_tracks_signature_queue_status(self):
+        result = candidate_result()
+        result["metadata_complete"] = False
+        result["retryable"] = False
+        result["processing_status"] = "needs_review"
+        profile_store = Mock()
+
+        store, _, _ = self._scan_with(
+            result, [], profile_store=profile_store, profile_id="profile-test",
+        )
+
+        evidence = profile_store.save_transaction.call_args.kwargs["evidence"]
+        self.assertEqual(evidence["signature_queue_status"], "needs_review")
+        self.assertTrue(evidence["retry_exhausted"])
+        store.mark_processed.assert_not_called()
+
     def _scan_with(self, result, queued_orders, *, profile_store=None, profile_id=None,
                    simulator_orders=None, signature_status=None, error_record=None):
         store = Mock()

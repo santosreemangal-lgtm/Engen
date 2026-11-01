@@ -11,7 +11,10 @@ from pathlib import Path
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from engine.config import load_max_source_age_seconds
+from engine.config import (
+    MAX_SOURCE_FUTURE_SKEW_SECONDS,
+    load_max_source_age_seconds,
+)
 from engine.paper_simulator import PaperSimulator
 from engine.market_data import fetch_market_price
 from engine.transaction_analysis import WRAPPED_SOL_MINT
@@ -37,7 +40,6 @@ PAPER_EXECUTION_COST_MULTIPLIER = (
 )
 
 MAX_SOURCE_TRADE_AGE_SECONDS = load_max_source_age_seconds()
-MAX_SOURCE_FUTURE_SKEW_SECONDS = 5
 
 
 def source_trade_is_fresh(result, *, now=None, max_age_seconds=MAX_SOURCE_TRADE_AGE_SECONDS):

@@ -3,6 +3,7 @@
 import json
 import time
 
+from engine.config import load_max_source_age_seconds
 from engine.solana_public import DEFAULT_RPC_URL, SolanaRPCError, get_signature_status
 from engine.signature_store import SignatureStore
 from engine.solana_validation import is_valid_solana_address, is_valid_transaction_signature
@@ -524,6 +525,49 @@ def monitor_wallet(
             history_backfill=True,
             **common_options,
         )
+
+    # Some RPC nodes omit blockTime from getSignaturesForAddress but return it
+    # in getTransaction. Promote only a history result whose fetched on-chain
+    # timestamp proves that it is still inside the fresh-copy window.
+    current_time = time.time()
+    max_source_age = load_max_source_age_seconds()
+    for result in history_results:
+        raw = result.get("raw_transaction")
+        if not isinstance(raw, dict):
+            continue
+        block_time = raw.get("blockTime")
+        if (
+            not isinstance(block_time, int)
+            or isinstance(block_time, bool)
+            or block_time < 0
+        ):
+            continue
+        age = current_time - block_time
+        if not -5 <= age <= max_source_age:
+            continue
+        signature = result.get("signature")
+        if not isinstance(signature, str):
+            continue
+        slot = raw.get("slot")
+        if not isinstance(slot, int) or isinstance(slot, bool) or slot < 0:
+            slot = None
+        try:
+            store.save(
+                wallet_address, signature, slot=slot, block_time=block_time
+            )
+        except (TypeError, ValueError, OSError, RuntimeError):
+            # The verified block time remains attached to the result; the
+            # next discovery/scan can persist it again.
+            pass
+        observation = dict(result.get("signature_observation") or {})
+        observation["block_time"] = block_time
+        if slot is not None:
+            observation["slot"] = slot
+        result["signature_observation"] = observation
+        result["history_backfill"] = False
+        result["copy_eligible"] = True
+        result["history_promoted_to_fresh"] = True
+
     return fresh_results + history_results
 
 

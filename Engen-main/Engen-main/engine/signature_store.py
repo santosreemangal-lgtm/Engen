@@ -1,6 +1,7 @@
 
 import json
 import sqlite3
+import time
 from contextlib import closing
 from pathlib import Path
 
@@ -61,6 +62,7 @@ class SignatureStore:
                     "error_code": "TEXT",
                     "error_message": "TEXT",
                     "requeue_count": "INTEGER NOT NULL DEFAULT 0",
+                    "block_time": "INTEGER",
                 }
                 for column, definition in migrations.items():
                     if column not in columns:
@@ -91,6 +93,10 @@ class SignatureStore:
                 connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_seen_signatures_wallet_status_first_seen
                     ON seen_signatures(wallet_address, status, first_seen_at)
+                """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_seen_signatures_wallet_status_block_time
+                    ON seen_signatures(wallet_address, status, block_time DESC)
                 """)
 
                 pruned = self._prune_transaction_records(
@@ -251,26 +257,39 @@ class SignatureStore:
         return statuses
 
 
-    def save(self, wallet_address, signature, slot=None):
+    def save(self, wallet_address, signature, slot=None, block_time=None):
         self._validate_wallet(wallet_address)
         self._validate_signature(signature)
         if slot is not None and (
             not isinstance(slot, int) or isinstance(slot, bool) or slot < 0
         ):
             raise ValueError("Slot must be a non-negative integer.")
+        if block_time is not None and (
+            not isinstance(block_time, int) or isinstance(block_time, bool) or block_time < 0
+        ):
+            raise ValueError("Block time must be a non-negative integer.")
 
         with closing(self._connect()) as connection:
             with connection:
                 cursor = connection.execute(
                     """
                     INSERT OR IGNORE INTO seen_signatures
-                        (wallet_address, signature, status, slot)
-                    VALUES (?, ?, 'pending', ?)
+                        (wallet_address, signature, status, slot, block_time)
+                    VALUES (?, ?, 'pending', ?, ?)
                     """,
-                    (wallet_address, signature, slot),
+                    (wallet_address, signature, slot, block_time),
                 )
                 saved = cursor.rowcount == 1
-
+                if not saved and (slot is not None or block_time is not None):
+                    connection.execute(
+                        """
+                        UPDATE seen_signatures
+                        SET slot=COALESCE(?, slot),
+                            block_time=COALESCE(?, block_time)
+                        WHERE wallet_address=? AND signature=?
+                        """,
+                        (slot, block_time, wallet_address, signature),
+                    )
         return saved
 
     def save_many(self, wallet_address, signatures):
@@ -468,6 +487,44 @@ class SignatureStore:
             ).fetchall()
 
         return [row[0] for row in rows]
+
+    def get_fresh_pending_signatures(
+        self, wallet_address, *, limit=50, max_age_seconds=60,
+        future_skew_seconds=5, now=None
+    ):
+        """Return durable pending signature observations still inside the copy window."""
+        self._validate_wallet(wallet_address)
+        if (
+            not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 50
+            or not isinstance(max_age_seconds, int) or isinstance(max_age_seconds, bool)
+            or max_age_seconds < 1
+            or not isinstance(future_skew_seconds, int) or isinstance(future_skew_seconds, bool)
+            or future_skew_seconds < 0
+        ):
+            raise ValueError("Invalid fresh signature selection.")
+        current_time = int(time.time()) if now is None else now
+        if not isinstance(current_time, (int, float)) or isinstance(current_time, bool):
+            raise ValueError("Current time must be numeric.")
+        lower = current_time - max_age_seconds
+        upper = current_time + future_skew_seconds
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT signature, slot, block_time
+                FROM seen_signatures
+                WHERE wallet_address=? AND status='pending'
+                  AND block_time IS NOT NULL
+                  AND block_time BETWEEN ? AND ?
+                ORDER BY block_time DESC, slot DESC, first_seen_at DESC, signature DESC
+                LIMIT ?
+                """,
+                (wallet_address, lower, upper, limit),
+            ).fetchall()
+        return [
+            {"signature": row[0], "slot": row[1], "blockTime": row[2]}
+            for row in rows
+        ]
+
 
     def get_history_pending_signatures(
         self, wallet_address, limit=25, history_cap=1000, exclude_signatures=()

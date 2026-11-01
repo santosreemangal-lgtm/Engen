@@ -11,6 +11,7 @@ from typing import Mapping, Optional
 ALLOWED_MODES = ("read_only",)
 VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 LIVE_OFF_VALUES = ("", "false", "0", "no", "off")
+MAX_SOURCE_FUTURE_SKEW_SECONDS = 5
 
 
 class ConfigError(Exception):

@@ -323,9 +323,22 @@ class MonitorBridgeRetryTests(unittest.TestCase):
             profile_id="profile-test", simulator_orders=[order],
         )
 
-        profile_store.save_source_trade_ref.assert_called_once_with(
+        expected_call = (
             "profile-test", "paper-order-1", WALLET, "1" * 64, "BUY", ASSET,
-            source_slot=123, source_block_time=order["details"]["source_block_time"],
+        )
+        expected_kwargs = {
+            "source_slot": 123,
+            "source_block_time": order["details"]["source_block_time"],
+        }
+        # The bridge reconciles both immediately after order creation and
+        # again after execution; the ProfileStore write is idempotent.
+        self.assertEqual(profile_store.save_source_trade_ref.call_count, 2)
+        profile_store.save_source_trade_ref.assert_called_with(
+            *expected_call, **expected_kwargs,
+        )
+        self.assertEqual(
+            profile_store.save_source_trade_ref.call_args_list[0],
+            profile_store.save_source_trade_ref.call_args_list[1],
         )
 
 

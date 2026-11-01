@@ -112,6 +112,9 @@ def process_new_signatures(
                     "attempts", "cooldown_seconds",
                 )
             }
+            rate_limited = safe_diagnostics.get("failure_kind") in (
+                "http_429", "http_429_cooldown"
+            )
             cooldown = safe_diagnostics.get("cooldown_seconds")
             cooldown_writer = getattr(store, "set_global_rpc_cooldown", None)
             if (
@@ -176,6 +179,8 @@ def process_new_signatures(
                     if failure["status"] == "needs_review":
                         error_result["retryable"] = False
             results.append(_include_signature_observation(error_result, item))
+            if rate_limited:
+                break
             continue
         except Exception as exc:
             if item.get("err") is not None:

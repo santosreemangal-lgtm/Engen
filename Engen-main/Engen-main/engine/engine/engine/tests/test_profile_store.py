@@ -195,6 +195,11 @@ class ProfileStoreTests(unittest.TestCase):
         self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
         signature = "3" * 64
         self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="pending",
+            evidence={"processing_status": "pending"},
+            profile_ids=[profile],
+        )
+        self.store.save_transaction(
             signature, PUBLIC_ADDRESS, status="failed",
             evidence={"processing_status": "processed"},
             profile_ids=[profile],

@@ -161,6 +161,67 @@ class ProfileStoreTests(unittest.TestCase):
             signature, PUBLIC_ADDRESS, attempts=6
         ))
 
+    def test_terminal_review_unknown_cannot_downgrade_to_pending(self):
+        profile = self.store.create_profile("Review status")
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        signature = "2" * 64
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="pending",
+            profile_ids=[profile],
+        )
+        self.assertTrue(self.store.mark_transaction_needs_review(
+            signature, PUBLIC_ADDRESS, attempts=5,
+            error_stage="rpc_fetch", error_code="rpc_error",
+        ))
+
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="pending",
+            evidence={
+                "processing_status": "pending",
+                "signature_queue_status": "pending",
+            },
+            profile_ids=[profile],
+        )
+
+        transaction = self.store.get_transaction(signature, profile_id=profile)
+        self.assertEqual(transaction["status"], "unknown")
+        self.assertEqual(transaction["evidence"]["processing_status"], "needs_review")
+        self.assertEqual(transaction["evidence"]["signature_queue_status"], "needs_review")
+        self.assertTrue(transaction["evidence"]["retry_exhausted"])
+        self.assertEqual(self.store.get_pending_transaction_signatures(PUBLIC_ADDRESS), [])
+
+    def test_failed_profile_status_is_terminal_against_late_pending_update(self):
+        profile = self.store.create_profile("Failed transaction")
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        signature = "3" * 64
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="failed",
+            evidence={"processing_status": "processed"},
+            profile_ids=[profile],
+        )
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="pending",
+            evidence={"processing_status": "pending"},
+            profile_ids=[profile],
+        )
+        transaction = self.store.get_transaction(signature, profile_id=profile)
+        self.assertEqual(transaction["status"], "failed")
+
+    def test_unknown_without_review_marker_does_not_erase_pending(self):
+        profile = self.store.create_profile("Unknown fallback")
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        signature = "4" * 64
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="pending", profile_ids=[profile],
+        )
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="unknown",
+            evidence={"classification_reason": "not enough evidence"},
+            profile_ids=[profile],
+        )
+        transaction = self.store.get_transaction(signature, profile_id=profile)
+        self.assertEqual(transaction["status"], "pending")
+
     def test_soft_delete_preserves_history(self):
         p = self.store.create_profile("History")
         self.store.associate_source_wallet(p, PUBLIC_ADDRESS)

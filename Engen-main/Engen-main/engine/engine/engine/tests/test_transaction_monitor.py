@@ -202,19 +202,9 @@ class TransactionMonitorTests(unittest.TestCase):
             self.assertEqual(results, [])
             mock_get_new.assert_called_once()
 
-            process_kwargs = mock_process_new.call_args.kwargs
-
-            self.assertEqual(process_kwargs["signatures"], [])
-            self.assertEqual(
-                process_kwargs["rpc_url"],
-                DEFAULT_RPC_URL,
-            )
-            self.assertEqual(process_kwargs["timeout"], 10)
-            self.assertEqual(
-                process_kwargs["wallet_address"],
-                "PublicWalletAddress",
-            )
-            self.assertIs(process_kwargs["store"], mock_store)
+            # Empty Fresh/History batches are skipped rather than invoking
+            # transaction processing with no work.
+            mock_process_new.assert_not_called()
 
     @patch("engine.transaction_monitor.process_transaction_signature")
     def test_filters_token_balance_changes_to_watched_wallet(

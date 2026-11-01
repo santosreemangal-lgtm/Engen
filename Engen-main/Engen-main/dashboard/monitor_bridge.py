@@ -12,6 +12,31 @@ from engine.profile_store import LABELS
 from engine.solana_validation import is_valid_transaction_signature
 
 
+def _map_profile_transaction_status(item):
+    """Map transaction evidence to the profile-history status vocabulary.
+
+    SignatureStore queue status is a separate axis: 'processed' means engine
+    handling completed, not that the on-chain transaction was successful.
+    """
+    if not isinstance(item, dict):
+        return "unknown"
+    observation = item.get("signature_observation")
+    observation = observation if isinstance(observation, dict) else {}
+    if item.get("status") == "failed" or observation.get("signature_error") is not None:
+        return "failed"
+    if item.get("processing_status") == "needs_review":
+        return "unknown"
+    if item.get("retryable") is True or item.get("metadata_complete") is False:
+        return "pending"
+    if (
+        item.get("status") == "success"
+        and item.get("metadata_complete") is True
+        and observation.get("confirmation_status") in ("confirmed", "finalized")
+    ):
+        return "confirmed"
+    return "unknown"
+
+
 def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter=None,
                          simulator_getter=None, profile_id=None, profile_store=None):
     """Create a read-only scanner with profile-specific paper execution and history."""
@@ -38,21 +63,20 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             if classification not in LABELS:
                 classification = "UNKNOWN"
             confirmation = observation.get("confirmation_status")
-            if item.get("status") == "failed":
-                status = "failed"
-            elif item.get("processing_status") == "needs_review":
-                # Profile history has no needs_review enum. Map the exhausted
-                # retry state to unknown, not pending, so the UI does not imply
-                # the engine will keep retrying it automatically.
-                status = "unknown"
-            elif confirmation in ("confirmed", "finalized") and item.get("metadata_complete") is True:
-                status = "confirmed"
-            elif item.get("retryable") is True or item.get("metadata_complete") is False:
-                status = "pending"
-            elif item.get("status") == "success":
-                status = "observed"
-            else:
-                status = "unknown"
+            status = _map_profile_transaction_status(item)
+            queue_status_reader = getattr(store, "get_status", None)
+            queue_status = None
+            if callable(queue_status_reader):
+                try:
+                    queue_status = queue_status_reader(address, signature)
+                except (ValueError, OSError, RuntimeError, sqlite3.Error):
+                    queue_status = None
+            if queue_status not in {"pending", "processed", "needs_review"}:
+                queue_status = (
+                    "needs_review" if item.get("processing_status") == "needs_review"
+                    else "pending" if item.get("retryable") is True
+                    else "processed"
+                )
             slot = observation.get("slot", item.get("slot"))
             if not isinstance(slot, int) or isinstance(slot, bool) or slot < 0:
                 slot = None
@@ -87,6 +111,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             evidence = {
                 "metadata_status": str(item.get("metadata_status", "available"))[:80],
                 "processing_status": str(item.get("processing_status", "unknown"))[:40],
+                "signature_queue_status": queue_status,
                 "confirmation_status": confirmation,
                 "classification_reason": str(signal.get("reason", ""))[:400],
                 "confidence": str(signal.get("confidence", "unknown"))[:40],
@@ -356,6 +381,11 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 {**item, "paper_copy_error": "Paper-copy order queue failed."}
                 for item in results
             ]
+
+        # Queue status may change during the copy pass (pending -> processed).
+        # Refresh profile evidence after those transitions so both stores agree
+        # on engine-processing state without conflating it with chain outcome.
+        results = persist_observed_transactions(address, results)
         return results
 
     # MonitorService reads this hook after each scan to expose durable per-wallet

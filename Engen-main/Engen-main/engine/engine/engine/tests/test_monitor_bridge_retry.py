@@ -119,6 +119,22 @@ class MonitorBridgeRetryTests(unittest.TestCase):
         self.assertEqual(saved["evidence"]["signature_queue_status"], "pending")
         store.mark_processed.assert_not_called()
 
+    def test_bridge_persists_unresolved_non_retryable_result_as_terminal_unknown(self):
+        result = candidate_result("UNKNOWN")
+        result["signature_observation"]["confirmation_status"] = "processed"
+        profile_store = Mock()
+
+        store, _, _ = self._scan_with(
+            result, [], profile_store=profile_store, profile_id="profile-test",
+            signature_status="processed",
+        )
+
+        saved = profile_store.save_transaction.call_args.kwargs
+        self.assertEqual(saved["status"], "unknown")
+        self.assertTrue(saved["evidence"]["terminal_status"])
+        self.assertEqual(saved["evidence"]["signature_queue_status"], "processed")
+        store.mark_processed.assert_called_once_with(WALLET, "1" * 64)
+
     def test_bridge_persists_on_chain_failure_as_failed_and_finishes_queue(self):
         result = candidate_result()
         result["retryable"] = True

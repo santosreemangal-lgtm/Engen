@@ -75,7 +75,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 queue_status = (
                     "needs_review" if item.get("processing_status") == "needs_review"
                     else "pending" if item.get("retryable") is True
-                    else "processed"
+                    else "unknown"
                 )
             slot = observation.get("slot", item.get("slot"))
             if not isinstance(slot, int) or isinstance(slot, bool) or slot < 0:
@@ -115,6 +115,9 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 "retry_exhausted": (
                     item.get("processing_status") == "needs_review"
                     or queue_status == "needs_review"
+                ),
+                "terminal_status": (
+                    status == "unknown" and item.get("retryable") is not True
                 ),
                 "confirmation_status": confirmation,
                 "classification_reason": str(signal.get("reason", ""))[:400],

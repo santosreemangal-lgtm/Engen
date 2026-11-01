@@ -597,6 +597,8 @@ class ProfileStore:
                 evidence = json.loads(row["evidence_json"] or "{}")
             except (TypeError, json.JSONDecodeError):
                 evidence = {}
+            if not isinstance(evidence, dict):
+                evidence = {}
             evidence.update(evidence_update)
             cursor = db.execute(
                 """UPDATE transactions

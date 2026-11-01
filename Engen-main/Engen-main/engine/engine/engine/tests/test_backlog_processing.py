@@ -45,6 +45,30 @@ class BacklogProcessingTests(unittest.TestCase):
         self.assertEqual(pending[0]["discovery_warning"], DISCOVERY_WARNING)
         self.assertEqual(self.store.get_status(WALLET, SIGNATURE), "pending")
 
+    def test_pagination_rpc_failure_still_drains_saved_queue(self):
+        self.store.mark_baseline(WALLET)
+        saved_pending = "1" * 64
+        self.store.save(WALLET, saved_pending, slot=100)
+        suffixes = "23456789ABCDEFGH"
+        page_signatures = [
+            {"signature": "1" * 62 + "9" + suffixes[index], "slot": 200 - index}
+            for index in range(10)
+        ]
+        with patch(
+            "engine.wallet_monitor.get_wallet_signatures",
+            side_effect=[page_signatures, SolanaRPCError("pagination unavailable")],
+        ):
+            pending = get_and_store_new_wallet_signatures(
+                WALLET, store=self.store, limit=10
+            )
+
+        returned = {item["signature"] for item in pending}
+        self.assertEqual(len(pending), 11)
+        self.assertIn(saved_pending, returned)
+        self.assertTrue(
+            all(item.get("discovery_warning") == DISCOVERY_WARNING for item in pending)
+        )
+
     def test_discovery_failure_without_saved_backlog_still_surfaces_error(self):
         self.store.mark_baseline(WALLET)
         with patch(
@@ -82,6 +106,8 @@ class BacklogProcessingTests(unittest.TestCase):
                     )
 
         self.assertEqual(self.store.get_pending_signatures(WALLET), [])
+        self.assertFalse(self.store.mark_processed(WALLET, SIGNATURE))
+        self.assertEqual(self.store.get_status(WALLET, SIGNATURE), "needs_review")
 
     def test_discovery_warning_is_preserved_in_processed_result(self):
         with patch(

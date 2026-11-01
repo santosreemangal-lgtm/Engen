@@ -168,10 +168,8 @@ def get_and_store_new_wallet_signatures(
             options["timeout"] = min(timeout, remaining, 5.0)
             signatures = get_wallet_signatures(**options)
     except SolanaRPCError as exc:
-        # A discovery outage must not block work that was already persisted.
-        # The first scan still needs a successful read to establish its baseline.
-        if not store.has_baseline(wallet_address):
-            raise
+        # Persist a provider-wide cooldown even when this is the first baseline
+        # scan, so another wallet cannot immediately hit the same throttled RPC.
         diagnostics = getattr(exc, "diagnostics", {})
         cooldown = diagnostics.get("cooldown_seconds") if isinstance(diagnostics, dict) else None
         setter = getattr(store, "set_global_rpc_cooldown", None)
@@ -180,6 +178,10 @@ def get_and_store_new_wallet_signatures(
                 setter(cooldown)
             except (TypeError, ValueError, OSError, RuntimeError):
                 pass
+        # The first scan still needs a successful read to establish its baseline.
+        if not store.has_baseline(wallet_address):
+            raise
+        # A discovery outage must not block work that was already persisted.
         discovery_error = exc
         signatures = []
 

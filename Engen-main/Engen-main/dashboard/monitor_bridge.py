@@ -21,11 +21,17 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
         """Close legacy profile pending rows whose signature retries are exhausted."""
         if profile_id is None or profile_store is None:
             return 0
+        list_pending = getattr(profile_store, "list_pending_transaction_signatures", None)
+        get_review_records = getattr(store, "get_needs_review_records", None)
+        if not callable(list_pending) or not callable(get_review_records):
+            return 0
         try:
-            pending = profile_store.list_pending_transaction_signatures(
-                profile_id, address, limit=1000
-            )
-            records = store.get_needs_review_records(address, pending)
+            pending = list_pending(profile_id, address, limit=1000)
+            if not isinstance(pending, (list, tuple)) or not pending:
+                return 0
+            records = get_review_records(address, pending)
+            if not isinstance(records, list):
+                return 0
         except (ValueError, OSError, RuntimeError, sqlite3.Error):
             # This is a history-repair operation; a transient DB error must not
             # stop the read-only monitor from continuing its normal scan.

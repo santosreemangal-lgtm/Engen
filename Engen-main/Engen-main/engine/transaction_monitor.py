@@ -71,6 +71,7 @@ def process_new_signatures(
         if not isinstance(item, dict):
             continue
 
+        rate_limited = False
         signature = item.get("signature")
 
         if not isinstance(signature, str) or not signature.strip():
@@ -290,6 +291,12 @@ def process_new_signatures(
                 )
             except SolanaRPCError as exc:
                 diagnostics = getattr(exc, "diagnostics", {})
+                rate_limited = (
+                    isinstance(diagnostics, dict)
+                    and diagnostics.get("failure_kind") in (
+                        "http_429", "http_429_cooldown"
+                    )
+                )
                 cooldown = diagnostics.get("cooldown_seconds") if isinstance(diagnostics, dict) else None
                 cooldown_writer = getattr(store, "set_global_rpc_cooldown", None)
                 if (
@@ -443,6 +450,8 @@ def process_new_signatures(
                 store.mark_processed(wallet_address, signature)
 
         results.append(result)
+        if rate_limited:
+            break
 
     if history_backfill:
         for result in results:

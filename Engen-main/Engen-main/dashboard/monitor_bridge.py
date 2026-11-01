@@ -6,8 +6,15 @@ from decimal import Decimal, InvalidOperation
 
 from engine.signature_store import SignatureStore
 from engine.transaction_monitor import monitor_wallet
-from engine.paper_copy_runner import (queue_paper_orders, execute_pending_paper_orders,
-    get_paper_simulator, PAPER_SIMULATOR_LOCK, source_trade_is_fresh)
+from engine.paper_copy_runner import (
+    MAX_SOURCE_FUTURE_SKEW_SECONDS,
+    MAX_SOURCE_TRADE_AGE_SECONDS,
+    queue_paper_orders,
+    execute_pending_paper_orders,
+    get_paper_simulator,
+    PAPER_SIMULATOR_LOCK,
+    source_trade_is_fresh,
+)
 from engine.profile_store import LABELS
 from engine.solana_validation import is_valid_transaction_signature
 
@@ -339,7 +346,10 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     if not source_trade_is_fresh(item):
                         item["paper_copy_status"] = "SKIPPED_STALE_SOURCE"
                         item["paper_copy_message"] = (
-                            "Source block time is missing, invalid, in the future, or older than 60 seconds; no paper order was created."
+                            "Source block time is missing or invalid, more than "
+                            f"{MAX_SOURCE_FUTURE_SKEW_SECONDS} seconds in the future, "
+                            f"or older than the configured {MAX_SOURCE_TRADE_AGE_SECONDS}-second "
+                            "window; no paper order was created."
                         )
                         store.mark_processed(address, signature)
                         continue
@@ -397,8 +407,10 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 ):
                     item["paper_copy_status"] = "SKIPPED_STALE_SOURCE"
                     item["paper_copy_message"] = (
-                        "Source block time is missing, invalid, in the future, or older "
-                        "than 60 seconds; no paper order was created."
+                        "Source block time is missing or invalid, more than "
+                        f"{MAX_SOURCE_FUTURE_SKEW_SECONDS} seconds in the future, or older "
+                        f"than the configured {MAX_SOURCE_TRADE_AGE_SECONDS}-second "
+                        "window; no paper order was created."
                     )
                     store.mark_processed(address, signature)
                 elif (

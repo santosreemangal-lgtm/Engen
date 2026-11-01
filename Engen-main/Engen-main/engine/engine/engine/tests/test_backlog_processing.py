@@ -45,6 +45,23 @@ class BacklogProcessingTests(unittest.TestCase):
         self.assertEqual(pending[0]["discovery_warning"], DISCOVERY_WARNING)
         self.assertEqual(self.store.get_status(WALLET, SIGNATURE), "pending")
 
+    def test_first_baseline_429_persists_global_cooldown_for_other_wallets(self):
+        provider_error = SolanaRPCError(
+            "HTTP 429",
+            {"failure_kind": "http_429", "cooldown_seconds": 30},
+        )
+        with patch(
+            "engine.wallet_monitor.get_wallet_signatures",
+            side_effect=provider_error,
+        ):
+            with self.assertRaises(SolanaRPCError):
+                get_and_store_new_wallet_signatures(
+                    WALLET, store=self.store, limit=10
+                )
+        self.assertGreaterEqual(
+            self.store.get_global_rpc_cooldown_remaining(), 29
+        )
+
     def test_pagination_rpc_failure_still_drains_saved_queue(self):
         self.store.mark_baseline(WALLET)
         saved_pending = "1" * 64

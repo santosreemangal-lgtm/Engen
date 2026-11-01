@@ -140,10 +140,21 @@ def get_and_store_new_wallet_signatures(
     }
     if latency_recorder is not None:
         options["latency_recorder"] = latency_recorder
-    signatures = get_wallet_signatures(**options)
+    discovery_error = None
+    try:
+        signatures = get_wallet_signatures(**options)
+    except SolanaRPCError as exc:
+        # A discovery outage must not block work that was already persisted.
+        # The first scan still needs a successful read to establish its baseline.
+        if not store.has_baseline(wallet_address):
+            raise
+        discovery_error = exc
+        signatures = []
 
     # The first scan is historical baseline only; never create trade signals.
     if not store.has_baseline(wallet_address):
+        if discovery_error is not None:
+            raise discovery_error
         for item in signatures:
             if not isinstance(item, dict):
                 continue
@@ -161,49 +172,64 @@ def get_and_store_new_wallet_signatures(
     position = store.get_position(wallet_address)
     anchor_signature = position.get("signature") if position else None
     records_by_signature = {}
-    pages = 0
-    page = signatures
-    while True:
-        pages += 1
-        anchor_found = False
-        for item in page:
-            if not isinstance(item, dict):
-                continue
-            signature = item.get("signature")
-            if not is_valid_transaction_signature(signature):
-                continue
-            records_by_signature[signature] = item
-            store.save(wallet_address, signature, slot=item.get("slot"))
-            if anchor_signature and signature == anchor_signature:
-                anchor_found = True
+    if discovery_error is None:
+        pages = 0
+        page = signatures
+        while True:
+            pages += 1
+            anchor_found = False
+            for item in page:
+                if not isinstance(item, dict):
+                    continue
+                signature = item.get("signature")
+                if not is_valid_transaction_signature(signature):
+                    continue
+                records_by_signature[signature] = item
+                store.save(wallet_address, signature, slot=item.get("slot"))
+                if anchor_signature and signature == anchor_signature:
+                    anchor_found = True
+                    break
+            if anchor_found or len(page) < limit or pages >= MAX_DISCOVERY_PAGES or not page:
                 break
-        if anchor_found or len(page) < limit or pages >= MAX_DISCOVERY_PAGES or not page:
-            break
-        next_before = page[-1].get("signature") if isinstance(page[-1], dict) else None
-        if not is_valid_transaction_signature(next_before):
-            break
-        page_options = {
-            "wallet_address": wallet_address,
-            "limit": limit,
-            "rpc_url": rpc_url,
-            "timeout": timeout,
-            "before": next_before,
-        }
-        if latency_recorder is not None:
-            page_options["latency_recorder"] = latency_recorder
-        page = get_wallet_signatures(**page_options)
+            next_before = page[-1].get("signature") if isinstance(page[-1], dict) else None
+            if not is_valid_transaction_signature(next_before):
+                break
+            page_options = {
+                "wallet_address": wallet_address,
+                "limit": limit,
+                "rpc_url": rpc_url,
+                "timeout": timeout,
+                "before": next_before,
+            }
+            if latency_recorder is not None:
+                page_options["latency_recorder"] = latency_recorder
+            try:
+                page = get_wallet_signatures(**page_options)
+            except SolanaRPCError as exc:
+                # Keep signatures already collected and continue processing the
+                # durable queue; the next scan can resume discovery from its anchor.
+                discovery_error = exc
+                break
 
     # The discovery loop can collect up to five pages. Process a bounded batch
-    # of pending work instead of only one page, otherwise a backlog drains too
-    # slowly and newer signatures wait behind old entries indefinitely.
+    # of pending work even when discovery is temporarily unavailable.
     pending_limit = min(limit * MAX_DISCOVERY_PAGES, MAX_PENDING_SIGNATURES_PER_SCAN)
     pending_signatures = store.get_pending_signatures(
         wallet_address, limit=pending_limit
     )
-    return [
+    if discovery_error is not None and not pending_signatures:
+        raise discovery_error
+
+    results = [
         records_by_signature.get(signature, {"signature": signature})
         for signature in pending_signatures
     ]
+    if discovery_error is not None:
+        for item in results:
+            item["discovery_warning"] = (
+                "New signature discovery failed; saved pending signatures are still being processed."
+            )
+    return results
 
 
 if __name__ == "__main__":

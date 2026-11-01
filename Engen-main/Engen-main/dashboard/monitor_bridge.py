@@ -412,6 +412,20 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 for item in results
             ]
 
+        # Rotate any still-pending records behind untouched signatures. This
+        # includes retryable RPC errors and queue failures, so one repeated item
+        # cannot occupy every Fresh/History slot on every scan.
+        pending_signatures = [
+            item.get("signature") for item in results
+            if isinstance(item, dict) and isinstance(item.get("signature"), str)
+        ]
+        touch_pending = getattr(store, "touch_pending_signatures", None)
+        if callable(touch_pending) and pending_signatures:
+            try:
+                touch_pending(address, pending_signatures[:75])
+            except (TypeError, ValueError, OSError, RuntimeError, sqlite3.Error):
+                pass
+
         # Queue status may change during the copy pass (pending -> processed).
         # Refresh profile evidence after those transitions so both stores agree
         # on engine-processing state without conflating it with chain outcome.

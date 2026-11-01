@@ -444,10 +444,11 @@ def process_new_signatures(
 
         results.append(result)
 
-    for result in results:
-        if isinstance(result, dict):
-            result["history_backfill"] = history_backfill is True
-            result["copy_eligible"] = history_backfill is not True
+    if history_backfill:
+        for result in results:
+            if isinstance(result, dict):
+                result["history_backfill"] = True
+                result["copy_eligible"] = False
     return results
 
 
@@ -497,15 +498,20 @@ def monitor_wallet(
         "latency_recorder": latency_recorder,
         "deadline": deadline,
     }
-    fresh_results = process_new_signatures(
-        signatures=batches.get("fresh", []),
-        history_backfill=False,
-        **common_options,
+    fresh_batch = batches.get("fresh", [])
+    fresh_results = (
+        process_new_signatures(
+            signatures=fresh_batch,
+            history_backfill=False,
+            **common_options,
+        )
+        if fresh_batch else []
     )
+    history_batch = batches.get("history", [])
     history_results = []
-    if time.monotonic() < deadline:
+    if history_batch and time.monotonic() < deadline:
         history_results = process_new_signatures(
-            signatures=batches.get("history", []),
+            signatures=history_batch,
             history_backfill=True,
             **common_options,
         )

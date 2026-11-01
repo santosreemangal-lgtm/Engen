@@ -354,7 +354,10 @@ class PaperCopyEndToEndTests(unittest.TestCase):
             self.assertEqual(len(restarted_report["orders"]), 2)
             self.assertTrue(all(order["status"] == "FILLED" for order in restarted_report["orders"]))
             self.assertEqual(len(restarted_report["fills"]), 2)
+            self.assertEqual(restarted_report["fills"], report["fills"])
             self.assertEqual(restarted_report["balances"], report["balances"])
+            self.assertEqual(restarted_report["initial_balance"], report["initial_balance"])
+            self.assertEqual(restarted_report["pnl"], report["pnl"])
             self.assertEqual(restarted_report["pnl_events"], report["pnl_events"])
 
 

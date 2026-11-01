@@ -267,20 +267,24 @@ class SignatureStore:
                         error_message = NULL
                     WHERE wallet_address = ?
                       AND signature = ?
+                      AND status != 'needs_review'
                     """,
                     (wallet_address, signature),
                 )
-                connection.execute(
-                    """UPDATE transaction_records
-                       SET processing_status = 'processed',
-                           updated_at = CURRENT_TIMESTAMP
-                       WHERE wallet_address = ? AND signature = ?""",
-                    (wallet_address, signature),
-                )
-                position = connection.execute(
-                    "SELECT slot FROM seen_signatures WHERE wallet_address = ? AND signature = ?",
-                    (wallet_address, signature),
-                ).fetchone()
+                if cursor.rowcount == 1:
+                    connection.execute(
+                        """UPDATE transaction_records
+                           SET processing_status = 'processed',
+                               updated_at = CURRENT_TIMESTAMP
+                           WHERE wallet_address = ? AND signature = ?""",
+                        (wallet_address, signature),
+                    )
+                    position = connection.execute(
+                        "SELECT slot FROM seen_signatures WHERE wallet_address = ? AND signature = ?",
+                        (wallet_address, signature),
+                    ).fetchone()
+                else:
+                    position = None
                 if position and position[0] is not None:
                     connection.execute(
                         """INSERT INTO wallet_positions (wallet_address, slot, signature)

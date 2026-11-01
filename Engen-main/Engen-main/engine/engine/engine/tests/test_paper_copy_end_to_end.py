@@ -89,7 +89,9 @@ class PaperCopyEndToEndTests(unittest.TestCase):
             profile_id = profiles.create_profile("Archived recovery")
             profiles.associate_source_wallet(profile_id, WALLET)
             simulator = PaperSimulator(db_path=root / "paper_trading.db")
-            source_signature = "2" * 64
+            # A 64-character base58 signature made only of leading '1's
+            # decodes to exactly 64 bytes and is valid for this isolated test.
+            source_signature = "1" * 64
             source_time = int(time.time())
             order = simulator.create_order(
                 signal_id="wallet-copy:" + WALLET + ":" + source_signature,

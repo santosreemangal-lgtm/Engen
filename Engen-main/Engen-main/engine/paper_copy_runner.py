@@ -11,6 +11,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from engine.config import load_max_source_age_seconds
 from engine.paper_simulator import PaperSimulator
 from engine.market_data import fetch_market_price
 from engine.transaction_analysis import WRAPPED_SOL_MINT
@@ -35,7 +36,8 @@ PAPER_EXECUTION_COST_MULTIPLIER = (
     * Decimal(10000 + PAPER_FEE_BPS) / Decimal(10000)
 )
 
-MAX_SOURCE_TRADE_AGE_SECONDS = 60
+MAX_SOURCE_TRADE_AGE_SECONDS = load_max_source_age_seconds()
+MAX_SOURCE_FUTURE_SKEW_SECONDS = 5
 
 
 def source_trade_is_fresh(result, *, now=None, max_age_seconds=MAX_SOURCE_TRADE_AGE_SECONDS):
@@ -50,28 +52,82 @@ def source_trade_is_fresh(result, *, now=None, max_age_seconds=MAX_SOURCE_TRADE_
     if not isinstance(current_time, (int, float)) or isinstance(current_time, bool):
         return False
     age_seconds = current_time - block_time
-    return 0 <= age_seconds <= max_age_seconds
+    return -MAX_SOURCE_FUTURE_SKEW_SECONDS <= age_seconds <= max_age_seconds
+
+
+def _source_order_time_key(order):
+    details = order.get("details") or {}
+    block_time = details.get("source_block_time")
+    slot = details.get("source_slot")
+    created_at = str(order.get("created_at") or "")
+    return (
+        block_time if isinstance(block_time, int) and not isinstance(block_time, bool) else 2**63,
+        slot if isinstance(slot, int) and not isinstance(slot, bool) else 2**63,
+        created_at,
+        str(order.get("order_id") or ""),
+    )
+
+
+def _reject_dependent_sells(simulator, expired_buy, reason):
+    buy_details = expired_buy.get("details") or {}
+    buy_wallet = buy_details.get("source_wallet")
+    buy_mint = expired_buy.get("asset_mint")
+    buy_key = _source_order_time_key(expired_buy)
+    for candidate in list(getattr(simulator, "orders", {}).values()):
+        details = candidate.get("details") or {}
+        if (
+            candidate.get("status") != "CREATED"
+            or candidate.get("side") != "SELL"
+            or candidate.get("asset_mint") != buy_mint
+            or details.get("origin") != "AUTOMATIC_WALLET_COPY"
+            or details.get("source_wallet") != buy_wallet
+            or _source_order_time_key(candidate) <= buy_key
+        ):
+            continue
+        dependent_reason = (
+            "Dependent copied SELL rejected because its earlier source BUY expired: "
+            + reason
+        )
+        updated = dict(
+            candidate,
+            status="REJECTED",
+            reason=dependent_reason,
+            details={
+                **details,
+                "execution_state": "DEPENDENCY_REJECTED",
+                "dependency_order_id": expired_buy.get("order_id"),
+            },
+        )
+        persist = getattr(simulator, "_persist", None)
+        if callable(persist):
+            persist(updated)
+        simulator.orders[candidate["order_id"]] = updated
 
 
 def _reject_stale_source_order(simulator, order, reason):
-    """Permanently reject a queued copy whose source timestamp is absent or expired."""
+    """Expire stale BUYs and reject stale SELLs without producing a fill."""
     details = dict(order.get("details") or {})
+    is_buy = order.get("side") == "BUY"
+    terminal_status = "EXPIRED" if is_buy else "REJECTED"
+    execution_state = "EXPIRED_SOURCE" if is_buy else "STALE_SOURCE"
     updated = dict(
         order,
-        status="REJECTED",
+        status=terminal_status,
         reason=reason,
-        details={**details, "execution_state": "STALE_SOURCE"},
+        details={**details, "execution_state": execution_state},
     )
     persist = getattr(simulator, "_persist", None)
     if callable(persist):
         persist(updated)
     simulator.orders[order["order_id"]] = updated
+    if is_buy:
+        _reject_dependent_sells(simulator, updated, reason)
     return {
         "order_id": order.get("order_id"),
         "signal_id": order.get("signal_id"),
-        "status": "REJECTED",
+        "status": terminal_status,
         "reason": reason,
-        "execution_state": "STALE_SOURCE",
+        "execution_state": execution_state,
     }
 
 
@@ -216,7 +272,11 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
     now = datetime.now(timezone.utc).isoformat()
     outcomes = []
 
-    for order in list(simulator.orders.values()):
+    ordered_orders = sorted(
+        list(simulator.orders.values()),
+        key=_source_order_time_key,
+    )
+    for order in ordered_orders:
         details = order.get("details") or {}
         if (
             order.get("status") != "CREATED"
@@ -518,7 +578,9 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
         observation = result.get("signature_observation")
         signal = result.get("trade_signal")
         if (
-            not isinstance(signature, str) or not signature.strip()
+            result.get("history_backfill") is True
+            or result.get("copy_eligible") is False
+            or not isinstance(signature, str) or not signature.strip()
             or not isinstance(observation, dict)
             or observation.get("confirmation_status") not in ("confirmed", "finalized")
             or result.get("status") != "success"

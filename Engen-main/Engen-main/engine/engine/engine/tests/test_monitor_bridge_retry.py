@@ -121,10 +121,7 @@ class MonitorBridgeRetryTests(unittest.TestCase):
 
     def test_bridge_persists_on_chain_failure_as_failed_and_finishes_queue(self):
         result = candidate_result()
-        result["status"] = "failed"
-        result["trade_signal"] = {
-            "classification": "UNKNOWN", "asset_mints": [], "quote_mints": [],
-        }
+        result["retryable"] = True
         result["signature_observation"]["signature_error"] = {
             "InstructionError": [0, "Custom"]
         }

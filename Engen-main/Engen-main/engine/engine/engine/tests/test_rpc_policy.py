@@ -4,7 +4,8 @@ import urllib.error
 import unittest
 from unittest.mock import patch
 
-from engine.rpc_policy import post_json_rpc
+import engine.rpc_policy as rpc_policy
+from engine.rpc_policy import RPCHTTPError, post_json_rpc
 
 
 class _Response:
@@ -30,6 +31,11 @@ class RPCPolicyTests(unittest.TestCase):
         })
         self.env.start()
         self.addCleanup(self.env.stop)
+        self.cooldown_state = patch.multiple(
+            rpc_policy, _rate_limit_streak=0, _cooldown_until=0.0
+        )
+        self.cooldown_state.start()
+        self.addCleanup(self.cooldown_state.stop)
 
     def test_rpc_url_requires_https_for_remote_hosts(self):
         from engine.rpc_policy import validate_rpc_url
@@ -112,20 +118,28 @@ class RPCPolicyTests(unittest.TestCase):
 
     @patch("engine.rpc_policy._pace_requests")
     @patch("engine.rpc_policy.urllib.request.urlopen")
-    def test_retries_http_429(self, mock_urlopen, _pace):
-        mock_urlopen.side_effect = [
-            urllib.error.HTTPError(
-                "https://rpc.example", 429, "rate limited", {}, None
-            ),
-            _Response({"result": "ok"}),
-        ]
-        result = post_json_rpc(
-            {"method": "getSlot"},
-            "https://rpc.example",
-            2,
+    def test_http_429_enters_shared_cooldown_without_retrying(self, mock_urlopen, _pace):
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            "https://rpc.example", 429, "rate limited", {"Retry-After": "45"}, None
         )
-        self.assertEqual(result, {"result": "ok"})
-        self.assertEqual(mock_urlopen.call_count, 2)
+        with self.assertRaises(RPCHTTPError) as caught:
+            post_json_rpc({"method": "getSlot"}, "https://rpc.example", 2)
+        self.assertEqual(caught.exception.status_code, 429)
+        self.assertEqual(caught.exception.diagnostics["failure_kind"], "http_429")
+        self.assertEqual(caught.exception.diagnostics["retry_after"], "45")
+        self.assertGreaterEqual(
+            caught.exception.diagnostics["cooldown_seconds"], 45
+        )
+        self.assertEqual(mock_urlopen.call_count, 1)
+
+        # The process-wide cooldown blocks the next request before the provider
+        # is contacted again.
+        with self.assertRaises(RPCHTTPError) as cooldown:
+            post_json_rpc({"method": "getSlot"}, "https://rpc.example", 2)
+        self.assertEqual(
+            cooldown.exception.diagnostics["failure_kind"], "http_429_cooldown"
+        )
+        self.assertEqual(mock_urlopen.call_count, 1)
 
     @patch("engine.rpc_policy._pace_requests")
     @patch("engine.rpc_policy.urllib.request.urlopen")

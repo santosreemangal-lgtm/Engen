@@ -130,6 +130,37 @@ class ProfileStoreTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM balance_snapshots").fetchone()[0], 2)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM balance_snapshots WHERE is_current=1").fetchone()[0], 1)
 
+    def test_exhausted_signature_reconciles_legacy_profile_pending_to_unknown(self):
+        profile = self.store.create_profile("Retry review")
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        signature = "1" * 64
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="pending",
+            evidence={"classification_reason": "metadata unavailable"},
+            profile_ids=[profile],
+        )
+
+        self.assertEqual(
+            self.store.get_pending_transaction_signatures(PUBLIC_ADDRESS),
+            [signature],
+        )
+        changed = self.store.mark_transaction_needs_review(
+            signature, PUBLIC_ADDRESS, attempts=5,
+            error_stage="rpc_fetch", error_code="rpc_error",
+            error_message="Public RPC request failed.",
+        )
+
+        self.assertTrue(changed)
+        transaction = self.store.get_transaction(signature, profile_id=profile)
+        self.assertEqual(transaction["status"], "unknown")
+        self.assertEqual(transaction["evidence"]["processing_status"], "needs_review")
+        self.assertTrue(transaction["evidence"]["retry_exhausted"])
+        self.assertEqual(transaction["evidence"]["retry_attempts"], 5)
+        self.assertEqual(self.store.get_pending_transaction_signatures(PUBLIC_ADDRESS), [])
+        self.assertFalse(self.store.mark_transaction_needs_review(
+            signature, PUBLIC_ADDRESS, attempts=6
+        ))
+
     def test_soft_delete_preserves_history(self):
         p = self.store.create_profile("History")
         self.store.associate_source_wallet(p, PUBLIC_ADDRESS)

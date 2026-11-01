@@ -8,7 +8,10 @@ from contextlib import closing
 from decimal import Decimal
 from pathlib import Path
 
-from engine.config import load_max_source_age_seconds
+from engine.config import (
+    MAX_SOURCE_FUTURE_SKEW_SECONDS,
+    load_max_source_age_seconds,
+)
 from engine.pnl import MarketPrice, decimal_value, parse_timestamp
 
 
@@ -591,7 +594,7 @@ class PaperSimulator:
             max_source_age = load_max_source_age_seconds()
             if (
                 age_seconds is None
-                or age_seconds < -5
+                or age_seconds < -MAX_SOURCE_FUTURE_SKEW_SECONDS
                 or age_seconds > max_source_age
             ):
                 reason = (

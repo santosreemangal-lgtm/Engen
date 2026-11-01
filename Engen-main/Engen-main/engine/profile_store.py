@@ -192,9 +192,10 @@ class ProfileStore:
 
     @staticmethod
     def _prune_wallet_transactions(db, wallet_address, limit=MAX_WALLET_ACTIVITY_TRANSACTIONS):
-        """Keep the newest observed history rows per source wallet."""
+        """Retain every unresolved pending row plus the newest completed activity."""
         count = db.execute(
-            "SELECT COUNT(*) FROM transactions WHERE source_wallet_address=?",
+            """SELECT COUNT(*) FROM transactions
+               WHERE source_wallet_address=? AND status!='pending'""",
             (wallet_address,),
         ).fetchone()[0]
         if count <= limit:
@@ -207,7 +208,7 @@ class ProfileStore:
                                     block_time DESC, observed_at DESC, signature DESC
                        ) AS retention_rank
                 FROM transactions
-                WHERE source_wallet_address=?
+                WHERE source_wallet_address=? AND status!='pending'
             ) ranked
             WHERE retention_rank>?
         """

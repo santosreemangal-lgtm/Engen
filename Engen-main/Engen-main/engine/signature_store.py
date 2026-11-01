@@ -232,14 +232,22 @@ class SignatureStore:
                 cleaned.append(signature)
         if not cleaned:
             return {}
-        placeholders = ",".join("?" for _ in cleaned)
+        statuses = {}
+        # Keep each query below SQLite builds configured with the traditional
+        # 999-variable limit, while still reusing one database connection.
         with closing(self._connect()) as connection:
-            rows = connection.execute(
-                f"""SELECT signature, status FROM seen_signatures
-                    WHERE wallet_address = ? AND signature IN ({placeholders})""",
-                [wallet_address, *cleaned],
-            ).fetchall()
-        return {signature: status for signature, status in rows}
+            for start in range(0, len(cleaned), 400):
+                batch = cleaned[start:start + 400]
+                placeholders = ",".join("?" for _ in batch)
+                rows = connection.execute(
+                    f"""SELECT signature, status FROM seen_signatures
+                        WHERE wallet_address = ? AND signature IN ({placeholders})""",
+                    [wallet_address, *batch],
+                ).fetchall()
+                statuses.update({
+                    signature: status for signature, status in rows
+                })
+        return statuses
 
 
     def save(self, wallet_address, signature, slot=None):

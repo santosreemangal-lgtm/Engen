@@ -325,8 +325,9 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     for item in results
                 ]
         except Exception:
-            # If queue persistence fails, leave potential swap candidates pending
-            # so the next scan can retry; mark only clearly non-candidate results.
+            # Keep fresh swap candidates pending after a transient queue failure,
+            # but terminally consume stale/missing-time candidates so they cannot
+            # become delayed paper copies on every later scan.
             for item in results:
                 signature = item.get("signature")
                 signal = item.get("trade_signal")
@@ -335,6 +336,17 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     and signal.get("classification") in ("BUY_CANDIDATE", "SELL_CANDIDATE")
                 )
                 if (
+                    isinstance(signature, str)
+                    and is_candidate
+                    and not source_trade_is_fresh(item)
+                ):
+                    item["paper_copy_status"] = "SKIPPED_STALE_SOURCE"
+                    item["paper_copy_message"] = (
+                        "Source block time is missing, invalid, in the future, or older "
+                        "than 60 seconds; no paper order was created."
+                    )
+                    store.mark_processed(address, signature)
+                elif (
                     isinstance(signature, str)
                     and item.get("retryable") is not True
                     and not is_candidate

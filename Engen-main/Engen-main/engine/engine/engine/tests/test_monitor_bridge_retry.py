@@ -82,6 +82,17 @@ class MonitorBridgeRetryTests(unittest.TestCase):
         self.assertEqual(output[0]["paper_copy_status"], "SKIPPED_STALE_SOURCE")
         self.assertNotIn("RETRYING_QUEUE", output[0].get("paper_copy_status", ""))
 
+    def test_missing_source_timestamp_is_skipped_and_marked_processed(self):
+        result = candidate_result()
+        result["signature_observation"].pop("block_time")
+
+        store, _, output = self._scan_with(result, [])
+
+        store.mark_processed.assert_called_once_with(WALLET, "1" * 64)
+        self.assertEqual(output[0]["paper_copy_status"], "SKIPPED_STALE_SOURCE")
+        self.assertIn("missing", output[0]["paper_copy_message"].lower())
+        self.assertNotIn("RETRYING_QUEUE", output[0]["paper_copy_status"])
+
     def test_needs_review_is_terminal_unknown_profile_status_not_pending(self):
         result = candidate_result()
         result["metadata_complete"] = False

@@ -268,6 +268,11 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     address, results, simulator=simulator,
                     allowed_sides=allowed_sides, copy_settings=copy_settings
                 )
+                # Write the durable source link immediately after order
+                # creation, before market-data execution can block or fail.
+                # The post-execution reconciliation below remains as a
+                # restart/retry safety net for transient ProfileStore errors.
+                persist_source_trade_refs(address, simulator)
                 execution_outcomes = execute_pending_paper_orders(address, simulator=simulator)
             # Reconcile the simulator's durable orders on every scan. This also
             # closes the crash window between order creation and reference write.

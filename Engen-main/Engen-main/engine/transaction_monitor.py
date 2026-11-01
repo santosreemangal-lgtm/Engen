@@ -84,6 +84,16 @@ def process_new_signatures(
             }, item))
             continue
         except SolanaRPCError as exc:
+            diagnostics = getattr(exc, "diagnostics", {})
+            diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+            safe_diagnostics = {
+                key: diagnostics.get(key)
+                for key in (
+                    "failure_kind", "http_status", "json_rpc_code",
+                    "exception_class", "retry_after", "request_duration_ms",
+                    "attempts",
+                )
+            }
             error_result = {
                 "signature": signature,
                 "available": False,
@@ -91,15 +101,22 @@ def process_new_signatures(
                 "metadata_status": "rpc_error",
                 "error": str(exc),
                 "retryable": True,
+                "rpc_diagnostics": safe_diagnostics,
             }
             if (
                 wallet_address is not None
                 and store is not None
                 and is_valid_transaction_signature(signature)
             ):
+                diagnostic_message = (
+                    "RPC diagnostics: " + json.dumps(
+                        safe_diagnostics, sort_keys=True, separators=(",", ":")
+                    )
+                )
+                failure_code = safe_diagnostics.get("failure_kind") or "rpc_error"
                 failure = store.record_failure(
                     wallet_address, signature, "rpc_fetch",
-                    "rpc_error", str(exc),
+                    str(failure_code)[:80], diagnostic_message,
                 )
                 error_result["processing_status"] = failure["status"]
             results.append(_include_signature_observation(error_result, item))

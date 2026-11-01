@@ -172,6 +172,59 @@ class RPCPolicyTests(unittest.TestCase):
             )
         mock_urlopen.assert_called_once()
 
+    @patch("engine.rpc_policy._pace_requests")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
+    def test_http_429_exposes_safe_status_retry_after_and_duration(
+        self, mock_urlopen, _pace,
+    ):
+        mock_urlopen.side_effect = [
+            urllib.error.HTTPError(
+                "https://rpc.example/?api-key=DO_NOT_LEAK", 429,
+                "rate limited", {"Retry-After": "17"}, None,
+            ),
+            urllib.error.HTTPError(
+                "https://rpc.example/?api-key=DO_NOT_LEAK", 429,
+                "rate limited", {"Retry-After": "17"}, None,
+            ),
+        ]
+        with self.assertRaises(RuntimeError) as caught:
+            post_json_rpc(
+                {"method": "getHealth"},
+                "https://rpc.example/?api-key=DO_NOT_LEAK",
+                1,
+            )
+        diagnostic = caught.exception.diagnostics
+        self.assertEqual(diagnostic["failure_kind"], "http_429")
+        self.assertEqual(diagnostic["http_status"], 429)
+        self.assertEqual(diagnostic["retry_after"], "17")
+        self.assertEqual(diagnostic["exception_class"], "HTTPError")
+        self.assertEqual(diagnostic["attempts"], 2)
+        self.assertGreaterEqual(diagnostic["request_duration_ms"], 0)
+        self.assertNotIn("DO_NOT_LEAK", repr(diagnostic))
+        self.assertNotIn("rpc.example", repr(diagnostic))
+
+    @patch("engine.rpc_policy._pace_requests")
+    @patch("engine.rpc_policy.urllib.request.urlopen")
+    def test_timeout_diagnostics_distinguish_timeout_and_redact_secrets(
+        self, mock_urlopen, _pace,
+    ):
+        mock_urlopen.side_effect = TimeoutError(
+            "https://rpc.example/?token=DO_NOT_LEAK"
+        )
+        with self.assertRaises(RuntimeError) as caught:
+            post_json_rpc(
+                {"method": "getHealth"},
+                "https://rpc.example/?token=DO_NOT_LEAK",
+                1,
+            )
+        diagnostic = caught.exception.diagnostics
+        self.assertEqual(diagnostic["failure_kind"], "timeout")
+        self.assertEqual(diagnostic["exception_class"], "TimeoutError")
+        self.assertEqual(diagnostic["attempts"], 2)
+        self.assertNotIn("DO_NOT_LEAK", str(caught.exception))
+        self.assertNotIn("DO_NOT_LEAK", repr(diagnostic))
+        self.assertGreaterEqual(diagnostic["request_duration_ms"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

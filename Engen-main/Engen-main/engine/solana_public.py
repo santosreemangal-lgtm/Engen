@@ -17,25 +17,32 @@ _BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 class SolanaRPCError(Exception):
     """Base error for safe, normalized Solana RPC failures."""
 
+    def __init__(self, message, diagnostics=None):
+        self.diagnostics = dict(diagnostics or {})
+        super().__init__(message)
+
 
 class SolanaRPCHTTPError(SolanaRPCError):
     """HTTP error distinct from a JSON-RPC provider error."""
 
-    def __init__(self, status_code):
+    def __init__(self, status_code, diagnostics=None):
         self.status_code = status_code
-        super().__init__("Public Solana RPC HTTP request failed.")
+        super().__init__("Public Solana RPC HTTP request failed.", diagnostics)
 
 
 class SolanaRPCTransportError(SolanaRPCError):
     """Timeout or temporary network failure after bounded retries."""
 
+    def __init__(self, diagnostics=None):
+        super().__init__("Public Solana RPC request failed.", diagnostics)
+
 
 class SolanaRPCProviderError(SolanaRPCError):
     """The provider returned a JSON-RPC error object."""
 
-    def __init__(self, code=None):
+    def __init__(self, code=None, diagnostics=None):
         self.code = code
-        super().__init__("Solana RPC returned an error response.")
+        super().__init__("Solana RPC returned an error response.", diagnostics)
 
 
 def is_valid_transaction_signature(signature):
@@ -64,20 +71,20 @@ def _rpc_request(payload, rpc_url=DEFAULT_RPC_URL, timeout=10):
     try:
         data = post_json_rpc(payload, rpc_url=rpc_url, timeout=timeout)
     except RPCHTTPError as exc:
-        raise SolanaRPCHTTPError(exc.status_code) from None
-    except RPCTransportError:
-        raise SolanaRPCTransportError(
-            "Public Solana RPC request failed."
-        ) from None
-    except RPCInvalidResponseError:
+        raise SolanaRPCHTTPError(exc.status_code, exc.diagnostics) from None
+    except RPCTransportError as exc:
+        raise SolanaRPCTransportError(exc.diagnostics) from None
+    except RPCInvalidResponseError as exc:
         raise SolanaRPCError(
-            "Solana RPC returned an invalid response."
+            "Solana RPC returned an invalid response.", exc.diagnostics
         ) from None
-    except RuntimeError:
+    except RuntimeError as exc:
         raise SolanaRPCError(
-            "Public Solana RPC request failed."
+            "Public Solana RPC request failed.",
+            getattr(exc, "diagnostics", None),
         ) from None
 
+    response_diagnostics = getattr(data, "diagnostics", {})
     if not isinstance(data, dict):
         raise SolanaRPCError("Solana RPC returned an invalid response.")
 
@@ -92,9 +99,16 @@ def _rpc_request(payload, rpc_url=DEFAULT_RPC_URL, timeout=10):
         if not isinstance(error, dict):
             raise SolanaRPCError("Solana RPC returned an invalid error object.")
         code = error.get("code")
-        raise SolanaRPCProviderError(
-            code if isinstance(code, int) and not isinstance(code, bool) else None
-        )
+        safe_code = code if (
+            isinstance(code, (int, str)) and not isinstance(code, bool)
+        ) else None
+        diagnostics = dict(response_diagnostics or {})
+        diagnostics.update({
+            "failure_kind": "json_rpc_error",
+            "json_rpc_code": safe_code,
+            "exception_class": "SolanaRPCProviderError",
+        })
+        raise SolanaRPCProviderError(safe_code, diagnostics)
 
     if "result" not in data:
         raise SolanaRPCError("Solana RPC response is missing its result.")

@@ -166,6 +166,35 @@ class TransactionRPCTests(unittest.TestCase):
                 get_signature_status("not-a-valid-signature")
             rpc_request.assert_not_called()
 
+    @patch("engine.rpc_policy.urllib.request.urlopen")
+    def test_json_rpc_error_preserves_code_and_safe_request_diagnostics(
+        self, mock_urlopen,
+    ):
+        response = MagicMock()
+        response.read.return_value = json.dumps({
+            "jsonrpc": "2.0", "id": 4,
+            "error": {"code": -32005, "message": "rate limit"},
+        }).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = response
+        with self.assertRaises(SolanaRPCProviderError) as caught:
+            get_transaction(
+                "1" * 64,
+                rpc_url="https://rpc.example/?api-key=DO_NOT_LEAK",
+            )
+        self.assertEqual(caught.exception.code, -32005)
+        self.assertEqual(
+            caught.exception.diagnostics["failure_kind"], "json_rpc_error"
+        )
+        self.assertEqual(
+            caught.exception.diagnostics["json_rpc_code"], -32005
+        )
+        self.assertEqual(
+            caught.exception.diagnostics["exception_class"],
+            "SolanaRPCProviderError",
+        )
+        self.assertNotIn("DO_NOT_LEAK", repr(caught.exception.diagnostics))
+        self.assertNotIn("rpc.example", repr(caught.exception.diagnostics))
+
 
 if __name__ == "__main__":
     unittest.main()

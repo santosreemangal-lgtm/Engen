@@ -940,7 +940,8 @@ def profile_monitor_report(profile_id):
 def load_profile_transactions(query):
     """Return bounded, profile-scoped transaction history with allowlisted filters."""
     if not PROFILE_STORE_DB.is_file():
-        return {"database_available": False, "transactions": [], "page": 1,
+        return {"database_available": False, "transactions": [],
+                "source_trade_refs": [], "page": 1,
                 "page_size": 25, "total": 0, "pages": 0}
     profile_id = (query.get("profile_id") or [""])[0].strip()
     if not profile_id or len(profile_id) > 64:
@@ -983,7 +984,8 @@ def load_profile_transactions(query):
             db.row_factory = sqlite3.Row
             tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if not {"transactions", "profile_transactions", "profiles"}.issubset(tables):
-                return {"database_available": True, "transactions": [], "page": page,
+                return {"database_available": True, "transactions": [],
+                        "source_trade_refs": [], "page": page,
                         "page_size": page_size, "total": 0, "pages": 0,
                         "error": "Transaction history schema is not initialized."}
             if not db.execute("SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
@@ -1016,7 +1018,25 @@ def load_profile_transactions(query):
                 item["value_kind"] = "OBSERVED_TRANSACTION_METADATA"
                 item["simulated"] = False
                 transactions.append(item)
-            return {"database_available": True, "transactions": transactions, "page": page,
+
+            # Source references are a separate, durable ledger. Keep this API
+            # read-only and return them independently so references remain
+            # visible even when the corresponding activity transaction was pruned.
+            source_trade_refs = []
+            if "source_trade_refs" in tables:
+                ref_sql = """SELECT order_id,source_wallet_address,source_signature,
+                                    side,asset_mint,source_slot,source_block_time,created_at
+                             FROM source_trade_refs WHERE profile_id=?"""
+                ref_params = [profile_id]
+                if token_mint:
+                    ref_sql += " AND asset_mint=?"
+                    ref_params.append(token_mint)
+                ref_sql += " ORDER BY created_at DESC,order_id DESC LIMIT 1000"
+                ref_rows = db.execute(ref_sql, ref_params).fetchall()
+                source_trade_refs = [dict(row) for row in ref_rows]
+
+            return {"database_available": True, "transactions": transactions,
+                    "source_trade_refs": source_trade_refs, "page": page,
                     "page_size": page_size, "total": total,
                     "pages": (total + page_size - 1) // page_size}
     except sqlite3.Error as exc:

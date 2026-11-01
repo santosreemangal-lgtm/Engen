@@ -458,6 +458,16 @@ footer.hint{padding:10px 4px;line-height:1.7}
  <div class="history-table-wrap"><table class="history-table"><thead><tr><th>Age</th><th>Type</th><th>Token</th><th>Amount</th><th>Source wallet</th><th>Status</th><th>Explorer</th></tr></thead><tbody id="transaction-history-table"><tr><td colspan="7" class="history-empty">Select a profile to load wallet activity.</td></tr></tbody></table></div>
  <div class="history-pagination"><button id="transaction-history-prev" type="button" disabled>Previous</button><span id="transaction-history-page">Page 1</span><button id="transaction-history-next" type="button" disabled>Next</button></div>
  <p id="transaction-history-message" class="message" role="status"></p>
+ <div class="history-overview">
+  <div><strong id="source-trade-reference-total">0</strong><span>durable paper source links</span></div>
+  <p class="hint">Source links remain visible even when older Wallet Activity rows are removed by history retention. These are references to paper orders, not additional on-chain transactions.</p>
+ </div>
+ <div class="history-table-wrap">
+  <table class="history-table">
+   <thead><tr><th>Saved</th><th>Side</th><th>Token</th><th>Source wallet</th><th>Source signature</th><th>Paper order ID</th></tr></thead>
+   <tbody id="source-trade-reference-table"><tr><td colspan="6" class="history-empty">No paper source references saved yet.</td></tr></tbody>
+  </table>
+ </div>
 </section>
 <section id="paper-history-panel" class="history-subpanel hidden" role="tabpanel" aria-labelledby="paper-history-tab">
  <div class="history-overview"><div><strong id="paper-trade-total">—</strong><span>stored paper orders</span><small id="paper-fill-total">0 completed fills</small></div><p class="hint">Virtual simulation only. No wallet signing or blockchain transaction is performed.</p></div>
@@ -1128,10 +1138,54 @@ function setHistoryTab(mode){
  $("paper-history-tab").setAttribute("aria-selected",observed?"false":"true");
  if(observed)loadTransactionHistory();else loadPaperTradeHistory(null);
 }
+function renderSourceTradeReferences(references){
+ const tbody=$("source-trade-reference-table");
+ const refs=Array.isArray(references)?references:[];
+ tbody.replaceChildren();
+ $("source-trade-reference-total").textContent=refs.length.toLocaleString();
+ if(!refs.length){
+  historySetEmpty(tbody,6,"No durable paper source references are available for this profile.");
+  return;
+ }
+ refs.forEach(ref=>{
+  const row=document.createElement("tr");
+  const saved=historyCell(row,formatPaperAge(ref.created_at),"history-age");
+  if(ref.created_at){saved.dataset.createdAt=ref.created_at;saved.title="Saved: "+historyDate(ref.created_at);}
+  const side=String(ref.side||"").toUpperCase();
+  const sideCell=document.createElement("td");
+  sideCell.append(historyPill(side,side.toLowerCase()==="buy"?"buy":side.toLowerCase()==="sell"?"sell":""));
+  row.append(sideCell);
+  row.append(makeHistoryTokenCell(ref.asset_mint));
+  const walletCell=document.createElement("td");
+  const wallet=document.createElement("span");
+  wallet.className="history-wallet-address";
+  wallet.textContent=historyShortAddress(ref.source_wallet_address);
+  wallet.title=ref.source_wallet_address||"";
+  walletCell.append(wallet);row.append(walletCell);
+  const signatureCell=document.createElement("td");
+  if(ref.source_signature){
+   const link=document.createElement("a");
+   link.className="history-link";
+   link.href="https://solscan.io/tx/"+encodeURIComponent(ref.source_signature);
+   link.target="_blank";link.rel="noopener noreferrer";link.textContent="View source ↗";
+   signatureCell.append(link);
+   const sig=document.createElement("small");sig.className="history-sub";
+   sig.textContent=historyShortAddress(ref.source_signature);sig.title=ref.source_signature;
+   signatureCell.append(sig);
+  }else signatureCell.textContent="—";
+  row.append(signatureCell);
+  const orderCell=document.createElement("td");
+  const order=document.createElement("small");order.className="history-sub";
+  order.textContent=String(ref.order_id||"—");order.title=String(ref.order_id||"");
+  orderCell.append(order);row.append(orderCell);
+  tbody.append(row);
+ });
+}
 async function loadTransactionHistory(){
  const tbody=$("transaction-history-table");
  if(!selectedProfile){
   historySetEmpty(tbody,7,"Select a profile to view wallet activity.");
+  renderSourceTradeReferences([]);
   $("observed-history-total").textContent="—";$("transaction-history-page").textContent="Page 1";
   $("transaction-history-prev").disabled=true;$("transaction-history-next").disabled=true;
   say("transaction-history-message","");return;
@@ -1149,6 +1203,7 @@ async function loadTransactionHistory(){
    say("transaction-history-message","History storage unavailable.");return;
   }
   const transactions=Array.isArray(d.transactions)?d.transactions:[];
+  renderSourceTradeReferences(d.source_trade_refs);
   tbody.replaceChildren();
   if(!transactions.length)historySetEmpty(tbody,7,d.error||"No activity matches these filters.");
   transactions.forEach(tx=>{
@@ -1186,6 +1241,7 @@ async function loadTransactionHistory(){
   say("transaction-history-message","Wallet activity is on-chain metadata; a paper fill appears only after the simulator creates and executes an order.");
  }catch(e){
   historySetEmpty(tbody,7,e.message||"Unable to load wallet activity.");
+  renderSourceTradeReferences([]);
   say("transaction-history-message",e.message);
  }
 }

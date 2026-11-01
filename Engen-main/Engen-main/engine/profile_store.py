@@ -543,6 +543,70 @@ class ProfileStore:
             result.append(item)
         return result
 
+    def get_pending_transaction_signatures(self, source_wallet_address, limit=250):
+        """Return a bounded oldest-first page of profile-history pending signatures."""
+        validate_public_address(source_wallet_address, "source wallet address")
+        if (
+            not isinstance(limit, int) or isinstance(limit, bool)
+            or not 1 <= limit <= 5000
+        ):
+            raise ValueError("Pending transaction limit must be between 1 and 5000.")
+        with self.session() as db:
+            rows = db.execute(
+                """SELECT signature FROM transactions
+                   WHERE source_wallet_address=? AND status='pending'
+                   ORDER BY observed_at ASC, signature ASC
+                   LIMIT ?""",
+                (source_wallet_address, limit),
+            ).fetchall()
+        return [row["signature"] for row in rows]
+
+    def mark_transaction_needs_review(self, signature, source_wallet_address, *,
+                                      attempts=None, error_stage=None,
+                                      error_code=None, error_message=None):
+        """Move a stale profile-history pending row to unknown with retry audit evidence."""
+        if not isinstance(signature, str) or not signature.strip():
+            raise ValueError("Transaction signature is required.")
+        validate_public_address(source_wallet_address, "source wallet address")
+        if attempts is not None and (
+            not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 1
+        ):
+            raise ValueError("Retry attempts must be a positive integer.")
+        evidence_update = {
+            "processing_status": "needs_review",
+            "retry_exhausted": True,
+        }
+        if attempts is not None:
+            evidence_update["retry_attempts"] = attempts
+        if isinstance(error_stage, str) and error_stage:
+            evidence_update["retry_error_stage"] = error_stage[:80]
+        if isinstance(error_code, str) and error_code:
+            evidence_update["retry_error_code"] = error_code[:80]
+        if isinstance(error_message, str) and error_message:
+            evidence_update["retry_error_message"] = error_message[:300]
+
+        with self.session() as db:
+            row = db.execute(
+                """SELECT status, evidence_json FROM transactions
+                   WHERE signature=? AND source_wallet_address=?""",
+                (signature, source_wallet_address),
+            ).fetchone()
+            if row is None or row["status"] != "pending":
+                return False
+            try:
+                evidence = json.loads(row["evidence_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                evidence = {}
+            evidence.update(evidence_update)
+            cursor = db.execute(
+                """UPDATE transactions
+                   SET status='unknown', evidence_json=?
+                   WHERE signature=? AND source_wallet_address=? AND status='pending'""",
+                (json.dumps(evidence, sort_keys=True, allow_nan=False),
+                 signature, source_wallet_address),
+            )
+        return cursor.rowcount == 1
+
     def portfolio_holdings(self, profile_id, *, max_age_seconds=None):
         """Aggregate current snapshots without float rounding; retain zero balances."""
         if max_age_seconds is not None and (

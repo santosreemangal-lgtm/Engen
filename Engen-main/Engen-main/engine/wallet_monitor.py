@@ -259,6 +259,16 @@ def get_and_store_new_wallet_signatures(
                 discovery_error = exc
                 break
 
+    # If discovery hit a provider cooldown, do not spend the remaining wallet
+    # budget retrying each pending signature against the same throttled endpoint.
+    cooldown_reader = getattr(store, "get_global_rpc_cooldown_remaining", None)
+    if callable(cooldown_reader):
+        try:
+            if cooldown_reader() > 0:
+                return {"fresh": [], "history": []} if return_batches else []
+        except (TypeError, ValueError, OSError, RuntimeError):
+            pass
+
     # Recover only explicitly transient needs_review entries, once per signature,
     # after the RPC cooldown, and only inside the wallet's newest 1,000-signature
     # history window.

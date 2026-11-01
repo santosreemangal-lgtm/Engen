@@ -83,6 +83,25 @@ class BacklogProcessingTests(unittest.TestCase):
 
         self.assertEqual(self.store.get_pending_signatures(WALLET), [])
 
+    def test_discovery_warning_is_preserved_in_processed_result(self):
+        with patch(
+            "engine.transaction_monitor.process_transaction_signature",
+            return_value={
+                "signature": SIGNATURE,
+                "available": True,
+                "metadata_complete": True,
+                "status": "success",
+                "retryable": False,
+            },
+        ):
+            results = process_new_signatures(
+                [{
+                    "signature": SIGNATURE,
+                    "discovery_warning": DISCOVERY_WARNING,
+                }]
+            )
+        self.assertEqual(results[0]["discovery_warning"], DISCOVERY_WARNING)
+
     def test_backlog_stats_include_status_counts_age_and_retry_pressure(self):
         pending = "1" * 64
         needs_review = "2" * 64

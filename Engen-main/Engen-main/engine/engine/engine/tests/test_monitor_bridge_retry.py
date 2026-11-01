@@ -32,6 +32,10 @@ class MonitorBridgeRetryTests(unittest.TestCase):
                    simulator_orders=None, signature_status=None, error_record=None):
         store = Mock()
         store.get_status.return_value = signature_status
+        store.get_statuses.return_value = (
+            {result.get("signature"): signature_status}
+            if signature_status is not None else {}
+        )
         store.get_error_record.return_value = error_record or {}
         simulator = Mock()
         simulator.orders = {}
@@ -107,7 +111,13 @@ class MonitorBridgeRetryTests(unittest.TestCase):
                 "error_code": "rpc_error", "error_message": "provider unavailable",
             },
         )
-        store.get_status.assert_called_with(WALLET, result["signature"])
+        store.get_statuses.assert_called_once_with(
+            WALLET, [result["signature"]]
+        )
+        store.get_status.assert_not_called()
+        profile_store.get_pending_transaction_signatures.assert_called_once_with(
+            WALLET, limit=1000
+        )
         profile_store.mark_transaction_needs_review.assert_called_once_with(
             result["signature"], WALLET,
             attempts=5, error_stage="rpc_fetch", error_code="rpc_error",

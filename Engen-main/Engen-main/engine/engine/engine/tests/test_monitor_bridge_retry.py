@@ -86,7 +86,7 @@ class MonitorBridgeRetryTests(unittest.TestCase):
         )
 
         self.assertEqual(profile_store.save_transaction.call_args.kwargs["status"], "unknown")
-        store.mark_processed.assert_called_once_with(WALLET, "1" * 64)
+        store.mark_processed.assert_not_called()
         self.assertEqual(output[0]["paper_copy_status"], "NEEDS_REVIEW")
 
     def test_reconciles_paper_orders_to_durable_source_trade_refs(self):

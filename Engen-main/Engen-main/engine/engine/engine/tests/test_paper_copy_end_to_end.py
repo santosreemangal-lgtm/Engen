@@ -21,6 +21,106 @@ SIGNATURE = "1" * 64
 
 
 class PaperCopyEndToEndTests(unittest.TestCase):
+    def _recover_source_refs_after_restart(self, root, simulator, profile_id):
+        # A fresh process reconstructs both stores. The source-reference ledger
+        # is deliberately still empty to model a crash before its write.
+        restarted_profiles = ProfileStore(root / "profiles.db")
+        restarted_simulator = PaperSimulator(db_path=root / "paper_trading.db")
+        self.assertEqual(restarted_profiles.list_source_trade_refs(profile_id), [])
+
+        signatures = SignatureStore(root / "signatures.db")
+        with (
+            patch("dashboard.monitor_bridge.SignatureStore", return_value=signatures),
+            patch("dashboard.monitor_bridge.monitor_wallet", return_value=[]),
+            patch("dashboard.monitor_bridge.execute_pending_paper_orders", return_value=[]),
+        ):
+            scan = create_scan_function(
+                side_getter=lambda: "BOTH",
+                settings_getter=lambda: {},
+                simulator_getter=lambda: restarted_simulator,
+                profile_id=profile_id,
+                profile_store=restarted_profiles,
+            )
+            scan(WALLET)
+
+        return restarted_profiles, restarted_simulator
+
+    def test_restart_recovers_reference_after_crash_between_order_and_ref_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profiles = ProfileStore(root / "profiles.db")
+            profile_id = profiles.create_profile("Crash recovery")
+            profiles.associate_source_wallet(profile_id, WALLET)
+            simulator = PaperSimulator(db_path=root / "paper_trading.db")
+            source_time = int(time.time())
+            order = simulator.create_order(
+                signal_id="wallet-copy:" + WALLET + ":" + SIGNATURE,
+                side="BUY", asset_mint=ASSET, quantity="1", quote_mint="USD",
+                created_at=datetime.now(timezone.utc).isoformat(),
+                details={
+                    "origin": "AUTOMATIC_WALLET_COPY",
+                    "source_wallet": WALLET,
+                    "source_signature": SIGNATURE,
+                    "source_slot": 321,
+                    "source_block_time": source_time,
+                },
+            )
+            self.assertEqual(order["status"], "CREATED")
+            # No call to save_source_trade_ref: simulate process death here.
+            restarted_profiles, restarted_simulator = self._recover_source_refs_after_restart(
+                root, simulator, profile_id,
+            )
+
+            refs = restarted_profiles.list_source_trade_refs(profile_id)
+            self.assertEqual(len(refs), 1)
+            self.assertEqual(refs[0]["order_id"], order["order_id"])
+            self.assertEqual(refs[0]["source_wallet_address"], WALLET)
+            self.assertEqual(refs[0]["source_signature"], SIGNATURE)
+            self.assertEqual(refs[0]["side"], "BUY")
+            self.assertEqual(refs[0]["asset_mint"], ASSET)
+            self.assertEqual(refs[0]["source_slot"], 321)
+            self.assertEqual(refs[0]["source_block_time"], source_time)
+            self.assertEqual(len(restarted_simulator.report()["orders"]), 1)
+
+    def test_restart_recovers_source_reference_from_archived_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profiles = ProfileStore(root / "profiles.db")
+            profile_id = profiles.create_profile("Archived recovery")
+            profiles.associate_source_wallet(profile_id, WALLET)
+            simulator = PaperSimulator(db_path=root / "paper_trading.db")
+            source_signature = "2" * 64
+            source_time = int(time.time())
+            order = simulator.create_order(
+                signal_id="wallet-copy:" + WALLET + ":" + source_signature,
+                side="SELL", asset_mint=ASSET, quantity="1", quote_mint="USD",
+                created_at=datetime.now(timezone.utc).isoformat(),
+                details={
+                    "origin": "AUTOMATIC_WALLET_COPY",
+                    "source_wallet": WALLET,
+                    "source_signature": source_signature,
+                    "source_slot": 654,
+                    "source_block_time": source_time,
+                },
+            )
+            simulator.reset_session("100", "USD")
+            self.assertEqual(simulator.report()["orders"], [])
+            self.assertEqual(len(simulator.report()["archived_sessions"]), 1)
+
+            restarted_profiles, restarted_simulator = self._recover_source_refs_after_restart(
+                root, simulator, profile_id,
+            )
+            refs = restarted_profiles.list_source_trade_refs(profile_id)
+            self.assertEqual(len(refs), 1)
+            self.assertEqual(refs[0]["order_id"], order["order_id"])
+            self.assertEqual(refs[0]["source_wallet_address"], WALLET)
+            self.assertEqual(refs[0]["source_signature"], source_signature)
+            self.assertEqual(refs[0]["side"], "SELL")
+            self.assertEqual(refs[0]["asset_mint"], ASSET)
+            self.assertEqual(refs[0]["source_slot"], 654)
+            self.assertEqual(refs[0]["source_block_time"], source_time)
+            self.assertEqual(len(restarted_simulator.report()["archived_sessions"]), 1)
+
     def test_monitor_to_paper_fill_history_and_process_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

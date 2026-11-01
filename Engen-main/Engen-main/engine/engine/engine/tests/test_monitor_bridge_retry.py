@@ -169,6 +169,46 @@ class MonitorBridgeRetryTests(unittest.TestCase):
         self.assertTrue(evidence["retry_exhausted"])
         store.mark_processed.assert_not_called()
 
+    def test_reconciles_all_1287_profile_pending_review_rows_in_1000_item_batches(self):
+        signatures = [str(index).zfill(64) for index in range(1287)]
+        profile_store = Mock()
+        profile_store.get_pending_transaction_signatures.return_value = signatures
+        profile_store.mark_transaction_needs_review.return_value = True
+        store = Mock()
+        store.get_status.return_value = "processed"
+        store.get_statuses.side_effect = (
+            lambda _address, batch: {signature: "needs_review" for signature in batch}
+        )
+        store.get_error_record.return_value = {}
+        simulator = Mock()
+        simulator.orders = {}
+        simulator.processed_signals = set()
+        simulator.report.return_value = {"orders": []}
+        result = candidate_result("UNKNOWN")
+
+        with (
+            patch("dashboard.monitor_bridge.SignatureStore", return_value=store),
+            patch("dashboard.monitor_bridge.monitor_wallet", return_value=[result]),
+            patch("dashboard.monitor_bridge.queue_paper_orders", return_value=[]),
+            patch("dashboard.monitor_bridge.execute_pending_paper_orders", return_value=[]),
+        ):
+            scan = create_scan_function(
+                side_getter=lambda: "NONE",
+                settings_getter=lambda: {},
+                simulator_getter=lambda: simulator,
+                profile_id="profile-test",
+                profile_store=profile_store,
+            )
+            scan(WALLET)
+
+        self.assertEqual(profile_store.get_pending_transaction_signatures.call_args.kwargs["limit"], 5000)
+        self.assertEqual(store.get_statuses.call_count, 2)
+        self.assertEqual(
+            [len(call.args[1]) for call in store.get_statuses.call_args_list],
+            [1000, 287],
+        )
+        self.assertEqual(profile_store.mark_transaction_needs_review.call_count, 1287)
+
     def _scan_with(self, result, queued_orders, *, profile_store=None, profile_id=None,
                    simulator_orders=None, signature_status=None, error_record=None):
         store = Mock()

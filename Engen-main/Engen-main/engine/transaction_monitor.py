@@ -17,7 +17,10 @@ def _include_signature_observation(result, item):
         "block_time": item.get("blockTime"),
     }
     if any(value is not None for value in fields.values()):
-        return {**result, "signature_observation": fields}
+        result = {**result, "signature_observation": fields}
+    warning = item.get("discovery_warning")
+    if isinstance(warning, str) and warning:
+        result = {**result, "discovery_warning": warning}
     return result
 
 

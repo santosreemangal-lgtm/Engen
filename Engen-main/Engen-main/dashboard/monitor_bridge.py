@@ -107,6 +107,42 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
         return persisted
 
 
+    def reconcile_terminal_review_history(address):
+        """Reconcile old profile-history pending rows whose signature retries are exhausted."""
+        if profile_id is None or profile_store is None:
+            return 0
+        pending_reader = getattr(profile_store, "get_pending_transaction_signatures", None)
+        review_writer = getattr(profile_store, "mark_transaction_needs_review", None)
+        status_reader = getattr(store, "get_status", None)
+        error_reader = getattr(store, "get_error_record", None)
+        if not all(callable(item) for item in (
+            pending_reader, review_writer, status_reader, error_reader
+        )):
+            return 0
+        try:
+            signatures = pending_reader(address, limit=250)
+        except (ValueError, OSError, RuntimeError, sqlite3.Error):
+            return 0
+        reconciled = 0
+        for signature in signatures:
+            try:
+                if status_reader(address, signature) != "needs_review":
+                    continue
+                error = error_reader(address, signature) or {}
+                changed = review_writer(
+                    signature, address,
+                    attempts=error.get("attempts"),
+                    error_stage=error.get("error_stage"),
+                    error_code=error.get("error_code"),
+                    error_message=error.get("error_message"),
+                )
+                reconciled += int(bool(changed))
+            except (ValueError, OSError, RuntimeError, sqlite3.Error):
+                # Revisit this row on a later scan; reconciliation is idempotent.
+                continue
+        return reconciled
+
+
     def persist_source_trade_refs(address, simulator):
         """Reconcile paper orders into the durable profile source-reference ledger."""
         if profile_id is None or profile_store is None:
@@ -166,6 +202,13 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             defer_processed=True,
         )
         results = persist_observed_transactions(address, results)
+        reconciled_review_rows = reconcile_terminal_review_history(address)
+        if reconciled_review_rows:
+            results = [
+                {**item, "profile_review_rows_reconciled": reconciled_review_rows}
+                if isinstance(item, dict) and index == 0 else item
+                for index, item in enumerate(results)
+            ]
         try:
             allowed_sides = side_getter() if side_getter is not None else "BOTH"
             copy_settings = settings_getter() if settings_getter is not None else {}

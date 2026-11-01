@@ -112,6 +112,17 @@ def process_new_signatures(
                     "attempts", "cooldown_seconds",
                 )
             }
+            cooldown = safe_diagnostics.get("cooldown_seconds")
+            cooldown_writer = getattr(store, "set_global_rpc_cooldown", None)
+            if (
+                callable(cooldown_writer)
+                and isinstance(cooldown, (int, float))
+                and not isinstance(cooldown, bool)
+            ):
+                try:
+                    cooldown_writer(cooldown)
+                except (TypeError, ValueError, OSError, RuntimeError):
+                    pass
             if item.get("err") is not None:
                 # The signature-list RPC has already reported an on-chain
                 # execution error. A transaction-details RPC outage cannot
@@ -272,7 +283,19 @@ def process_new_signatures(
                     signature, rpc_url=rpc_url,
                     timeout=min(timeout, remaining),
                 )
-            except SolanaRPCError:
+            except SolanaRPCError as exc:
+                diagnostics = getattr(exc, "diagnostics", {})
+                cooldown = diagnostics.get("cooldown_seconds") if isinstance(diagnostics, dict) else None
+                cooldown_writer = getattr(store, "set_global_rpc_cooldown", None)
+                if (
+                    callable(cooldown_writer)
+                    and isinstance(cooldown, (int, float))
+                    and not isinstance(cooldown, bool)
+                ):
+                    try:
+                        cooldown_writer(cooldown)
+                    except (TypeError, ValueError, OSError, RuntimeError):
+                        pass
                 resolved_status = None
             if isinstance(resolved_status, dict):
                 item = {

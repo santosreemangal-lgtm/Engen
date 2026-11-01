@@ -473,6 +473,7 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertEqual(stored["amount"], "1.25")
         self.assertEqual(stored["status"], "confirmed")
         self.assertEqual(stored["evidence"]["signature_queue_status"], "processed")
+        self.assertEqual(stored["evidence"]["processing_status"], "processed")
         self.assertFalse(stored["simulated"])
         paper_report = dashboard_server.load_profile_paper_simulation_report(self.profile_id)
         self.assertEqual(paper_report["orders"], [])

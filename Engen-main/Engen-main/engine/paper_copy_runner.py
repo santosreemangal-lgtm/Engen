@@ -53,6 +53,28 @@ def source_trade_is_fresh(result, *, now=None, max_age_seconds=MAX_SOURCE_TRADE_
     return 0 <= age_seconds <= max_age_seconds
 
 
+def _reject_stale_source_order(simulator, order, reason):
+    """Permanently reject a queued copy whose source timestamp is absent or expired."""
+    details = dict(order.get("details") or {})
+    updated = dict(
+        order,
+        status="REJECTED",
+        reason=reason,
+        details={**details, "execution_state": "STALE_SOURCE"},
+    )
+    persist = getattr(simulator, "_persist", None)
+    if callable(persist):
+        persist(updated)
+    simulator.orders[order["order_id"]] = updated
+    return {
+        "order_id": order.get("order_id"),
+        "signal_id": order.get("signal_id"),
+        "status": "REJECTED",
+        "reason": reason,
+        "execution_state": "STALE_SOURCE",
+    }
+
+
 def _save_order_reason(simulator, order, reason, execution_state=None):
     """Persist a visible blocker so the dashboard explains the order state."""
     order["reason"] = reason
@@ -202,6 +224,21 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
             or (wallet_address is not None and details.get("source_wallet") != wallet_address)
         ):
             continue
+
+        # A queued order may have waited for virtual balance or market data.
+        # Re-check source freshness immediately before every execution attempt;
+        # otherwise a timely queue could turn into a late paper copy.
+        source_observation = {"signature_observation": {
+            "block_time": details.get("source_block_time")
+        }}
+        if not source_trade_is_fresh(source_observation):
+            reason = (
+                "Source transaction timestamp is missing, invalid, in the future, "
+                "or older than 60 seconds; the paper order was permanently rejected."
+            )
+            outcomes.append(_reject_stale_source_order(simulator, order, reason))
+            continue
+
         if order.get("side") == "BUY":
             # Keep orders queued when the user has not funded the virtual ledger
             # yet. Do not reject or silently discard a detected paper-copy signal.

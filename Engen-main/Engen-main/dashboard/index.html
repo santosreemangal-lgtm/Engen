@@ -1199,6 +1199,7 @@ async function loadTransactionHistory(){
   const d=await api("/api/profile-transactions?"+query.toString());
   if(d.database_available===false){
    historySetEmpty(tbody,7,"Transaction history storage is not available yet.");
+   renderSourceTradeReferences([]);
    $("observed-history-total").textContent="0";
    say("transaction-history-message","History storage unavailable.");return;
   }

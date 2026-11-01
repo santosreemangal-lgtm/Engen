@@ -112,7 +112,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     break
             evidence = {
                 "metadata_status": str(item.get("metadata_status", "available"))[:80],
-                "processing_status": str(item.get("processing_status", "unknown"))[:40],
+                "processing_status": str(item.get("processing_status") or queue_status)[:40],
                 "signature_queue_status": queue_status,
                 "retry_exhausted": (
                     item.get("processing_status") == "needs_review"

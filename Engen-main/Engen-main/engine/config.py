@@ -22,6 +22,7 @@ class Config:
     engine_mode: str
     log_level: str
     live_trading_enabled: bool
+    max_source_age_seconds: int = 60
 
     def as_dict(self):
         return asdict(self)
@@ -33,6 +34,25 @@ def _read(env, name, default):
     if value is None:
         return default
     return str(value).strip()
+
+
+def load_max_source_age_seconds(env: Optional[Mapping[str, str]] = None) -> int:
+    """Read the single paper-copy source-age setting; invalid explicit values fail closed."""
+    env = os.environ if env is None else env
+    raw = env.get("ENGEN_MAX_SOURCE_AGE_SECONDS")
+    if raw is None:
+        return 60
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(
+            "ENGEN_MAX_SOURCE_AGE_SECONDS must be a positive integer."
+        ) from exc
+    if value <= 0:
+        raise ConfigError(
+            "ENGEN_MAX_SOURCE_AGE_SECONDS must be a positive integer."
+        )
+    return value
 
 
 def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
@@ -60,7 +80,18 @@ def load_config(env: Optional[Mapping[str, str]] = None) -> Config:
             "Remove LIVE_TRADING_ENABLED or set it to false."
         )
 
+    try:
+        max_source_age_seconds = load_max_source_age_seconds(env)
+    except ConfigError as exc:
+        problems.append(str(exc))
+        max_source_age_seconds = 60
+
     if problems:
         raise ConfigError("\n".join("- " + p for p in problems))
 
-    return Config(engine_mode=mode, log_level=level, live_trading_enabled=False)
+    return Config(
+        engine_mode=mode,
+        log_level=level,
+        live_trading_enabled=False,
+        max_source_age_seconds=max_source_age_seconds,
+    )

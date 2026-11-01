@@ -87,6 +87,11 @@ class SignatureStore:
                         PRIMARY KEY (wallet_address, signature)
                     )
                 """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_seen_signatures_wallet_status_first_seen
+                    ON seen_signatures(wallet_address, status, first_seen_at)
+                """)
+
                 pruned = self._prune_transaction_records(
                     connection, limit=MAX_RAW_TRANSACTION_RECORDS_PER_WALLET
                 )
@@ -420,6 +425,48 @@ class SignatureStore:
             ).fetchall()
 
         return [row[0] for row in rows]
+
+    def get_backlog_stats(self, wallet_address):
+        """Return per-wallet queue counts and the age of its oldest pending item."""
+        self._validate_wallet(wallet_address)
+        with closing(self._connect()) as connection:
+            status_rows = connection.execute(
+                """SELECT status, COUNT(*)
+                   FROM seen_signatures
+                   WHERE wallet_address = ?
+                   GROUP BY status""",
+                (wallet_address,),
+            ).fetchall()
+            oldest = connection.execute(
+                """SELECT first_seen_at,
+                          MAX(0, CAST(
+                              (julianday('now') - julianday(first_seen_at)) * 86400
+                              AS INTEGER
+                          ))
+                   FROM seen_signatures
+                   WHERE wallet_address = ? AND status = 'pending'
+                   ORDER BY first_seen_at ASC
+                   LIMIT 1""",
+                (wallet_address,),
+            ).fetchone()
+            retry_pressure = connection.execute(
+                """SELECT COUNT(*), COALESCE(MAX(attempts), 0)
+                   FROM seen_signatures
+                   WHERE wallet_address = ? AND status = 'pending' AND attempts >= 3""",
+                (wallet_address,),
+            ).fetchone()
+
+        counts = {status: count for status, count in status_rows}
+        return {
+            "total_count": sum(counts.values()),
+            "pending_count": counts.get("pending", 0),
+            "processed_count": counts.get("processed", 0),
+            "needs_review_count": counts.get("needs_review", 0),
+            "oldest_pending_at": oldest[0] if oldest else None,
+            "oldest_pending_age_seconds": oldest[1] if oldest else None,
+            "pending_retry_pressure_count": retry_pressure[0],
+            "pending_max_attempts": retry_pressure[1],
+        }
 
 
     def get_position(self, wallet_address):

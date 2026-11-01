@@ -255,6 +255,9 @@ class BacklogProcessingTests(unittest.TestCase):
             exclude_signatures=[item["signature"] for item in first_fresh],
             before_block_time=now - 60,
         )
+        self.store.touch_pending_signatures(
+            WALLET, [item["signature"] for item in first_fresh]
+        )
         remaining_fresh = self.store.get_fresh_pending_signatures(
             WALLET, limit=50, max_age_seconds=60,
             future_skew_seconds=5, now=now,

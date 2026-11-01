@@ -685,6 +685,7 @@ class SignatureStore:
         recoverable_codes = (
             "http_429", "http_429_cooldown", "http_error",
             "timeout", "network_error", "rpc_error",
+            "json_rpc_error", "invalid_response",
         )
         with closing(self._connect()) as connection:
             with connection:
@@ -702,7 +703,7 @@ class SignatureStore:
                     FROM newest_window
                     WHERE status = 'needs_review'
                       AND requeue_count < 1
-                      AND error_code IN (?,?,?,?,?,?)
+                      AND error_code IN (?,?,?,?,?,?,?,?)
                       AND last_checked_at <= datetime('now', ?)
                     ORDER BY last_checked_at ASC, first_seen_at DESC, signature DESC
                     LIMIT ?

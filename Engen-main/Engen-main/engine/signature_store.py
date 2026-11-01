@@ -623,8 +623,11 @@ class SignatureStore:
         ):
             raise ValueError("Invalid bounded needs-review requeue policy.")
         cutoff = "-%d seconds" % cooldown_seconds
+        # rpc_error is retained for old rows written before structured PR #43
+        # diagnostics existed; retry it once only inside the bounded recent window.
         recoverable_codes = (
-            "http_429", "http_429_cooldown", "http_error", "timeout", "network_error"
+            "http_429", "http_429_cooldown", "http_error",
+            "timeout", "network_error", "rpc_error",
         )
         with closing(self._connect()) as connection:
             with connection:
@@ -642,7 +645,7 @@ class SignatureStore:
                     FROM newest_window
                     WHERE status = 'needs_review'
                       AND requeue_count < 1
-                      AND error_code IN (?,?,?,?,?)
+                      AND error_code IN (?,?,?,?,?,?)
                       AND last_checked_at <= datetime('now', ?)
                     ORDER BY last_checked_at ASC, first_seen_at DESC, signature DESC
                     LIMIT ?

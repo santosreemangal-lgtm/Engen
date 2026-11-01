@@ -423,6 +423,12 @@ class ProfileStore:
                 classification if classification != "UNKNOWN" else stored["classification"]
             )
             merged_evidence = {**previous_evidence, **incoming_evidence}
+            if old_review_terminal and status == "pending":
+                # Keep the review checkpoint and its audit marker in lockstep
+                # with the terminal unknown profile status.
+                merged_evidence["processing_status"] = "needs_review"
+                merged_evidence["signature_queue_status"] = "needs_review"
+                merged_evidence["retry_exhausted"] = True
             merged_evidence_json = json.dumps(merged_evidence, sort_keys=True, allow_nan=False)
             token_changed = token_mint is not None and stored["token_mint"] not in (None, token_mint)
             effective_amount = (

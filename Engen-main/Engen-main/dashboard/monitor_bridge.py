@@ -288,7 +288,25 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             processed_signals = getattr(simulator, "processed_signals", set())
             for item in results:
                 signature = item.get("signature")
-                if not isinstance(signature, str) or item.get("retryable") is True:
+                if not isinstance(signature, str):
+                    continue
+                if item.get("processing_status") == "needs_review":
+                    item["paper_copy_status"] = "NEEDS_REVIEW"
+                    item["paper_copy_message"] = (
+                        "Automatic retries are exhausted; this signature needs manual review."
+                    )
+                    # Keep the terminal review checkpoint untouched.
+                    continue
+                observation = item.get("signature_observation")
+                observation = observation if isinstance(observation, dict) else {}
+                if (
+                    item.get("status") == "failed"
+                    or observation.get("signature_error") is not None
+                ):
+                    # On-chain failures are final, not retryable paper-copy signals.
+                    store.mark_processed(address, signature)
+                    continue
+                if item.get("retryable") is True:
                     continue
                 signal = item.get("trade_signal")
                 classification = signal.get("classification") if isinstance(signal, dict) else None
@@ -306,14 +324,6 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     signature in queued_signatures
                     or signal_id in processed_signals
                 )
-                if item.get("processing_status") == "needs_review":
-                    item["paper_copy_status"] = "NEEDS_REVIEW"
-                    item["paper_copy_message"] = (
-                        "Automatic retries are exhausted; this signature needs manual review."
-                    )
-                    # record_failure() already moved this checkpoint to its
-                    # terminal needs_review state; do not overwrite it as processed.
-                    continue
                 if side_enabled and not already_queued:
                     if not source_trade_is_fresh(item):
                         item["paper_copy_status"] = "SKIPPED_STALE_SOURCE"

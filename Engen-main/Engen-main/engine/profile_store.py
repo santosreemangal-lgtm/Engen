@@ -407,7 +407,8 @@ class ProfileStore:
                 and previous_evidence.get("retry_exhausted") is True
             )
             incoming_review_terminal = (
-                incoming_evidence.get("processing_status") == "needs_review"
+                incoming_evidence.get("terminal_status") is True
+                or incoming_evidence.get("processing_status") == "needs_review"
                 or incoming_evidence.get("signature_queue_status") == "needs_review"
                 or incoming_evidence.get("retry_exhausted") is True
             )
@@ -429,6 +430,7 @@ class ProfileStore:
                 merged_evidence["processing_status"] = "needs_review"
                 merged_evidence["signature_queue_status"] = "needs_review"
                 merged_evidence["retry_exhausted"] = True
+                merged_evidence["terminal_status"] = True
             merged_evidence_json = json.dumps(merged_evidence, sort_keys=True, allow_nan=False)
             token_changed = token_mint is not None and stored["token_mint"] not in (None, token_mint)
             effective_amount = (
@@ -597,6 +599,7 @@ class ProfileStore:
         evidence_update = {
             "processing_status": "needs_review",
             "retry_exhausted": True,
+            "terminal_status": True,
         }
         if attempts is not None:
             evidence_update["retry_attempts"] = attempts

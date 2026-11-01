@@ -260,14 +260,16 @@ def process_new_signatures(
             elif item.get("err") is not None:
                 result = {
                     **result,
+                    "status": "failed",
                     "trade_signal": {**_unknown_signer_signal(),
                         "reason": (
-                            "Signature status reports a transaction error; "
-                            "no buy/sell candidate was created."
+                            "Signature status reports an on-chain transaction error; "
+                            "the transaction is terminally failed and no buy/sell "
+                            "candidate was created."
                         ),
                     },
                     "confirmation_sufficient": False,
-                    "retryable": True,
+                    "retryable": False,
                 }
             elif confirmation not in ("confirmed", "finalized"):
                 result = {

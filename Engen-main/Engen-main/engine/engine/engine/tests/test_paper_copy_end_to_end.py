@@ -133,6 +133,18 @@ class PaperCopyEndToEndTests(unittest.TestCase):
             profile_store = ProfileStore(profile_db)
             profile_id = profile_store.create_profile("End-to-end paper profile")
             profile_store.associate_source_wallet(profile_id, WALLET)
+            saved_copy_settings = {
+                "copy_side": "BOTH",
+                "sizing_mode": "FIXED_USD",
+                "sizing_value": "10",
+            }
+            profile_store.set_settings(
+                profile_id, {"paper_trading": saved_copy_settings}
+            )
+
+            def read_saved_copy_settings():
+                profile = profile_store.get_profile(profile_id)
+                return profile["settings"]["paper_trading"]
 
             signature_store = SignatureStore(signatures_db)
             signature_store.save(WALLET, SIGNATURE, slot=123456)
@@ -208,11 +220,8 @@ class PaperCopyEndToEndTests(unittest.TestCase):
                 ),
             ):
                 scan = create_scan_function(
-                    side_getter=lambda: "BOTH",
-                    settings_getter=lambda: {
-                        "sizing_mode": "FIXED_USD",
-                        "sizing_value": "10",
-                    },
+                    side_getter=lambda: read_saved_copy_settings()["copy_side"],
+                    settings_getter=read_saved_copy_settings,
                     simulator_getter=lambda: simulator,
                     profile_id=profile_id,
                     profile_store=profile_store,
@@ -344,6 +353,8 @@ class PaperCopyEndToEndTests(unittest.TestCase):
             self.assertEqual(
                 restarted_signatures.get_status(WALLET, sell_signature), "processed"
             )
+            restarted_settings = restarted_profiles.get_profile(profile_id)["settings"]
+            self.assertEqual(restarted_settings["paper_trading"], saved_copy_settings)
             restarted_refs = restarted_profiles.list_source_trade_refs(profile_id)
             self.assertEqual(len(restarted_refs), 2)
             self.assertEqual(

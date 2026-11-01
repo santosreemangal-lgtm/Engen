@@ -142,6 +142,14 @@ def get_and_store_new_wallet_signatures(
     if store is None:
         store = SignatureStore()
 
+    cooldown_reader = getattr(store, "get_global_rpc_cooldown_remaining", None)
+    if callable(cooldown_reader):
+        try:
+            if cooldown_reader() > 0:
+                return {"fresh": [], "history": []} if return_batches else []
+        except (TypeError, ValueError, OSError, RuntimeError):
+            pass
+
     options = {
         "wallet_address": wallet_address,
         "limit": limit,
@@ -164,6 +172,14 @@ def get_and_store_new_wallet_signatures(
         # The first scan still needs a successful read to establish its baseline.
         if not store.has_baseline(wallet_address):
             raise
+        diagnostics = getattr(exc, "diagnostics", {})
+        cooldown = diagnostics.get("cooldown_seconds") if isinstance(diagnostics, dict) else None
+        setter = getattr(store, "set_global_rpc_cooldown", None)
+        if callable(setter) and isinstance(cooldown, (int, float)) and not isinstance(cooldown, bool):
+            try:
+                setter(cooldown)
+            except (TypeError, ValueError, OSError, RuntimeError):
+                pass
         discovery_error = exc
         signatures = []
 
@@ -230,6 +246,14 @@ def get_and_store_new_wallet_signatures(
             try:
                 page = get_wallet_signatures(**page_options)
             except SolanaRPCError as exc:
+                diagnostics = getattr(exc, "diagnostics", {})
+                cooldown = diagnostics.get("cooldown_seconds") if isinstance(diagnostics, dict) else None
+                setter = getattr(store, "set_global_rpc_cooldown", None)
+                if callable(setter) and isinstance(cooldown, (int, float)) and not isinstance(cooldown, bool):
+                    try:
+                        setter(cooldown)
+                    except (TypeError, ValueError, OSError, RuntimeError):
+                        pass
                 # Keep signatures already collected and continue processing the
                 # durable queue; the next scan can resume discovery from its anchor.
                 discovery_error = exc

@@ -71,7 +71,9 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     queue_status = queue_status_reader(address, signature)
                 except (ValueError, OSError, RuntimeError, sqlite3.Error):
                     queue_status = None
-            if queue_status not in {"pending", "processed", "needs_review"}:
+            if not isinstance(queue_status, str) or queue_status not in (
+                "pending", "processed", "needs_review"
+            ):
                 queue_status = (
                     "needs_review" if item.get("processing_status") == "needs_review"
                     else "pending" if item.get("retryable") is True

@@ -185,6 +185,10 @@ class PaperCopyEndToEndTests(unittest.TestCase):
                 )
 
             def execute_with_test_market_data(wallet_address, simulator=None):
+                # The source link must be durable before execution begins.
+                self.assertEqual(
+                    len(profile_store.list_source_trade_refs(profile_id)), 1
+                )
                 return execute_real_paper_orders(
                     wallet_address, simulator=simulator,
                     price_provider=price_provider,

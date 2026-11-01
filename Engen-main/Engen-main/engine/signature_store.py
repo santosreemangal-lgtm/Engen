@@ -220,6 +220,28 @@ class SignatureStore:
 
         return row[0] if row else None
 
+    def get_statuses(self, wallet_address, signatures):
+        """Read a bounded batch of signature statuses using one database connection."""
+        self._validate_wallet(wallet_address)
+        if not isinstance(signatures, (list, tuple)) or len(signatures) > 1000:
+            raise ValueError("Signature status batch must contain at most 1000 items.")
+        cleaned = []
+        for signature in signatures:
+            self._validate_signature(signature)
+            if signature not in cleaned:
+                cleaned.append(signature)
+        if not cleaned:
+            return {}
+        placeholders = ",".join("?" for _ in cleaned)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                f"""SELECT signature, status FROM seen_signatures
+                    WHERE wallet_address = ? AND signature IN ({placeholders})""",
+                [wallet_address, *cleaned],
+            ).fetchall()
+        return {signature: status for signature, status in rows}
+
+
     def save(self, wallet_address, signature, slot=None):
         self._validate_wallet(wallet_address)
         self._validate_signature(signature)

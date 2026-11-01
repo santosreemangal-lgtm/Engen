@@ -363,12 +363,16 @@ class ProfileStore:
     def save_transaction(self, signature, source_wallet_address, *, classification="UNKNOWN",
                          status="unknown", evidence=None, slot=None, block_time=None,
                          raw_amount=None, token_mint=None, token_decimals=None,
-                         profile_ids=(), observed_at=None):
+                         profile_ids=(), observed_at=None, terminal_status=False):
         if not isinstance(signature,str) or not signature.strip():
             raise ValueError("Transaction signature is required.")
         validate_public_address(source_wallet_address)
         if classification not in LABELS or status not in STATUSES:
             raise ValueError("Invalid transaction label or status.")
+        if not isinstance(terminal_status, bool):
+            raise ValueError("terminal_status must be a boolean.")
+        if terminal_status and status != "unknown":
+            raise ValueError("Only unknown history status can be marked terminal.")
         if slot is not None and (not isinstance(slot,int) or isinstance(slot,bool) or slot<0):
             raise ValueError("Invalid slot.")
         if token_decimals is not None and (not isinstance(token_decimals,int) or isinstance(token_decimals,bool) or not 0<=token_decimals<=30):
@@ -395,6 +399,10 @@ class ProfileStore:
             old_status = stored["status"]
             if old_status in {"confirmed", "failed"}:
                 effective_status = old_status
+            elif terminal_status:
+                # Exhausted retries are terminal: clear a previous pending
+                # label without pretending the transaction was confirmed.
+                effective_status = status
             elif status == "unknown":
                 effective_status = old_status
             else:

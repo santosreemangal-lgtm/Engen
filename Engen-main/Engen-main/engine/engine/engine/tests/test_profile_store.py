@@ -192,6 +192,12 @@ class ProfileStoreTests(unittest.TestCase):
         profile = self.store.create_profile("Reference retention")
         self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
         source_signature = "1" * 64
+        # Seed the real history row so this test proves that pruning removes
+        # the activity row while the independent source-reference row survives.
+        self.store.save_transaction(
+            source_signature, PUBLIC_ADDRESS, classification="BUY_CANDIDATE",
+            status="confirmed", profile_ids=(profile,),
+        )
         saved = self.store.save_source_trade_ref(
             profile, "paper-order-1", PUBLIC_ADDRESS, source_signature,
             "BUY", PUBLIC_ADDRESS, source_slot=123, source_block_time=1700000000,
@@ -215,6 +221,37 @@ class ProfileStoreTests(unittest.TestCase):
         self.assertEqual(refs[0]["source_signature"], source_signature)
         self.assertEqual(refs[0]["source_slot"], 123)
         self.assertIsNone(self.store.get_transaction(source_signature, profile))
+
+    def test_terminal_unknown_status_replaces_pending_without_downgrading_confirmed(self):
+        profile = self.store.create_profile("Terminal review")
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        pending_signature = "2" * 64
+        confirmed_signature = "3" * 64
+        self.store.save_transaction(
+            pending_signature, PUBLIC_ADDRESS, status="pending",
+            evidence={"processing_status": "pending"}, profile_ids=(profile,),
+        )
+        self.store.save_transaction(
+            pending_signature, PUBLIC_ADDRESS, status="unknown",
+            evidence={"processing_status": "needs_review"},
+            terminal_status=True, profile_ids=(profile,),
+        )
+        self.store.save_transaction(
+            confirmed_signature, PUBLIC_ADDRESS, status="confirmed",
+            profile_ids=(profile,),
+        )
+        self.store.save_transaction(
+            confirmed_signature, PUBLIC_ADDRESS, status="unknown",
+            evidence={"processing_status": "needs_review"},
+            terminal_status=True, profile_ids=(profile,),
+        )
+        with sqlite3.connect(self.path) as db:
+            states = dict(db.execute(
+                "SELECT signature,status FROM transactions WHERE signature IN (?,?)",
+                (pending_signature, confirmed_signature),
+            ))
+        self.assertEqual(states[pending_signature], "unknown")
+        self.assertEqual(states[confirmed_signature], "confirmed")
 
     def test_source_trade_ref_rejects_invalid_identity_and_metadata(self):
         profile = self.store.create_profile("Reference validation")

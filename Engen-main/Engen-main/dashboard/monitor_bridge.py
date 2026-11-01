@@ -100,6 +100,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     evidence=evidence, slot=slot, block_time=block_time,
                     raw_amount=raw_amount, token_mint=token_mint, token_decimals=token_decimals,
                     profile_ids=(profile_id,),
+                    terminal_status=item.get("processing_status") == "needs_review",
                 )
                 persisted.append({**item, "profile_history_status": "saved"})
             except (ValueError, OSError, RuntimeError, sqlite3.Error):
@@ -220,7 +221,9 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     item["paper_copy_message"] = (
                         "Automatic retries are exhausted; this signature needs manual review."
                     )
-                    store.mark_processed(address, signature)
+                    # needs_review is already excluded from pending scans.
+                    # Keep its signature-store error diagnostics instead of
+                    # converting it to processed (which clears those fields).
                     continue
                 if side_enabled and not already_queued:
                     if not source_trade_is_fresh(item):
@@ -280,6 +283,7 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     isinstance(signature, str)
                     and item.get("retryable") is not True
                     and not is_candidate
+                    and item.get("processing_status") != "needs_review"
                 ):
                     store.mark_processed(address, signature)
             results = [

@@ -132,8 +132,11 @@ def get_and_store_new_wallet_signatures(
     latency_recorder=None,
     return_batches=False,
     now=None,
+    deadline=None,
 ):
     """Persist signatures and return fresh copy candidates separately from bounded history."""
+    if deadline is None:
+        deadline = time.monotonic() + WALLET_SCAN_BUDGET_SECONDS
     if not is_valid_solana_address(wallet_address):
         raise ValueError("Invalid Solana public wallet address.")
     if store is None:
@@ -149,7 +152,13 @@ def get_and_store_new_wallet_signatures(
         options["latency_recorder"] = latency_recorder
     discovery_error = None
     try:
-        signatures = get_wallet_signatures(**options)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            signatures = []
+            discovery_error = SolanaRPCError("Wallet scan budget exhausted before discovery.")
+        else:
+            options["timeout"] = min(timeout, remaining, 5.0)
+            signatures = get_wallet_signatures(**options)
     except SolanaRPCError as exc:
         # A discovery outage must not block work that was already persisted.
         # The first scan still needs a successful read to establish its baseline.
@@ -183,6 +192,8 @@ def get_and_store_new_wallet_signatures(
         pages = 0
         page = signatures
         while True:
+            if deadline - time.monotonic() <= 0:
+                break
             pages += 1
             anchor_found = False
             for item in page:
@@ -205,7 +216,7 @@ def get_and_store_new_wallet_signatures(
                 "wallet_address": wallet_address,
                 "limit": limit,
                 "rpc_url": rpc_url,
-                "timeout": timeout,
+                "timeout": min(timeout, max(0.1, deadline - time.monotonic()), 5.0),
                 "before": next_before,
             }
             if latency_recorder is not None:

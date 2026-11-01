@@ -112,6 +112,10 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 "metadata_status": str(item.get("metadata_status", "available"))[:80],
                 "processing_status": str(item.get("processing_status", "unknown"))[:40],
                 "signature_queue_status": queue_status,
+                "retry_exhausted": (
+                    item.get("processing_status") == "needs_review"
+                    or queue_status == "needs_review"
+                ),
                 "confirmation_status": confirmation,
                 "classification_reason": str(signal.get("reason", ""))[:400],
                 "confidence": str(signal.get("confidence", "unknown"))[:40],

@@ -503,6 +503,27 @@ class TransactionMonitorTests(unittest.TestCase):
         self.assertEqual(result["trade_signal"]["classification"], "UNKNOWN")
 
     @patch("engine.transaction_monitor.process_transaction_signature")
+    def test_rpc_failure_does_not_retry_when_signature_list_already_reports_failure(
+        self, mock_process,
+    ):
+        wallet = "11111111111111111111111111111111"
+        signature = "1" * 64
+        mock_process.side_effect = SolanaRPCError("Temporary RPC outage.")
+
+        result = process_new_signatures(
+            signatures=[{
+                "signature": signature,
+                "confirmationStatus": "confirmed",
+                "err": {"InstructionError": [0, "Custom"]},
+            }],
+            wallet_address=wallet,
+        )[0]
+
+        self.assertEqual(result["status"], "failed")
+        self.assertFalse(result["retryable"])
+        self.assertEqual(result["metadata_status"], "on_chain_failed")
+
+    @patch("engine.transaction_monitor.process_transaction_signature")
     def test_rpc_failure_does_not_create_a_success_transaction_record(
         self, mock_process,
     ):

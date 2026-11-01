@@ -155,7 +155,9 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
         )) or not (callable(status_batch_reader) or callable(status_reader)):
             return 0
         try:
-            signatures = pending_reader(address, limit=1000)
+            # Process the entire bounded profile-pending window so rows beyond
+            # the first 1,000 cannot be starved by older non-review pending rows.
+            signatures = pending_reader(address, limit=5000)
         except (TypeError, ValueError, OSError, RuntimeError, sqlite3.Error):
             return 0
         if not isinstance(signatures, (list, tuple)):
@@ -164,9 +166,13 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
         statuses = None
         if callable(status_batch_reader):
             try:
-                candidate_statuses = status_batch_reader(address, signatures)
-                if isinstance(candidate_statuses, dict):
-                    statuses = candidate_statuses
+                statuses = {}
+                for start in range(0, len(signatures), 1000):
+                    candidate_statuses = status_batch_reader(
+                        address, signatures[start:start + 1000]
+                    )
+                    if isinstance(candidate_statuses, dict):
+                        statuses.update(candidate_statuses)
             except (TypeError, ValueError, OSError, RuntimeError, sqlite3.Error):
                 statuses = None
         for signature in signatures:

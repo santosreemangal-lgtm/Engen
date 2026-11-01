@@ -285,7 +285,58 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertFalse(simulator.report()["real_trading"])
         self.assertFalse(simulator.report()["transaction_broadcast"])
 
+    def test_order_expiring_during_market_lookup_is_rejected_before_fill(self):
+        simulator = PaperSimulator(initial_balances={"USD": "1000"})
+        source = candidate_result()
+        source_time = source["signature_observation"]["block_time"]
+        queued = queue_paper_orders(WALLET, [source], simulator)
+        self.assertEqual(len(queued), 1)
+
+        with patch(
+            "engine.paper_copy_runner.time.time",
+            side_effect=[source_time, source_time + 61],
+        ):
+            outcome = execute_pending_paper_orders(
+                WALLET, simulator, price_provider=lambda _mint: None
+            )
+
+        self.assertEqual(outcome[0]["status"], "REJECTED")
+        self.assertEqual(outcome[0]["execution_state"], "STALE_SOURCE")
+        self.assertEqual(simulator.report()["orders"][0]["status"], "REJECTED")
+        self.assertEqual(simulator.report()["fills"], [])
+
     def test_legacy_queued_order_without_source_timestamp_is_rejected(self):
+        simulator = PaperSimulator(initial_balances={"USD": "1000"})
+        simulator.create_order(
+            signal_id="wallet-copy:" + WALLET + ":legacy-no-time",
+            side="BUY",
+            asset_mint=ASSET,
+            quantity="1",
+            quote_mint="USD",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            details={
+                "origin": "AUTOMATIC_WALLET_COPY",
+                "source_wallet": WALLET,
+                "source_signature": "legacy-no-time",
+                "source_block_time": None,
+            },
+        )
+
+        outcome = execute_pending_paper_orders(
+            WALLET, simulator,
+            price_provider=lambda _mint: self.fail(
+                "Missing source timestamp must be rejected before market lookup."
+            ),
+        )
+
+        self.assertEqual(outcome[0]["status"], "REJECTED")
+        self.assertEqual(outcome[0]["execution_state"], "STALE_SOURCE")
+        stored = simulator.report()["orders"][0]
+        self.assertEqual(stored["status"], "REJECTED")
+        self.assertEqual(stored["details"]["execution_state"], "STALE_SOURCE")
+        self.assertEqual(simulator.report()["fills"], [])
+
+    def test_unconfirmed_or_unknown_transaction_is_not_copied(self):
         simulator = PaperSimulator(initial_balances={"USD": "1000"})
         order = simulator.create_order(
             signal_id="wallet-copy:" + WALLET + ":legacy-no-time",

@@ -219,7 +219,8 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     item["paper_copy_message"] = (
                         "Automatic retries are exhausted; this signature needs manual review."
                     )
-                    store.mark_processed(address, signature)
+                    # record_failure() already moved this checkpoint to its
+                    # terminal needs_review state; do not overwrite it as processed.
                     continue
                 if side_enabled and not already_queued:
                     if not source_trade_is_fresh(item):

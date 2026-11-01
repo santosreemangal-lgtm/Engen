@@ -521,7 +521,8 @@ class SignatureStore:
                 WHERE wallet_address=? AND status='pending'
                   AND block_time IS NOT NULL
                   AND block_time BETWEEN ? AND ?
-                ORDER BY block_time DESC, slot DESC, first_seen_at DESC, signature DESC
+                ORDER BY attempts ASC, COALESCE(last_checked_at,'') ASC,
+                         block_time DESC, slot DESC, first_seen_at DESC, signature DESC
                 LIMIT ?
                 """,
                 (wallet_address, lower, upper, limit),
@@ -608,7 +609,8 @@ class SignatureStore:
             rows = connection.execute(
                 """
                 WITH newest_window AS (
-                    SELECT signature, status, first_seen_at, block_time
+                    SELECT signature, status, first_seen_at, block_time,
+                           attempts, last_checked_at
                     FROM seen_signatures
                     WHERE wallet_address = ?
                     ORDER BY first_seen_at DESC, signature DESC
@@ -617,12 +619,28 @@ class SignatureStore:
                 SELECT signature
                 FROM newest_window
                 WHERE status = 'pending'""" + fresh_exclusion_sql + exclusion_sql + """
-                ORDER BY first_seen_at DESC, signature DESC
+                ORDER BY attempts ASC, COALESCE(last_checked_at,'') ASC,
+                         first_seen_at DESC, signature DESC
                 LIMIT ?
                 """,
                 params,
             ).fetchall()
         return [row[0] for row in rows]
+
+    def touch_pending_signature(self, wallet_address, signature):
+        """Move a still-pending item behind untouched work without increasing error attempts."""
+        self._validate_wallet(wallet_address)
+        self._validate_signature(signature)
+        with closing(self._connect()) as connection:
+            with connection:
+                cursor = connection.execute(
+                    """UPDATE seen_signatures
+                       SET last_checked_at=CURRENT_TIMESTAMP
+                       WHERE wallet_address=? AND signature=? AND status='pending'""",
+                    (wallet_address, signature),
+                )
+        return cursor.rowcount == 1
+
 
     def requeue_recoverable_needs_review(
         self, wallet_address, limit=10, cooldown_seconds=30, history_cap=1000

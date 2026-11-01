@@ -337,37 +337,6 @@ class PaperCopyRunnerTests(unittest.TestCase):
         self.assertEqual(simulator.report()["fills"], [])
 
     def test_unconfirmed_or_unknown_transaction_is_not_copied(self):
-        simulator = PaperSimulator(initial_balances={"USD": "1000"})
-        order = simulator.create_order(
-            signal_id="wallet-copy:" + WALLET + ":legacy-no-time",
-            side="BUY",
-            asset_mint=ASSET,
-            quantity="1",
-            quote_mint="USD",
-            created_at=datetime.now(timezone.utc).isoformat(),
-            details={
-                "origin": "AUTOMATIC_WALLET_COPY",
-                "source_wallet": WALLET,
-                "source_signature": "legacy-no-time",
-                "source_block_time": None,
-            },
-        )
-
-        outcome = execute_pending_paper_orders(
-            WALLET, simulator,
-            price_provider=lambda _mint: self.fail(
-                "Missing source timestamp must be rejected before market lookup."
-            ),
-        )
-
-        self.assertEqual(outcome[0]["status"], "REJECTED")
-        self.assertEqual(outcome[0]["execution_state"], "STALE_SOURCE")
-        stored = simulator.report()["orders"][0]
-        self.assertEqual(stored["status"], "REJECTED")
-        self.assertEqual(stored["details"]["execution_state"], "STALE_SOURCE")
-        self.assertEqual(simulator.report()["fills"], [])
-
-    def test_unconfirmed_or_unknown_transaction_is_not_copied(self):
         simulator = FakeSimulator()
         unconfirmed = candidate_result(confirmation="processed")
         unknown = candidate_result(classification="UNKNOWN")

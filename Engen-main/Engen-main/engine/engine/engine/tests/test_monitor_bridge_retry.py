@@ -28,8 +28,11 @@ def candidate_result(classification="BUY_CANDIDATE"):
 
 
 class MonitorBridgeRetryTests(unittest.TestCase):
-    def _scan_with(self, result, queued_orders, *, profile_store=None, profile_id=None, simulator_orders=None):
+    def _scan_with(self, result, queued_orders, *, profile_store=None, profile_id=None,
+                   simulator_orders=None, signature_status=None, error_record=None):
         store = Mock()
+        store.get_status.return_value = signature_status
+        store.get_error_record.return_value = error_record or {}
         simulator = Mock()
         simulator.orders = {}
         simulator.processed_signals = set()
@@ -98,11 +101,17 @@ class MonitorBridgeRetryTests(unittest.TestCase):
         ]
         store, _, _ = self._scan_with(
             result, [], profile_store=profile_store, profile_id="profile-test",
+            signature_status="needs_review",
+            error_record={
+                "attempts": 5, "error_stage": "rpc_fetch",
+                "error_code": "rpc_error", "error_message": "provider unavailable",
+            },
         )
         store.get_status.assert_called_with(WALLET, result["signature"])
         profile_store.mark_transaction_needs_review.assert_called_once_with(
             result["signature"], WALLET,
-            attempts=None, error_stage=None, error_code=None, error_message=None,
+            attempts=5, error_stage="rpc_fetch", error_code="rpc_error",
+            error_message="provider unavailable",
         )
 
     def test_reconciles_paper_orders_to_durable_source_trade_refs(self):

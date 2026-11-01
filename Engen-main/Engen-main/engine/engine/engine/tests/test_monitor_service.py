@@ -96,6 +96,32 @@ class MonitorServiceTests(unittest.TestCase):
         finally:
             service.stop_and_wait(timeout=3)
 
+    def test_scan_latency_and_result_count_are_reported(self):
+        scan_finished = threading.Event()
+
+        def measured_scan(address):
+            time.sleep(0.02)
+            scan_finished.set()
+            return [{"signature": "sig-a"}, {"signature": "sig-b"}]
+
+        service = MonitorService(measured_scan, interval=30)
+        try:
+            service.start(["11111111111111111111111111111111"])
+            self.assertTrue(scan_finished.wait(timeout=3))
+            deadline = time.monotonic() + 3
+            wallet = service.status()["wallets"][0]
+            while time.monotonic() < deadline and wallet["scan_count"] < 1:
+                time.sleep(0.01)
+                wallet = service.status()["wallets"][0]
+            status = service.status()
+            wallet = status["wallets"][0]
+            self.assertEqual(wallet["scan_count"], 1)
+            self.assertEqual(wallet["last_result_count"], 2)
+            self.assertGreaterEqual(wallet["last_scan_duration_seconds"], 0.02)
+            self.assertGreaterEqual(status["last_cycle_duration_seconds"], 0.02)
+        finally:
+            service.stop_and_wait(timeout=3)
+
     def test_stale_monitor_is_reported_from_last_successful_check(self):
         service = MonitorService(lambda address: [], interval=30)
         old = (datetime.now(timezone.utc) - timedelta(seconds=90)).isoformat()

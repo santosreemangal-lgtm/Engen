@@ -87,6 +87,11 @@ class SignatureStore:
                         PRIMARY KEY (wallet_address, signature)
                     )
                 """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_seen_signatures_wallet_status_first_seen
+                    ON seen_signatures(wallet_address, status, first_seen_at)
+                """)
+
                 pruned = self._prune_transaction_records(
                     connection, limit=MAX_RAW_TRANSACTION_RECORDS_PER_WALLET
                 )
@@ -215,6 +220,36 @@ class SignatureStore:
 
         return row[0] if row else None
 
+    def get_statuses(self, wallet_address, signatures):
+        """Read a bounded batch of signature statuses using one database connection."""
+        self._validate_wallet(wallet_address)
+        if not isinstance(signatures, (list, tuple)) or len(signatures) > 1000:
+            raise ValueError("Signature status batch must contain at most 1000 items.")
+        cleaned = []
+        for signature in signatures:
+            self._validate_signature(signature)
+            if signature not in cleaned:
+                cleaned.append(signature)
+        if not cleaned:
+            return {}
+        statuses = {}
+        # Keep each query below SQLite builds configured with the traditional
+        # 999-variable limit, while still reusing one database connection.
+        with closing(self._connect()) as connection:
+            for start in range(0, len(cleaned), 400):
+                batch = cleaned[start:start + 400]
+                placeholders = ",".join("?" for _ in batch)
+                rows = connection.execute(
+                    f"""SELECT signature, status FROM seen_signatures
+                        WHERE wallet_address = ? AND signature IN ({placeholders})""",
+                    [wallet_address, *batch],
+                ).fetchall()
+                statuses.update({
+                    signature: status for signature, status in rows
+                })
+        return statuses
+
+
     def save(self, wallet_address, signature, slot=None):
         self._validate_wallet(wallet_address)
         self._validate_signature(signature)
@@ -262,20 +297,24 @@ class SignatureStore:
                         error_message = NULL
                     WHERE wallet_address = ?
                       AND signature = ?
+                      AND status != 'needs_review'
                     """,
                     (wallet_address, signature),
                 )
-                connection.execute(
-                    """UPDATE transaction_records
-                       SET processing_status = 'processed',
-                           updated_at = CURRENT_TIMESTAMP
-                       WHERE wallet_address = ? AND signature = ?""",
-                    (wallet_address, signature),
-                )
-                position = connection.execute(
-                    "SELECT slot FROM seen_signatures WHERE wallet_address = ? AND signature = ?",
-                    (wallet_address, signature),
-                ).fetchone()
+                if cursor.rowcount == 1:
+                    connection.execute(
+                        """UPDATE transaction_records
+                           SET processing_status = 'processed',
+                               updated_at = CURRENT_TIMESTAMP
+                           WHERE wallet_address = ? AND signature = ?""",
+                        (wallet_address, signature),
+                    )
+                    position = connection.execute(
+                        "SELECT slot FROM seen_signatures WHERE wallet_address = ? AND signature = ?",
+                        (wallet_address, signature),
+                    ).fetchone()
+                else:
+                    position = None
                 if position and position[0] is not None:
                     connection.execute(
                         """INSERT INTO wallet_positions (wallet_address, slot, signature)
@@ -332,6 +371,14 @@ class SignatureStore:
                        WHERE wallet_address = ? AND signature = ?""",
                     (status, attempts, stage, safe_code, safe_message, wallet_address, signature),
                 )
+                if status == "needs_review":
+                    connection.execute(
+                        """UPDATE transaction_records
+                           SET processing_status = 'needs_review',
+                               updated_at = CURRENT_TIMESTAMP
+                           WHERE wallet_address = ? AND signature = ?""",
+                        (wallet_address, signature),
+                    )
         return {"status": status, "attempts": attempts}
 
     def save_transaction_record(
@@ -420,6 +467,48 @@ class SignatureStore:
             ).fetchall()
 
         return [row[0] for row in rows]
+
+    def get_backlog_stats(self, wallet_address):
+        """Return per-wallet queue counts and the age of its oldest pending item."""
+        self._validate_wallet(wallet_address)
+        with closing(self._connect()) as connection:
+            status_rows = connection.execute(
+                """SELECT status, COUNT(*)
+                   FROM seen_signatures
+                   WHERE wallet_address = ?
+                   GROUP BY status""",
+                (wallet_address,),
+            ).fetchall()
+            oldest = connection.execute(
+                """SELECT first_seen_at,
+                          MAX(0, CAST(
+                              (julianday('now') - julianday(first_seen_at)) * 86400
+                              AS INTEGER
+                          ))
+                   FROM seen_signatures
+                   WHERE wallet_address = ? AND status = 'pending'
+                   ORDER BY first_seen_at ASC
+                   LIMIT 1""",
+                (wallet_address,),
+            ).fetchone()
+            retry_pressure = connection.execute(
+                """SELECT COUNT(*), COALESCE(MAX(attempts), 0)
+                   FROM seen_signatures
+                   WHERE wallet_address = ? AND status = 'pending' AND attempts >= 3""",
+                (wallet_address,),
+            ).fetchone()
+
+        counts = {status: count for status, count in status_rows}
+        return {
+            "total_count": sum(counts.values()),
+            "pending_count": counts.get("pending", 0),
+            "processed_count": counts.get("processed", 0),
+            "needs_review_count": counts.get("needs_review", 0),
+            "oldest_pending_at": oldest[0] if oldest else None,
+            "oldest_pending_age_seconds": oldest[1] if oldest else None,
+            "pending_retry_pressure_count": retry_pressure[0],
+            "pending_max_attempts": retry_pressure[1],
+        }
 
 
     def get_position(self, wallet_address):

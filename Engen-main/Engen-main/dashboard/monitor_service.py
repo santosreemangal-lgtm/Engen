@@ -2,6 +2,7 @@
 """Read-only monitoring service for saved public Solana wallets."""
 
 import threading
+import time
 
 from engine.solana_validation import is_valid_solana_address
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from datetime import datetime, timezone
 class MonitorService:
     """Manage opt-in, read-only monitoring for saved wallet addresses."""
 
-    def __init__(self, scan_function, interval=15):
+    def __init__(self, scan_function, interval=15, metrics_function=None):
         if not callable(scan_function):
             raise ValueError("scan_function must be callable.")
 
@@ -22,6 +23,8 @@ class MonitorService:
             raise ValueError("Monitoring interval must be at least 15 seconds.")
 
         self._scan_function = scan_function
+        self._metrics_function = metrics_function or getattr(scan_function, "metrics_function", None)
+        self._backlog_samples = {}
         self._interval = interval
         self._lock = threading.RLock()
         self._lifecycle_lock = threading.Lock()
@@ -29,6 +32,7 @@ class MonitorService:
         self._thread = None
         self._wallets = {}
         self._enabled = False
+        self._last_cycle_duration_seconds = None
 
     @staticmethod
     def _new_wallet_state():
@@ -38,7 +42,47 @@ class MonitorService:
             "last_successful_check": None,
             "last_error": None,
             "latest_results": [],
+            "scan_count": 0,
+            "last_scan_duration_seconds": None,
+            "last_result_count": 0,
+            "last_signatures_attempted_count": 0,
+            "last_retry_count": 0,
+            "last_needs_review_count": 0,
+            "last_discovery_warning": False,
+            "backlog_metrics": None,
+            "backlog_delta_since_last_scan": None,
+            "backlog_net_drain_per_minute": None,
         }
+
+    def _read_backlog_metrics(self, address):
+        """Read durable queue metrics without allowing diagnostics to break scanning."""
+        if not callable(self._metrics_function):
+            return None
+        try:
+            metrics = self._metrics_function(address)
+        except Exception:
+            return None
+        return dict(metrics) if isinstance(metrics, dict) else None
+
+    def _sample_backlog(self, address, metrics):
+        """Calculate observed net backlog change per minute between scan samples."""
+        if not isinstance(metrics, dict):
+            return None, None
+        pending = metrics.get("pending_count")
+        if not isinstance(pending, int) or isinstance(pending, bool) or pending < 0:
+            return None, None
+
+        sampled_at = time.monotonic()
+        previous = self._backlog_samples.get(address)
+        self._backlog_samples[address] = (sampled_at, pending)
+        if previous is None:
+            return None, None
+
+        elapsed = sampled_at - previous[0]
+        if elapsed <= 0:
+            return previous[1] - pending, None
+        delta = previous[1] - pending
+        return delta, round((delta * 60.0) / elapsed, 3)
 
     def _status_details(self, details):
         """Report monitors as stale when their last successful check is old."""
@@ -60,6 +104,7 @@ class MonitorService:
             return {
                 "enabled": self._enabled,
                 "interval_seconds": self._interval,
+                "last_cycle_duration_seconds": self._last_cycle_duration_seconds,
                 "wallets": [
                     {
                         "address": address,
@@ -123,6 +168,7 @@ class MonitorService:
                     address: self._new_wallet_state()
                     for address in cleaned
                 }
+                self._backlog_samples = {}
 
                 self._stop_event.clear()
                 self._enabled = True
@@ -176,6 +222,7 @@ class MonitorService:
                 with self._lock:
                     addresses = list(self._wallets.keys())
 
+                cycle_started = time.monotonic()
                 for address in addresses:
                     if self._stop_event.is_set():
                         break
@@ -186,17 +233,46 @@ class MonitorService:
 
                         self._wallets[address]["state"] = "scanning"
 
+                    scan_started = time.monotonic()
                     try:
                         results = self._scan_function(address)
 
                         if not isinstance(results, list):
                             results = []
 
+                        backlog_metrics = self._read_backlog_metrics(address)
+                        backlog_delta, backlog_rate = self._sample_backlog(
+                            address, backlog_metrics
+                        )
+                        retry_count = sum(
+                            1 for item in results
+                            if isinstance(item, dict) and item.get("retryable") is True
+                        )
+                        needs_review_count = sum(
+                            1 for item in results
+                            if isinstance(item, dict)
+                            and item.get("processing_status") == "needs_review"
+                        )
+                        discovery_warning = any(
+                            isinstance(item, dict) and bool(item.get("discovery_warning"))
+                            for item in results
+                        )
+                        scan_duration = max(0.0, time.monotonic() - scan_started)
                         with self._lock:
                             if address in self._wallets:
                                 self._wallets[address].update(
                                     {
                                         "state": "connected",
+                                        "scan_count": self._wallets[address].get("scan_count", 0) + 1,
+                                        "last_scan_duration_seconds": round(scan_duration, 3),
+                                        "last_result_count": len(results),
+                                        "last_signatures_attempted_count": len(results),
+                                        "last_retry_count": retry_count,
+                                        "last_needs_review_count": needs_review_count,
+                                        "last_discovery_warning": discovery_warning,
+                                        "backlog_metrics": backlog_metrics,
+                                        "backlog_delta_since_last_scan": backlog_delta,
+                                        "backlog_net_drain_per_minute": backlog_rate,
                                         "last_scan": datetime.now(
                                             timezone.utc
                                         ).isoformat(),
@@ -209,11 +285,21 @@ class MonitorService:
                                 )
 
                     except Exception:
+                        backlog_metrics = self._read_backlog_metrics(address)
+                        backlog_delta, backlog_rate = self._sample_backlog(
+                            address, backlog_metrics
+                        )
+                        scan_duration = max(0.0, time.monotonic() - scan_started)
                         with self._lock:
                             if address in self._wallets:
                                 self._wallets[address].update(
                                     {
                                         "state": "error",
+                                        "scan_count": self._wallets[address].get("scan_count", 0) + 1,
+                                        "backlog_metrics": backlog_metrics,
+                                        "backlog_delta_since_last_scan": backlog_delta,
+                                        "backlog_net_drain_per_minute": backlog_rate,
+                                        "last_scan_duration_seconds": round(scan_duration, 3),
                                         "last_scan": datetime.now(
                                             timezone.utc
                                         ).isoformat(),
@@ -221,6 +307,12 @@ class MonitorService:
                                     }
                                 )
 
+                # Cycle duration excludes the configured idle interval and reports
+                # actual wallet sweep time, including provider/network latency.
+                with self._lock:
+                    self._last_cycle_duration_seconds = round(
+                        max(0.0, time.monotonic() - cycle_started), 3
+                    )
                 self._stop_event.wait(self._interval)
 
         finally:

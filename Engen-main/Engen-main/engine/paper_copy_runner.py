@@ -6,6 +6,7 @@ and liquidity provider is connected.
 """
 import os
 import threading
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -33,6 +34,45 @@ PAPER_EXECUTION_COST_MULTIPLIER = (
     Decimal(10000 + PAPER_SLIPPAGE_BPS) / Decimal(10000)
     * Decimal(10000 + PAPER_FEE_BPS) / Decimal(10000)
 )
+
+MAX_SOURCE_TRADE_AGE_SECONDS = 60
+
+
+def source_trade_is_fresh(result, *, now=None, max_age_seconds=MAX_SOURCE_TRADE_AGE_SECONDS):
+    """Return true only when a verified source block time is no more than 60s old."""
+    if not isinstance(result, dict) or not isinstance(max_age_seconds, int) or isinstance(max_age_seconds, bool) or max_age_seconds < 0:
+        return False
+    observation = result.get("signature_observation")
+    block_time = observation.get("block_time") if isinstance(observation, dict) else None
+    if not isinstance(block_time, int) or isinstance(block_time, bool) or block_time < 0:
+        return False
+    current_time = time.time() if now is None else now
+    if not isinstance(current_time, (int, float)) or isinstance(current_time, bool):
+        return False
+    age_seconds = current_time - block_time
+    return 0 <= age_seconds <= max_age_seconds
+
+
+def _reject_stale_source_order(simulator, order, reason):
+    """Permanently reject a queued copy whose source timestamp is absent or expired."""
+    details = dict(order.get("details") or {})
+    updated = dict(
+        order,
+        status="REJECTED",
+        reason=reason,
+        details={**details, "execution_state": "STALE_SOURCE"},
+    )
+    persist = getattr(simulator, "_persist", None)
+    if callable(persist):
+        persist(updated)
+    simulator.orders[order["order_id"]] = updated
+    return {
+        "order_id": order.get("order_id"),
+        "signal_id": order.get("signal_id"),
+        "status": "REJECTED",
+        "reason": reason,
+        "execution_state": "STALE_SOURCE",
+    }
 
 
 def _save_order_reason(simulator, order, reason, execution_state=None):
@@ -184,6 +224,21 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
             or (wallet_address is not None and details.get("source_wallet") != wallet_address)
         ):
             continue
+
+        # A queued order may have waited for virtual balance or market data.
+        # Re-check source freshness immediately before every execution attempt;
+        # otherwise a timely queue could turn into a late paper copy.
+        source_observation = {"signature_observation": {
+            "block_time": details.get("source_block_time")
+        }}
+        if not source_trade_is_fresh(source_observation):
+            reason = (
+                "Source transaction timestamp is missing, invalid, in the future, "
+                "or older than 60 seconds; the paper order was permanently rejected."
+            )
+            outcomes.append(_reject_stale_source_order(simulator, order, reason))
+            continue
+
         if order.get("side") == "BUY":
             # Keep orders queued when the user has not funded the virtual ledger
             # yet. Do not reject or silently discard a detected paper-copy signal.
@@ -245,6 +300,17 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                                 target = source_quote * price_value
                         except Exception:
                             target = None
+            # MIRROR_AMOUNT may call a quote/USD price provider above. Do not
+            # leave an expired source order waiting for another retry if that
+            # lookup consumed the remaining source-copy window.
+            if not source_trade_is_fresh(source_observation):
+                reason = (
+                    "Source transaction exceeded the 60-second copy window during "
+                    "quote-price lookup; the paper order was permanently rejected."
+                )
+                outcomes.append(_reject_stale_source_order(simulator, order, reason))
+                continue
+
             if target is None or not target.is_finite() or target <= 0:
                 waiting_for_price = (
                     details.get("sizing_mode") == "MIRROR_AMOUNT"
@@ -341,6 +407,16 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
             market_price = price_provider(order.get("asset_mint"))
         except Exception:
             market_price = None
+        # Market-data lookups may be slow. Re-check source age after the lookup
+        # so an order cannot fill after its 60-second copy window expires mid-scan.
+        if not source_trade_is_fresh(source_observation):
+            reason = (
+                "Source transaction exceeded the 60-second copy window during "
+                "market-data lookup; the paper order was permanently rejected."
+            )
+            outcomes.append(_reject_stale_source_order(simulator, order, reason))
+            continue
+
         if market_price is None:
             reason = "No usable public USD price/liquidity snapshot; order remains queued for retry."
             _save_order_reason(simulator, order, reason, "WAITING_FOR_MARKET_DATA")
@@ -447,6 +523,7 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
             or observation.get("confirmation_status") not in ("confirmed", "finalized")
             or result.get("status") != "success"
             or result.get("metadata_complete") is not True
+            or not source_trade_is_fresh(result)
             or not isinstance(result.get("signers"), list)
             or wallet_address not in result.get("signers", [])
             or not isinstance(signal, dict)

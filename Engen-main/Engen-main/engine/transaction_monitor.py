@@ -17,7 +17,10 @@ def _include_signature_observation(result, item):
         "block_time": item.get("blockTime"),
     }
     if any(value is not None for value in fields.values()):
-        return {**result, "signature_observation": fields}
+        result = {**result, "signature_observation": fields}
+    warning = item.get("discovery_warning")
+    if isinstance(warning, str) and warning:
+        result = {**result, "discovery_warning": warning}
     return result
 
 
@@ -84,45 +87,95 @@ def process_new_signatures(
             }, item))
             continue
         except SolanaRPCError as exc:
-            error_result = {
-                "signature": signature,
-                "available": False,
-                "metadata_complete": False,
-                "metadata_status": "rpc_error",
-                "error": str(exc),
-                "retryable": True,
-            }
-            if (
-                wallet_address is not None
-                and store is not None
-                and is_valid_transaction_signature(signature)
-            ):
-                failure = store.record_failure(
-                    wallet_address, signature, "rpc_fetch",
-                    "rpc_error", str(exc),
-                )
-                error_result["processing_status"] = failure["status"]
+            if item.get("err") is not None:
+                # The signature-list RPC has already reported an on-chain
+                # execution error. A transaction-details RPC outage cannot
+                # turn that definitive failure back into a retryable pending
+                # transaction.
+                error_result = {
+                    "signature": signature,
+                    "available": False,
+                    "metadata_complete": False,
+                    "metadata_status": "on_chain_failed",
+                    "status": "failed",
+                    "error": "Signature status reports an on-chain transaction error.",
+                    "retryable": False,
+                    "trade_signal": _unknown_signer_signal(),
+                }
+                if (
+                    wallet_address is not None
+                    and store is not None
+                    and is_valid_transaction_signature(signature)
+                ):
+                    store.save_transaction_record(
+                        wallet_address, signature, None,
+                        processing_status="failed",
+                    )
+            else:
+                error_result = {
+                    "signature": signature,
+                    "available": False,
+                    "metadata_complete": False,
+                    "metadata_status": "rpc_error",
+                    "error": str(exc),
+                    "retryable": True,
+                }
+                if (
+                    wallet_address is not None
+                    and store is not None
+                    and is_valid_transaction_signature(signature)
+                ):
+                    failure = store.record_failure(
+                        wallet_address, signature, "rpc_fetch",
+                        "rpc_error", str(exc),
+                    )
+                    error_result["processing_status"] = failure["status"]
+                    if failure["status"] == "needs_review":
+                        error_result["retryable"] = False
             results.append(_include_signature_observation(error_result, item))
             continue
         except Exception as exc:
-            error_result = {
-                "signature": signature,
-                "available": False,
-                "metadata_complete": False,
-                "metadata_status": "interpretation_error",
-                "error": "Transaction interpretation failed; retry scheduled.",
-                "retryable": True,
-            }
-            if (
-                wallet_address is not None
-                and store is not None
-                and is_valid_transaction_signature(signature)
-            ):
-                failure = store.record_failure(
-                    wallet_address, signature, "interpretation",
-                    type(exc).__name__, "Transaction interpretation failed.",
-                )
-                error_result["processing_status"] = failure["status"]
+            if item.get("err") is not None:
+                error_result = {
+                    "signature": signature,
+                    "available": False,
+                    "metadata_complete": False,
+                    "metadata_status": "on_chain_failed",
+                    "status": "failed",
+                    "error": "Signature status reports an on-chain transaction error.",
+                    "retryable": False,
+                    "trade_signal": _unknown_signer_signal(),
+                }
+                if (
+                    wallet_address is not None
+                    and store is not None
+                    and is_valid_transaction_signature(signature)
+                ):
+                    store.save_transaction_record(
+                        wallet_address, signature, None,
+                        processing_status="failed",
+                    )
+            else:
+                error_result = {
+                    "signature": signature,
+                    "available": False,
+                    "metadata_complete": False,
+                    "metadata_status": "interpretation_error",
+                    "error": "Transaction interpretation failed; retry scheduled.",
+                    "retryable": True,
+                }
+                if (
+                    wallet_address is not None
+                    and store is not None
+                    and is_valid_transaction_signature(signature)
+                ):
+                    failure = store.record_failure(
+                        wallet_address, signature, "interpretation",
+                        type(exc).__name__, "Transaction interpretation failed.",
+                    )
+                    error_result["processing_status"] = failure["status"]
+                    if failure["status"] == "needs_review":
+                        error_result["retryable"] = False
             results.append(_include_signature_observation(error_result, item))
             continue
 
@@ -253,14 +306,16 @@ def process_new_signatures(
             elif item.get("err") is not None:
                 result = {
                     **result,
+                    "status": "failed",
                     "trade_signal": {**_unknown_signer_signal(),
                         "reason": (
-                            "Signature status reports a transaction error; "
-                            "no buy/sell candidate was created."
+                            "Signature status reports an on-chain transaction error; "
+                            "the transaction is terminally failed and no buy/sell "
+                            "candidate was created."
                         ),
                     },
                     "confirmation_sufficient": False,
-                    "retryable": True,
+                    "retryable": False,
                 }
             elif confirmation not in ("confirmed", "finalized"):
                 result = {
@@ -316,7 +371,10 @@ def process_new_signatures(
             and store is not None
             and not defer_processed
         ):
-            if result.get("retryable") is not True:
+            if (
+                result.get("retryable") is not True
+                and result.get("processing_status") != "needs_review"
+            ):
                 store.mark_processed(wallet_address, signature)
 
         results.append(result)

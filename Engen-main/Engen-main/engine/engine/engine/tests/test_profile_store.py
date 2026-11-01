@@ -130,6 +130,130 @@ class ProfileStoreTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM balance_snapshots").fetchone()[0], 2)
             self.assertEqual(db.execute("SELECT COUNT(*) FROM balance_snapshots WHERE is_current=1").fetchone()[0], 1)
 
+    def test_exhausted_signature_reconciles_legacy_profile_pending_to_unknown(self):
+        profile = self.store.create_profile("Retry review")
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        signature = "1" * 64
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="pending",
+            evidence={"classification_reason": "metadata unavailable"},
+            profile_ids=[profile],
+        )
+
+        self.assertEqual(
+            self.store.get_pending_transaction_signatures(PUBLIC_ADDRESS),
+            [signature],
+        )
+        changed = self.store.mark_transaction_needs_review(
+            signature, PUBLIC_ADDRESS, attempts=5,
+            error_stage="rpc_fetch", error_code="rpc_error",
+            error_message="Public RPC request failed.",
+        )
+
+        self.assertTrue(changed)
+        transaction = self.store.get_transaction(signature, profile_id=profile)
+        self.assertEqual(transaction["status"], "unknown")
+        self.assertEqual(transaction["evidence"]["processing_status"], "needs_review")
+        self.assertTrue(transaction["evidence"]["retry_exhausted"])
+        self.assertEqual(transaction["evidence"]["retry_attempts"], 5)
+        self.assertEqual(self.store.get_pending_transaction_signatures(PUBLIC_ADDRESS), [])
+        self.assertFalse(self.store.mark_transaction_needs_review(
+            signature, PUBLIC_ADDRESS, attempts=6
+        ))
+
+    def test_terminal_review_unknown_cannot_downgrade_to_pending(self):
+        profile = self.store.create_profile("Review status")
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        signature = "2" * 64
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="pending",
+            profile_ids=[profile],
+        )
+        self.assertTrue(self.store.mark_transaction_needs_review(
+            signature, PUBLIC_ADDRESS, attempts=5,
+            error_stage="rpc_fetch", error_code="rpc_error",
+        ))
+
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="pending",
+            evidence={
+                "processing_status": "pending",
+                "signature_queue_status": "pending",
+            },
+            profile_ids=[profile],
+        )
+
+        transaction = self.store.get_transaction(signature, profile_id=profile)
+        self.assertEqual(transaction["status"], "unknown")
+        self.assertEqual(transaction["evidence"]["processing_status"], "needs_review")
+        self.assertEqual(transaction["evidence"]["signature_queue_status"], "needs_review")
+        self.assertTrue(transaction["evidence"]["retry_exhausted"])
+        self.assertEqual(self.store.get_pending_transaction_signatures(PUBLIC_ADDRESS), [])
+
+    def test_failed_profile_status_is_terminal_against_late_pending_update(self):
+        profile = self.store.create_profile("Failed transaction")
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        signature = "3" * 64
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="pending",
+            evidence={"processing_status": "pending"},
+            profile_ids=[profile],
+        )
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="failed",
+            evidence={"processing_status": "processed"},
+            profile_ids=[profile],
+        )
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="pending",
+            evidence={"processing_status": "pending"},
+            profile_ids=[profile],
+        )
+        transaction = self.store.get_transaction(signature, profile_id=profile)
+        self.assertEqual(transaction["status"], "failed")
+
+    def test_unknown_without_review_marker_does_not_erase_pending(self):
+        profile = self.store.create_profile("Unknown fallback")
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        signature = "4" * 64
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="pending", profile_ids=[profile],
+        )
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="unknown",
+            evidence={"classification_reason": "not enough evidence"},
+            profile_ids=[profile],
+        )
+        transaction = self.store.get_transaction(signature, profile_id=profile)
+        self.assertEqual(transaction["status"], "pending")
+
+    def test_terminal_unknown_without_review_marker_stays_unknown(self):
+        profile = self.store.create_profile("Terminal unknown")
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        signature = "5" * 64
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="unknown",
+            evidence={
+                "terminal_status": True,
+                "processing_status": "unknown",
+                "signature_queue_status": "processed",
+            },
+            profile_ids=[profile],
+        )
+        self.store.save_transaction(
+            signature, PUBLIC_ADDRESS, status="pending",
+            evidence={
+                "processing_status": "pending",
+                "signature_queue_status": "pending",
+            },
+            profile_ids=[profile],
+        )
+        transaction = self.store.get_transaction(signature, profile_id=profile)
+        self.assertEqual(transaction["status"], "unknown")
+        self.assertTrue(transaction["evidence"]["terminal_status"])
+        self.assertEqual(transaction["evidence"]["processing_status"], "unknown")
+        self.assertEqual(transaction["evidence"]["signature_queue_status"], "processed")
+
     def test_soft_delete_preserves_history(self):
         p = self.store.create_profile("History")
         self.store.associate_source_wallet(p, PUBLIC_ADDRESS)
@@ -187,6 +311,56 @@ class ProfileStoreTests(unittest.TestCase):
         restored = ProfileStore(backup)
         self.assertEqual(restored.current_balances(p)[0]["raw_amount"], "0")
         self.assertEqual(restored.get_profile(p)["name"], "Backup")
+
+    def test_source_trade_refs_survive_profile_transaction_history_pruning(self):
+        profile = self.store.create_profile("Reference retention")
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        source_signature = "1" * 64
+        self.store.save_transaction(
+            source_signature, PUBLIC_ADDRESS, classification="BUY_CANDIDATE",
+            status="confirmed", profile_ids=(profile,),
+        )
+        saved = self.store.save_source_trade_ref(
+            profile, "paper-order-1", PUBLIC_ADDRESS, source_signature,
+            "BUY", PUBLIC_ADDRESS, source_slot=123, source_block_time=1700000000,
+        )
+        self.assertTrue(saved)
+        self.assertFalse(self.store.save_source_trade_ref(
+            profile, "paper-order-1", PUBLIC_ADDRESS, source_signature,
+            "BUY", PUBLIC_ADDRESS, source_slot=123, source_block_time=1700000000,
+        ))
+
+        # Force the ordinary transaction-history retention path to prune old rows.
+        for index in range(1002):
+            self.store.save_transaction(
+                "history-signature-" + str(index), PUBLIC_ADDRESS,
+                classification="UNKNOWN", status="observed", profile_ids=(profile,),
+            )
+
+        refs = self.store.list_source_trade_refs(profile)
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0]["order_id"], "paper-order-1")
+        self.assertEqual(refs[0]["source_signature"], source_signature)
+        self.assertEqual(refs[0]["source_slot"], 123)
+        self.assertIsNone(self.store.get_transaction(source_signature, profile))
+
+    def test_source_trade_ref_rejects_invalid_identity_and_metadata(self):
+        profile = self.store.create_profile("Reference validation")
+        with self.assertRaises(ValueError):
+            self.store.save_source_trade_ref(
+                profile, "order", PUBLIC_ADDRESS, "not-a-signature",
+                "BUY", PUBLIC_ADDRESS,
+            )
+        with self.assertRaises(ValueError):
+            self.store.save_source_trade_ref(
+                profile, "order", PUBLIC_ADDRESS, "1" * 64,
+                "HOLD", PUBLIC_ADDRESS,
+            )
+        with self.assertRaises(ValueError):
+            self.store.save_source_trade_ref(
+                profile, "order", PUBLIC_ADDRESS, "1" * 64,
+                "BUY", PUBLIC_ADDRESS, source_slot=-1,
+            )
 
     def test_invalid_public_address_and_timezone_are_rejected(self):
         with self.assertRaises(ValueError):

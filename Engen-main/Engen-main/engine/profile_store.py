@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from engine.solana_validation import is_valid_transaction_signature
+
 DEFAULT_DB_PATH = Path("data/profiles.db")
 MAX_WALLET_ACTIVITY_TRANSACTIONS = 1000
 LABELS = {"BUY_CANDIDATE", "SELL_CANDIDATE", "TRANSFER", "UNKNOWN",
@@ -158,6 +160,24 @@ class ProfileStore:
                 CREATE INDEX idx_transactions_observed ON transactions(observed_at);
                 """)
                 db.execute("PRAGMA user_version=1")
+            # This ledger intentionally has no foreign key to transactions:
+            # profile activity rows are pruned, while source links must survive.
+            db.execute("""CREATE TABLE IF NOT EXISTS source_trade_refs(
+                profile_id TEXT NOT NULL REFERENCES profiles(profile_id),
+                order_id TEXT NOT NULL,
+                source_wallet_address TEXT NOT NULL,
+                source_signature TEXT NOT NULL,
+                side TEXT NOT NULL CHECK(side IN ('BUY','SELL')),
+                asset_mint TEXT NOT NULL,
+                source_slot INTEGER,
+                source_block_time INTEGER,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(profile_id, order_id),
+                CHECK(source_slot IS NULL OR source_slot>=0),
+                CHECK(source_block_time IS NULL OR source_block_time>=0)
+            )""")
+            db.execute("""CREATE INDEX IF NOT EXISTS idx_source_trade_refs_signature
+                ON source_trade_refs(profile_id, source_signature)""")
             db.execute("""CREATE INDEX IF NOT EXISTS idx_transactions_wallet_history
                 ON transactions(source_wallet_address, block_time DESC, observed_at DESC, signature DESC)""")
             wallets = [row[0] for row in db.execute(
@@ -370,23 +390,60 @@ class ProfileStore:
                               (signature,)).fetchone()
             if stored["source_wallet_address"] != source_wallet_address:
                 raise ValueError("Signature already stored for a different source wallet.")
-            # An RPC scan may first observe a pending signature and later receive
-            # confirmed metadata. Refresh details without downgrading terminal states.
+            # A pending signature may later become confirmed, failed, or
+            # terminally unknown after retry exhaustion. Preserve true terminal
+            # outcomes and never reopen a needs-review row as pending.
             old_status = stored["status"]
+            try:
+                previous_evidence = json.loads(stored["evidence_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                previous_evidence = {}
+            if not isinstance(previous_evidence, dict):
+                previous_evidence = {}
+            incoming_evidence = evidence if isinstance(evidence, dict) else {}
+            old_needs_review = (
+                old_status == "unknown"
+                and previous_evidence.get("processing_status") == "needs_review"
+                and previous_evidence.get("retry_exhausted") is True
+            )
+            old_terminal_unknown = (
+                old_status == "unknown"
+                and (
+                    previous_evidence.get("terminal_status") is True
+                    or old_needs_review
+                )
+            )
+            incoming_review_terminal = (
+                incoming_evidence.get("terminal_status") is True
+                or incoming_evidence.get("processing_status") == "needs_review"
+                or incoming_evidence.get("signature_queue_status") == "needs_review"
+                or incoming_evidence.get("retry_exhausted") is True
+            )
             if old_status in {"confirmed", "failed"}:
                 effective_status = old_status
+            elif old_terminal_unknown and status == "pending":
+                effective_status = "unknown"
             elif status == "unknown":
-                effective_status = old_status
+                effective_status = "unknown" if incoming_review_terminal else old_status
             else:
                 effective_status = status
             effective_classification = (
                 classification if classification != "UNKNOWN" else stored["classification"]
             )
-            try:
-                previous_evidence = json.loads(stored["evidence_json"] or "{}")
-            except (TypeError, json.JSONDecodeError):
-                previous_evidence = {}
-            merged_evidence = {**previous_evidence, **(evidence or {})}
+            merged_evidence = {**previous_evidence, **incoming_evidence}
+            if old_terminal_unknown and status == "pending":
+                # Keep terminal-unknown evidence in lockstep with the profile
+                # status; only retry-exhausted rows carry needs_review markers.
+                merged_evidence["terminal_status"] = True
+                for key in (
+                    "processing_status", "signature_queue_status", "retry_exhausted"
+                ):
+                    if key in previous_evidence:
+                        merged_evidence[key] = previous_evidence[key]
+                if old_needs_review:
+                    merged_evidence["processing_status"] = "needs_review"
+                    merged_evidence["signature_queue_status"] = "needs_review"
+                    merged_evidence["retry_exhausted"] = True
             merged_evidence_json = json.dumps(merged_evidence, sort_keys=True, allow_nan=False)
             token_changed = token_mint is not None and stored["token_mint"] not in (None, token_mint)
             effective_amount = (
@@ -414,6 +471,65 @@ class ProfileStore:
                            (pid,signature,utc_now()))
             self._prune_wallet_transactions(db, source_wallet_address)
         return signature
+
+    def save_source_trade_ref(self, profile_id, order_id, source_wallet_address,
+                              source_signature, side, asset_mint, *,
+                              source_slot=None, source_block_time=None, created_at=None):
+        """Persist a paper order's source link independently of prunable activity rows."""
+        if not isinstance(profile_id, str) or not profile_id.strip():
+            raise ValueError("A profile_id is required.")
+        if not isinstance(order_id, str) or not order_id.strip() or len(order_id) > 128:
+            raise ValueError("A valid paper order_id is required.")
+        validate_public_address(source_wallet_address, "source wallet address")
+        if not is_valid_transaction_signature(source_signature):
+            raise ValueError("A valid source transaction signature is required.")
+        if side not in {"BUY", "SELL"}:
+            raise ValueError("Source trade side must be BUY or SELL.")
+        validate_public_address(asset_mint, "asset mint")
+        for value, label in ((source_slot, "source slot"), (source_block_time, "source block time")):
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 0):
+                raise ValueError("Invalid " + label + ".")
+        timestamp = validate_timestamp(created_at or utc_now())
+        with self.session() as db:
+            if not db.execute(
+                "SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
+                (profile_id,),
+            ).fetchone():
+                raise ValueError("Profile not found.")
+            cursor = db.execute("""INSERT OR IGNORE INTO source_trade_refs(
+                profile_id,order_id,source_wallet_address,source_signature,side,
+                asset_mint,source_slot,source_block_time,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
+                (profile_id,order_id,source_wallet_address,source_signature,side,
+                 asset_mint,source_slot,source_block_time,timestamp))
+            stored = db.execute(
+                "SELECT source_wallet_address,source_signature,side,asset_mint "
+                "FROM source_trade_refs WHERE profile_id=? AND order_id=?",
+                (profile_id, order_id),
+            ).fetchone()
+            expected = (source_wallet_address, source_signature, side, asset_mint)
+            if stored is None or tuple(stored) != expected:
+                raise ValueError("Paper order_id is already linked to a different source trade.")
+        return cursor.rowcount == 1
+
+    def list_source_trade_refs(self, profile_id, limit=1000):
+        """List durable source links even after profile activity history is pruned."""
+        if not isinstance(profile_id, str) or not profile_id.strip():
+            raise ValueError("A profile_id is required.")
+        if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 5000:
+            raise ValueError("Source reference limit must be between 1 and 5000.")
+        with self.session() as db:
+            if not db.execute(
+                "SELECT 1 FROM profiles WHERE profile_id=? AND deleted_at IS NULL",
+                (profile_id,),
+            ).fetchone():
+                raise ValueError("Profile not found.")
+            rows = db.execute("""SELECT profile_id,order_id,source_wallet_address,
+                source_signature,side,asset_mint,source_slot,source_block_time,created_at
+                FROM source_trade_refs WHERE profile_id=?
+                ORDER BY created_at DESC, order_id DESC LIMIT ?""",
+                (profile_id, limit)).fetchall()
+        return [dict(row) for row in rows]
 
     def save_balance_snapshot(self, profile_id, wallet_address, token_mint, raw_amount,
                                token_decimals, *, source, observed_at=None,
@@ -463,6 +579,73 @@ class ProfileStore:
             item["evidence"] = json.loads(item.pop("evidence_json"))
             result.append(item)
         return result
+
+    def get_pending_transaction_signatures(self, source_wallet_address, limit=250):
+        """Return a bounded oldest-first page of profile-history pending signatures."""
+        validate_public_address(source_wallet_address, "source wallet address")
+        if (
+            not isinstance(limit, int) or isinstance(limit, bool)
+            or not 1 <= limit <= 5000
+        ):
+            raise ValueError("Pending transaction limit must be between 1 and 5000.")
+        with self.session() as db:
+            rows = db.execute(
+                """SELECT signature FROM transactions
+                   WHERE source_wallet_address=? AND status='pending'
+                   ORDER BY observed_at ASC, signature ASC
+                   LIMIT ?""",
+                (source_wallet_address, limit),
+            ).fetchall()
+        return [row["signature"] for row in rows]
+
+    def mark_transaction_needs_review(self, signature, source_wallet_address, *,
+                                      attempts=None, error_stage=None,
+                                      error_code=None, error_message=None):
+        """Move a stale profile-history pending row to unknown with retry audit evidence."""
+        if not isinstance(signature, str) or not signature.strip():
+            raise ValueError("Transaction signature is required.")
+        validate_public_address(source_wallet_address, "source wallet address")
+        if attempts is not None and (
+            not isinstance(attempts, int) or isinstance(attempts, bool) or attempts < 1
+        ):
+            raise ValueError("Retry attempts must be a positive integer.")
+        evidence_update = {
+            "processing_status": "needs_review",
+            "retry_exhausted": True,
+            "terminal_status": True,
+        }
+        if attempts is not None:
+            evidence_update["retry_attempts"] = attempts
+        if isinstance(error_stage, str) and error_stage:
+            evidence_update["retry_error_stage"] = error_stage[:80]
+        if isinstance(error_code, str) and error_code:
+            evidence_update["retry_error_code"] = error_code[:80]
+        if isinstance(error_message, str) and error_message:
+            evidence_update["retry_error_message"] = error_message[:300]
+
+        with self.session() as db:
+            row = db.execute(
+                """SELECT status, evidence_json FROM transactions
+                   WHERE signature=? AND source_wallet_address=?""",
+                (signature, source_wallet_address),
+            ).fetchone()
+            if row is None or row["status"] != "pending":
+                return False
+            try:
+                evidence = json.loads(row["evidence_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                evidence = {}
+            if not isinstance(evidence, dict):
+                evidence = {}
+            evidence.update(evidence_update)
+            cursor = db.execute(
+                """UPDATE transactions
+                   SET status='unknown', evidence_json=?
+                   WHERE signature=? AND source_wallet_address=? AND status='pending'""",
+                (json.dumps(evidence, sort_keys=True, allow_nan=False),
+                 signature, source_wallet_address),
+            )
+        return cursor.rowcount == 1
 
     def portfolio_holdings(self, profile_id, *, max_age_seconds=None):
         """Aggregate current snapshots without float rounding; retain zero balances."""

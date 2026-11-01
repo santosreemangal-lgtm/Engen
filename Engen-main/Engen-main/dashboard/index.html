@@ -198,23 +198,23 @@ footer.hint{padding:10px 4px;line-height:1.7}
  text-overflow:ellipsis;
 }
 #paper-history-panel .paper-trades-table th:nth-child(1),
-#paper-history-panel .paper-trades-table td:nth-child(1){width:12%}
+#paper-history-panel .paper-trades-table td:nth-child(1){width:8%}
 #paper-history-panel .paper-trades-table th:nth-child(2),
-#paper-history-panel .paper-trades-table td:nth-child(2){width:19%}
+#paper-history-panel .paper-trades-table td:nth-child(2){width:20%}
 #paper-history-panel .paper-trades-table th:nth-child(3),
-#paper-history-panel .paper-trades-table td:nth-child(3){width:8%}
+#paper-history-panel .paper-trades-table td:nth-child(3){width:10%}
 #paper-history-panel .paper-trades-table th:nth-child(4),
-#paper-history-panel .paper-trades-table td:nth-child(4){width:9%}
+#paper-history-panel .paper-trades-table td:nth-child(4){width:12%}
 #paper-history-panel .paper-trades-table th:nth-child(5),
-#paper-history-panel .paper-trades-table td:nth-child(5){width:12%}
+#paper-history-panel .paper-trades-table td:nth-child(5){width:11%}
 #paper-history-panel .paper-trades-table th:nth-child(6),
 #paper-history-panel .paper-trades-table td:nth-child(6){width:10%}
 #paper-history-panel .paper-trades-table th:nth-child(7),
-#paper-history-panel .paper-trades-table td:nth-child(7){width:8%}
+#paper-history-panel .paper-trades-table td:nth-child(7){width:13%}
 #paper-history-panel .paper-trades-table th:nth-child(8),
 #paper-history-panel .paper-trades-table td:nth-child(8){width:8%}
 #paper-history-panel .paper-trades-table th:nth-child(9),
-#paper-history-panel .paper-trades-table td:nth-child(9){width:14%}
+#paper-history-panel .paper-trades-table td:nth-child(9){width:8%}
 #paper-history-panel .paper-token-cell{min-width:0;max-width:100%}
 #paper-history-panel .paper-token-primary{max-width:100%}
 #paper-history-panel .paper-share-btn{max-width:100%;white-space:nowrap}
@@ -461,7 +461,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 </section>
 <section id="paper-history-panel" class="history-subpanel hidden" role="tabpanel" aria-labelledby="paper-history-tab">
  <div class="history-overview"><div><strong id="paper-trade-total">—</strong><span>stored paper orders</span><small id="paper-fill-total">0 completed fills</small></div><p class="hint">Virtual simulation only. No wallet signing or blockchain transaction is performed.</p></div>
- <div class="history-table-wrap"><table class="history-table paper-trades-table"><thead><tr><th>Type</th><th>Token</th><th title="Market cap is shown only when a verified value is available.">MC</th><th>Amount</th><th>Total USD</th><th>Profit</th><th>Age</th><th title="Simulated network cost only; no on-chain gas is paid in paper mode.">Gas</th><th>Share</th></tr></thead><tbody id="paper-trade-history-table"><tr><td colspan="9" class="history-empty">Select a profile to load paper trades.</td></tr></tbody></table></div>
+ <div class="history-table-wrap"><table class="history-table paper-trades-table"><thead><tr><th>Type</th><th>Token</th><th>Amount</th><th>Price</th><th>Value</th><th>Fees</th><th>Realized P&amp;L</th><th>Age</th><th>Share</th></tr></thead><tbody id="paper-trade-history-table"><tr><td colspan="9" class="history-empty">Select a profile to load paper trades.</td></tr></tbody></table></div>
  <p id="paper-trade-history-message" class="message" role="status"></p>
 </section>
 </details>
@@ -589,7 +589,7 @@ function renderPortfolioMetrics(report){
 
  // All four cards remain visible. Capital is an unsigned amount;
  // only return and P&L metrics display positive/negative signs.
- setMetricValue("initial-deposit",currentCapital===null?"$—":money(Math.abs(currentCapital)),"neutral");
+ setMetricValue("initial-deposit",initial===null?"$—":money(Math.abs(initial)),"neutral");
  setMetricValue("total-return",hasPaperFills?signedPercent(returnPercent):"—",
   !hasPaperFills?"neutral":returnPercent>0?"positive":returnPercent<0?"negative":"neutral");
  setMetricValue("today-pnl",hasPaperFills?signedMoney(today):"—",
@@ -1334,17 +1334,29 @@ async function loadPaperTradeHistory(reportOverride){
 
    row.append(makePaperTokenCell(order.asset_mint));
 
-   const marketCap=details.market_cap_usd??order.market_cap_usd;
-   const marketCapCell=historyCell(row,marketCap===null||marketCap===undefined?"—":"$"+historyAmount(marketCap));
-   if(marketCap===null||marketCap===undefined)marketCapCell.title="Market cap is not included in the current verified paper-simulation data.";
-
    const quantity=fill?.quantity??order.quantity;
    const amountCell=historyCell(row,quantity===null||quantity===undefined?"—":historyAmount(quantity));
    if(quantity!==null&&quantity!==undefined)amountCell.title=(fill?"Filled":"Queued")+" token amount: "+String(quantity);
 
+   const executionPrice=fill?.execution_price;
+   const priceCell=historyCell(row,executionPrice===null||executionPrice===undefined?"—":formatPaperUsd(executionPrice,false));
+   if(fill){
+    priceCell.title="Execution price: $"+String(fill.execution_price)+"; reference market price: $"+String(fill.reference_price);
+   }else{
+    priceCell.title="No completed paper fill; no execution price is recorded.";
+   }
+
    const totalCell=historyCell(row,fill?formatPaperUsd(fill.gross_quote,false):"—");
-   if(fill)totalCell.title="Simulated gross USD amount: "+String(fill.gross_quote);
-   else totalCell.title="No completed paper fill; no executed USD total is recorded.";
+   if(fill)totalCell.title="Simulated gross USD value before fees: "+String(fill.gross_quote);
+   else totalCell.title="No completed paper fill; no executed USD value is recorded.";
+
+   const feeValue=fill?Number(fill.fee||0)+Number(fill.network_cost||0):null;
+   const feeCell=historyCell(row,feeValue===null?"—":formatPaperUsd(feeValue,false));
+   if(fill){
+    feeCell.title="Total simulated fees: "+String(feeValue)+" USD (trade fee: "+String(fill.fee||"0")+"; simulated network cost: "+String(fill.network_cost||"0")+")";
+   }else{
+    feeCell.title="No completed paper fill; no simulated fee is recorded.";
+   }
 
    const profitCell=document.createElement("td");
    if(side==="SELL"&&fill&&pnlEvent&&pnlEvent.realized_pnl!==null&&pnlEvent.realized_pnl!==undefined){
@@ -1363,10 +1375,6 @@ async function loadPaperTradeHistory(reportOverride){
    const ageCell=historyCell(row,formatPaperAge(order.created_at),"paper-age");
    if(order.created_at){ageCell.dataset.createdAt=order.created_at;ageCell.title="Order created: "+historyDate(order.created_at);}
 
-   const networkCost=fill?.network_cost;
-   const gasCell=historyCell(row,networkCost===null||networkCost===undefined?"—":(Number(networkCost)===0?"0":formatPaperUsd(networkCost,false)));
-   gasCell.title="Simulated network-cost assumption only. Paper mode does not pay Solana gas or submit a transaction.";
-
    const shareCell=document.createElement("td");
    const shareButton=document.createElement("button");shareButton.type="button";shareButton.className="paper-share-btn";shareButton.textContent="Share";
    shareButton.title="Share or copy this paper trade summary";
@@ -1377,7 +1385,7 @@ async function loadPaperTradeHistory(reportOverride){
   void loadHistoryTokenMetadata(orders.map(order=>order.asset_mint));
   refreshPaperTradeAges();
   say("paper-trade-history-message",orders.length
-   ?"Showing "+orders.length+" of "+allOrders.length+" paper order(s); the 100 most recent are retained in History. Buy/Sell colors identify the side; Age updates every second. Total USD, Profit and simulated Gas are shown only when a fill exists. Market cap is shown only when verified data is available."
+   ?"Showing "+orders.length+" of "+allOrders.length+" paper order(s); the 100 most recent are retained in History. Buy/Sell colors identify the side; Age updates every second. Amount, execution Price, gross Value, Fees and realized P&L are shown only when a fill exists."
    :"Paper orders appear after the copy engine queues them. Wallet Activity remains separate from simulated paper trades.");
  }catch(e){
   historySetEmpty(tbody,9,e.message||"Unable to load paper history.");

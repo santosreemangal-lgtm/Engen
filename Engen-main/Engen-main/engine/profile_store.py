@@ -435,6 +435,11 @@ class ProfileStore:
                 # Keep terminal-unknown evidence in lockstep with the profile
                 # status; only retry-exhausted rows carry needs_review markers.
                 merged_evidence["terminal_status"] = True
+                for key in (
+                    "processing_status", "signature_queue_status", "retry_exhausted"
+                ):
+                    if key in previous_evidence:
+                        merged_evidence[key] = previous_evidence[key]
                 if old_needs_review:
                     merged_evidence["processing_status"] = "needs_review"
                     merged_evidence["signature_queue_status"] = "needs_review"

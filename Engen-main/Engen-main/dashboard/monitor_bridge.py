@@ -176,9 +176,11 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
         if callable(status_batch_reader):
             try:
                 statuses = {}
-                for start in range(0, len(signatures), 1000):
+                # Keep wallet+signature parameters below SQLite builds that
+                # enforce the traditional 999-variable statement limit.
+                for start in range(0, len(signatures), 500):
                     candidate_statuses = status_batch_reader(
-                        address, signatures[start:start + 1000]
+                        address, signatures[start:start + 500]
                     )
                     if isinstance(candidate_statuses, dict):
                         statuses.update(candidate_statuses)

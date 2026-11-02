@@ -18,8 +18,9 @@ from engine.solana_validation import is_valid_solana_address, is_valid_transacti
 
 
 MAX_DISCOVERY_PAGES = 5
-MAX_FRESH_SIGNATURES_PER_SCAN = 10
+MAX_FRESH_SIGNATURES_PER_SCAN = 50
 MAX_HISTORY_SIGNATURES_PER_SCAN = 25
+MAX_PENDING_SIGNATURES_PER_SCAN = 50
 MAX_HISTORY_SIGNATURES_PER_WALLET = 1000
 WALLET_SCAN_BUDGET_SECONDS = 10.0
 
@@ -326,24 +327,30 @@ def get_and_store_new_wallet_signatures(
         if isinstance(item, dict) and isinstance(item.get("signature"), str)
     ]
     fresh_signatures = [item["signature"] for item in fresh]
+    history_limit = min(
+        MAX_HISTORY_SIGNATURES_PER_SCAN,
+        max(0, MAX_PENDING_SIGNATURES_PER_SCAN - len(fresh)),
+    )
     history_reader = getattr(store, "get_history_pending_signatures", None)
-    if callable(history_reader):
+    if history_limit and callable(history_reader):
         try:
             history_signatures = history_reader(
                 wallet_address,
-                limit=MAX_HISTORY_SIGNATURES_PER_SCAN,
+                limit=history_limit,
                 history_cap=MAX_HISTORY_SIGNATURES_PER_WALLET,
                 exclude_signatures=fresh_signatures,
                 before_block_time=math.ceil(current_time - max_source_age),
             )
         except (TypeError, ValueError, OSError, RuntimeError):
             history_signatures = []
-    else:
+    elif history_limit:
         # Compatibility fallback for older test doubles; production SignatureStore
         # always uses the newest-1,000 bounded history selector above.
         history_signatures = store.get_pending_signatures(
-            wallet_address, limit=MAX_HISTORY_SIGNATURES_PER_SCAN
+            wallet_address, limit=history_limit
         )
+    else:
+        history_signatures = []
         history_signatures = [
             signature for signature in history_signatures
             if signature not in set(fresh_signatures)

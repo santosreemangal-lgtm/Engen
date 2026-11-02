@@ -2,10 +2,12 @@
 """Bridge between the dashboard and the read-only Solana engine."""
 
 import sqlite3
+import time
 from decimal import Decimal, InvalidOperation
 
 from engine.signature_store import SignatureStore
 from engine.transaction_monitor import monitor_wallet
+from engine.wallet_monitor import WALLET_SCAN_BUDGET_SECONDS
 from engine.paper_copy_runner import (
     MAX_SOURCE_FUTURE_SKEW_SECONDS,
     MAX_SOURCE_TRADE_AGE_SECONDS,
@@ -256,12 +258,16 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
 
     def scan_wallet(address):
         """Analyze new wallet signatures and queue eligible paper-copy orders."""
+        # One deadline covers discovery, transaction parsing, and paper price
+        # lookups. A slow source cannot monopolize the single monitor worker.
+        scan_deadline = time.monotonic() + WALLET_SCAN_BUDGET_SECONDS
         results = monitor_wallet(
             wallet_address=address,
             store=store,
             limit=limit,
             timeout=timeout,
             defer_processed=True,
+            deadline=scan_deadline,
         )
         results = persist_observed_transactions(address, results)
         reconciled_review_rows = reconcile_terminal_review_history(address)
@@ -286,7 +292,9 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 # The post-execution reconciliation below remains as a
                 # restart/retry safety net for transient ProfileStore errors.
                 persist_source_trade_refs(address, simulator)
-                execution_outcomes = execute_pending_paper_orders(address, simulator=simulator)
+                execution_outcomes = execute_pending_paper_orders(
+                    address, simulator=simulator, deadline=scan_deadline
+                )
             # Reconcile the simulator's durable orders on every scan. This also
             # closes the crash window between order creation and reference write.
             persist_source_trade_refs(address, simulator)

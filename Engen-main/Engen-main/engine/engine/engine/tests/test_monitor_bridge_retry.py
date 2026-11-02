@@ -202,10 +202,10 @@ class MonitorBridgeRetryTests(unittest.TestCase):
             scan(WALLET)
 
         self.assertEqual(profile_store.get_pending_transaction_signatures.call_args.kwargs["limit"], 5000)
-        self.assertEqual(store.get_statuses.call_count, 2)
+        self.assertEqual(store.get_statuses.call_count, 3)
         self.assertEqual(
             [len(call.args[1]) for call in store.get_statuses.call_args_list],
-            [1000, 287],
+            [500, 500, 287],
         )
         self.assertEqual(profile_store.mark_transaction_needs_review.call_count, 1287)
 

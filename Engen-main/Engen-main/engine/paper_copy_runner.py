@@ -290,7 +290,7 @@ def _quote_change_matches_side(amount, side):
     return amount < 0 if side == "BUY" else amount > 0
 
 
-def execute_pending_paper_orders(wallet_address=None, simulator=None, price_provider=None):
+def execute_pending_paper_orders(wallet_address=None, simulator=None, price_provider=None, deadline=None):
     """Retry queued automatic paper orders using fresh public market snapshots."""
     simulator = simulator or get_paper_simulator()
     price_provider = price_provider or fetch_market_price
@@ -302,6 +302,8 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
         key=_source_order_time_key,
     )
     for queued_snapshot in ordered_orders:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         # Earlier fills/expirations can terminalize dependent orders while this
         # pass is iterating its initial snapshot. Always re-read the live order.
         order_id = queued_snapshot.get("order_id")
@@ -381,7 +383,15 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                         # Non-stable quote assets (most commonly SOL) must be
                         # converted through a fresh public USD price, never guessed.
                         try:
-                            quote_price = price_provider(source_quote_mint)
+                            if deadline is not None and time.monotonic() >= deadline:
+                                quote_price = None
+                            elif price_provider is fetch_market_price:
+                                remaining = deadline - time.monotonic() if deadline is not None else 8.0
+                                quote_price = price_provider(
+                                    source_quote_mint, timeout=min(8.0, max(0.1, remaining))
+                                )
+                            else:
+                                quote_price = price_provider(source_quote_mint)
                             price_value = Decimal(str(quote_price.price)) if quote_price is not None else Decimal("0")
                             if (
                                 quote_price is not None
@@ -498,7 +508,15 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
             order["quantity"] = str(owned_quantity * sell_fraction)
             simulator._persist(order)
         try:
-            market_price = price_provider(order.get("asset_mint"))
+            if deadline is not None and time.monotonic() >= deadline:
+                continue
+            if price_provider is fetch_market_price:
+                remaining = deadline - time.monotonic() if deadline is not None else 8.0
+                market_price = price_provider(
+                    order.get("asset_mint"), timeout=min(8.0, max(0.1, remaining))
+                )
+            else:
+                market_price = price_provider(order.get("asset_mint"))
         except Exception:
             market_price = None
         # Market-data lookups may be slow. Re-check source age after the lookup

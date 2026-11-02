@@ -2,6 +2,7 @@
 
 from contextlib import nullcontext
 import time
+import math
 
 from engine.config import (
     MAX_SOURCE_FUTURE_SKEW_SECONDS,
@@ -17,7 +18,7 @@ from engine.solana_validation import is_valid_solana_address, is_valid_transacti
 
 
 MAX_DISCOVERY_PAGES = 5
-MAX_FRESH_SIGNATURES_PER_SCAN = 50
+MAX_FRESH_SIGNATURES_PER_SCAN = 10
 MAX_HISTORY_SIGNATURES_PER_SCAN = 25
 MAX_HISTORY_SIGNATURES_PER_WALLET = 1000
 WALLET_SCAN_BUDGET_SECONDS = 10.0
@@ -333,7 +334,7 @@ def get_and_store_new_wallet_signatures(
                 limit=MAX_HISTORY_SIGNATURES_PER_SCAN,
                 history_cap=MAX_HISTORY_SIGNATURES_PER_WALLET,
                 exclude_signatures=fresh_signatures,
-                before_block_time=int(current_time - max_source_age),
+                before_block_time=math.ceil(current_time - max_source_age),
             )
         except (TypeError, ValueError, OSError, RuntimeError):
             history_signatures = []

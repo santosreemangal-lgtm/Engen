@@ -470,6 +470,7 @@ def monitor_wallet(
     timeout=10,
     defer_processed=False,
     latency_recorder=None,
+    deadline=None,
 ):
     """Monitor a public wallet and retry pending transactions."""
 
@@ -481,7 +482,10 @@ def monitor_wallet(
 
     # Start the per-wallet deadline before discovery so pagination cannot
     # consume the entire cycle and starve later wallets.
-    deadline = time.monotonic() + WALLET_SCAN_BUDGET_SECONDS
+    deadline = (
+        time.monotonic() + WALLET_SCAN_BUDGET_SECONDS
+        if deadline is None else deadline
+    )
     signature_options = {
         "wallet_address": wallet_address,
         "store": store,

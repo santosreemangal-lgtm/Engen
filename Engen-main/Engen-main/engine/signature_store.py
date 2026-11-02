@@ -613,7 +613,13 @@ class SignatureStore:
                            attempts, last_checked_at
                     FROM seen_signatures
                     WHERE wallet_address = ?
-                    ORDER BY first_seen_at DESC, signature DESC
+                    ORDER BY
+                        CASE WHEN block_time IS NULL THEN 1 ELSE 0 END,
+                        block_time DESC,
+                        CASE WHEN slot IS NULL THEN 1 ELSE 0 END,
+                        slot DESC,
+                        first_seen_at DESC,
+                        signature DESC
                     LIMIT ?
                 )
                 SELECT signature

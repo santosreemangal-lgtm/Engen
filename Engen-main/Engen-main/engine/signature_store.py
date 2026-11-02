@@ -690,8 +690,7 @@ class SignatureStore:
         # diagnostics existed; retry it once only inside the bounded recent window.
         recoverable_codes = (
             "http_429", "http_429_cooldown", "http_error",
-            "timeout", "network_error", "rpc_error",
-            "json_rpc_error", "invalid_response",
+            "timeout", "network_error", "rpc_error", "invalid_response",
         )
         with closing(self._connect()) as connection:
             with connection:
@@ -699,10 +698,17 @@ class SignatureStore:
                     """
                     WITH newest_window AS (
                         SELECT wallet_address, signature, status, error_code,
-                               last_checked_at, requeue_count, first_seen_at
+                               last_checked_at, requeue_count, first_seen_at,
+                               block_time, slot
                         FROM seen_signatures
                         WHERE wallet_address = ?
-                        ORDER BY first_seen_at DESC, signature DESC
+                        ORDER BY
+                            CASE WHEN block_time IS NULL THEN 1 ELSE 0 END,
+                            block_time DESC,
+                            CASE WHEN slot IS NULL THEN 1 ELSE 0 END,
+                            slot DESC,
+                            first_seen_at DESC,
+                            signature DESC
                         LIMIT ?
                     )
                     SELECT signature

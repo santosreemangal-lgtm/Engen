@@ -318,6 +318,30 @@ class DashboardProfileApiTests(unittest.TestCase):
         self.assertEqual(len(report["transactions"]), 2)
         self.assertFalse(report["transactions"][0]["simulated"])
 
+    def test_wallet_activity_api_includes_durable_source_refs_without_activity_rows(self):
+        signature = "1" * 64
+        self.store.save_source_trade_ref(
+            self.profile_id,
+            "paper-order-archive-001",
+            PUBLIC_WALLET,
+            signature,
+            "BUY",
+            TOKEN_MINT,
+            source_slot=123,
+            source_block_time=1790000000,
+        )
+        report = dashboard_server.load_profile_transactions(
+            parse_qs("profile_id=" + self.profile_id)
+        )
+        self.assertEqual(report["transactions"], [])
+        self.assertEqual(len(report["source_trade_refs"]), 1)
+        reference = report["source_trade_refs"][0]
+        self.assertEqual(reference["order_id"], "paper-order-archive-001")
+        self.assertEqual(reference["source_signature"], signature)
+        self.assertEqual(reference["side"], "BUY")
+        self.assertEqual(reference["source_wallet_address"], PUBLIC_WALLET)
+        self.assertEqual(reference["asset_mint"], TOKEN_MINT)
+
     def test_classification_filter_is_allowlisted_and_applied(self):
         self.store.save_transaction(
             "buy-signature", PUBLIC_WALLET, classification="BUY_CANDIDATE",

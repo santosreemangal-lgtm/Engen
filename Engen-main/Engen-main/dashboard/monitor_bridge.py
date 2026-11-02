@@ -2,12 +2,21 @@
 """Bridge between the dashboard and the read-only Solana engine."""
 
 import sqlite3
+import time
 from decimal import Decimal, InvalidOperation
 
 from engine.signature_store import SignatureStore
 from engine.transaction_monitor import monitor_wallet
-from engine.paper_copy_runner import (queue_paper_orders, execute_pending_paper_orders,
-    get_paper_simulator, PAPER_SIMULATOR_LOCK, source_trade_is_fresh)
+from engine.wallet_monitor import WALLET_SCAN_BUDGET_SECONDS
+from engine.paper_copy_runner import (
+    MAX_SOURCE_FUTURE_SKEW_SECONDS,
+    MAX_SOURCE_TRADE_AGE_SECONDS,
+    queue_paper_orders,
+    execute_pending_paper_orders,
+    get_paper_simulator,
+    PAPER_SIMULATOR_LOCK,
+    source_trade_is_fresh,
+)
 from engine.profile_store import LABELS
 from engine.solana_validation import is_valid_transaction_signature
 
@@ -155,7 +164,9 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
         )) or not (callable(status_batch_reader) or callable(status_reader)):
             return 0
         try:
-            signatures = pending_reader(address, limit=1000)
+            # Process the entire bounded profile-pending window so rows beyond
+            # the first 1,000 cannot be starved by older non-review pending rows.
+            signatures = pending_reader(address, limit=5000)
         except (TypeError, ValueError, OSError, RuntimeError, sqlite3.Error):
             return 0
         if not isinstance(signatures, (list, tuple)):
@@ -164,9 +175,15 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
         statuses = None
         if callable(status_batch_reader):
             try:
-                candidate_statuses = status_batch_reader(address, signatures)
-                if isinstance(candidate_statuses, dict):
-                    statuses = candidate_statuses
+                statuses = {}
+                # Keep wallet+signature parameters below SQLite builds that
+                # enforce the traditional 999-variable statement limit.
+                for start in range(0, len(signatures), 500):
+                    candidate_statuses = status_batch_reader(
+                        address, signatures[start:start + 500]
+                    )
+                    if isinstance(candidate_statuses, dict):
+                        statuses.update(candidate_statuses)
             except (TypeError, ValueError, OSError, RuntimeError, sqlite3.Error):
                 statuses = None
         for signature in signatures:
@@ -243,12 +260,16 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
 
     def scan_wallet(address):
         """Analyze new wallet signatures and queue eligible paper-copy orders."""
+        # One deadline covers discovery, transaction parsing, and paper price
+        # lookups. A slow source cannot monopolize the single monitor worker.
+        scan_deadline = time.monotonic() + WALLET_SCAN_BUDGET_SECONDS
         results = monitor_wallet(
             wallet_address=address,
             store=store,
             limit=limit,
             timeout=timeout,
             defer_processed=True,
+            deadline=scan_deadline,
         )
         results = persist_observed_transactions(address, results)
         reconciled_review_rows = reconcile_terminal_review_history(address)
@@ -273,7 +294,9 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 # The post-execution reconciliation below remains as a
                 # restart/retry safety net for transient ProfileStore errors.
                 persist_source_trade_refs(address, simulator)
-                execution_outcomes = execute_pending_paper_orders(address, simulator=simulator)
+                execution_outcomes = execute_pending_paper_orders(
+                    address, simulator=simulator, deadline=scan_deadline
+                )
             # Reconcile the simulator's durable orders on every scan. This also
             # closes the crash window between order creation and reference write.
             persist_source_trade_refs(address, simulator)
@@ -333,7 +356,10 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     if not source_trade_is_fresh(item):
                         item["paper_copy_status"] = "SKIPPED_STALE_SOURCE"
                         item["paper_copy_message"] = (
-                            "Source block time is missing, invalid, in the future, or older than 60 seconds; no paper order was created."
+                            "Source block time is missing or invalid, more than "
+                            f"{MAX_SOURCE_FUTURE_SKEW_SECONDS} seconds in the future, "
+                            f"or older than the configured {MAX_SOURCE_TRADE_AGE_SECONDS}-second "
+                            "window; no paper order was created."
                         )
                         store.mark_processed(address, signature)
                         continue
@@ -391,8 +417,10 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 ):
                     item["paper_copy_status"] = "SKIPPED_STALE_SOURCE"
                     item["paper_copy_message"] = (
-                        "Source block time is missing, invalid, in the future, or older "
-                        "than 60 seconds; no paper order was created."
+                        "Source block time is missing or invalid, more than "
+                        f"{MAX_SOURCE_FUTURE_SKEW_SECONDS} seconds in the future, or older "
+                        f"than the configured {MAX_SOURCE_TRADE_AGE_SECONDS}-second "
+                        "window; no paper order was created."
                     )
                     store.mark_processed(address, signature)
                 elif (
@@ -405,6 +433,20 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 {**item, "paper_copy_error": "Paper-copy order queue failed."}
                 for item in results
             ]
+
+        # Rotate any still-pending records behind untouched signatures. This
+        # includes retryable RPC errors and queue failures, so one repeated item
+        # cannot occupy every Fresh/History slot on every scan.
+        pending_signatures = [
+            item.get("signature") for item in results
+            if isinstance(item, dict) and isinstance(item.get("signature"), str)
+        ]
+        touch_pending = getattr(store, "touch_pending_signatures", None)
+        if callable(touch_pending) and pending_signatures:
+            try:
+                touch_pending(address, pending_signatures[:75])
+            except (TypeError, ValueError, OSError, RuntimeError, sqlite3.Error):
+                pass
 
         # Queue status may change during the copy pass (pending -> processed).
         # Refresh profile evidence after those transitions so both stores agree

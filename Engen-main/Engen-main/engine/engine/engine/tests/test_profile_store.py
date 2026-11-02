@@ -117,6 +117,42 @@ class ProfileStoreTests(unittest.TestCase):
         self.assertEqual(second_wallet_total, 1)
         self.assertEqual(len(self.store.list_transactions(profile)), 1001)
 
+    def test_wallet_activity_retention_preserves_all_pending_rows(self):
+        profile = self.store.create_profile("Pending retention")
+        self.store.associate_source_wallet(profile, PUBLIC_ADDRESS)
+        for index in range(1005):
+            self.store.save_transaction(
+                signature=f"pending-{index:04d}",
+                source_wallet_address=PUBLIC_ADDRESS,
+                classification="UNKNOWN",
+                status="pending",
+                profile_ids=[profile],
+                observed_at=f"2026-01-01T00:{index // 60:02d}:{index % 60:02d}Z",
+            )
+        for index in range(1005):
+            self.store.save_transaction(
+                signature=f"complete-{index:04d}",
+                source_wallet_address=PUBLIC_ADDRESS,
+                classification="UNKNOWN",
+                status="observed",
+                profile_ids=[profile],
+                observed_at=f"2026-01-02T00:{index // 60:02d}:{index % 60:02d}Z",
+            )
+
+        with sqlite3.connect(self.path) as db:
+            pending_count = db.execute(
+                "SELECT COUNT(*) FROM transactions "
+                "WHERE source_wallet_address=? AND status='pending'",
+                (PUBLIC_ADDRESS,),
+            ).fetchone()[0]
+            completed_count = db.execute(
+                "SELECT COUNT(*) FROM transactions "
+                "WHERE source_wallet_address=? AND status!='pending'",
+                (PUBLIC_ADDRESS,),
+            ).fetchone()[0]
+        self.assertEqual(pending_count, 1005)
+        self.assertEqual(completed_count, 1000)
+
     def test_balance_snapshots_keep_history_and_latest_current(self):
         p = self.store.create_profile("Portfolio")
         self.store.associate_source_wallet(p, PUBLIC_ADDRESS)

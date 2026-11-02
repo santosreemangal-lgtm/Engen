@@ -1,6 +1,7 @@
 
 import json
 import sqlite3
+import time
 from contextlib import closing
 from pathlib import Path
 
@@ -60,6 +61,8 @@ class SignatureStore:
                     "error_stage": "TEXT",
                     "error_code": "TEXT",
                     "error_message": "TEXT",
+                    "requeue_count": "INTEGER NOT NULL DEFAULT 0",
+                    "block_time": "INTEGER",
                 }
                 for column, definition in migrations.items():
                     if column not in columns:
@@ -88,8 +91,18 @@ class SignatureStore:
                     )
                 """)
                 connection.execute("""
+                    CREATE TABLE IF NOT EXISTS rpc_cooldown_state (
+                        state_id INTEGER PRIMARY KEY CHECK(state_id=1),
+                        cooldown_until REAL NOT NULL
+                    )
+                """)
+                connection.execute("""
                     CREATE INDEX IF NOT EXISTS idx_seen_signatures_wallet_status_first_seen
                     ON seen_signatures(wallet_address, status, first_seen_at)
+                """)
+                connection.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_seen_signatures_wallet_status_block_time
+                    ON seen_signatures(wallet_address, status, block_time DESC)
                 """)
 
                 pruned = self._prune_transaction_records(
@@ -250,26 +263,39 @@ class SignatureStore:
         return statuses
 
 
-    def save(self, wallet_address, signature, slot=None):
+    def save(self, wallet_address, signature, slot=None, block_time=None):
         self._validate_wallet(wallet_address)
         self._validate_signature(signature)
         if slot is not None and (
             not isinstance(slot, int) or isinstance(slot, bool) or slot < 0
         ):
             raise ValueError("Slot must be a non-negative integer.")
+        if block_time is not None and (
+            not isinstance(block_time, int) or isinstance(block_time, bool) or block_time < 0
+        ):
+            raise ValueError("Block time must be a non-negative integer.")
 
         with closing(self._connect()) as connection:
             with connection:
                 cursor = connection.execute(
                     """
                     INSERT OR IGNORE INTO seen_signatures
-                        (wallet_address, signature, status, slot)
-                    VALUES (?, ?, 'pending', ?)
+                        (wallet_address, signature, status, slot, block_time)
+                    VALUES (?, ?, 'pending', ?, ?)
                     """,
-                    (wallet_address, signature, slot),
+                    (wallet_address, signature, slot, block_time),
                 )
                 saved = cursor.rowcount == 1
-
+                if not saved and (slot is not None or block_time is not None):
+                    connection.execute(
+                        """
+                        UPDATE seen_signatures
+                        SET slot=COALESCE(?, slot),
+                            block_time=COALESCE(?, block_time)
+                        WHERE wallet_address=? AND signature=?
+                        """,
+                        (slot, block_time, wallet_address, signature),
+                    )
         return saved
 
     def save_many(self, wallet_address, signatures):
@@ -460,13 +486,266 @@ class SignatureStore:
                 FROM seen_signatures
                 WHERE wallet_address = ?
                   AND status = 'pending'
-                ORDER BY first_seen_at ASC
+                ORDER BY first_seen_at DESC, signature DESC
                 LIMIT ?
                 """,
                 (wallet_address, limit),
             ).fetchall()
 
         return [row[0] for row in rows]
+
+    def get_fresh_pending_signatures(
+        self, wallet_address, *, limit=50, max_age_seconds=60,
+        future_skew_seconds=5, now=None
+    ):
+        """Return durable pending signature observations still inside the copy window."""
+        self._validate_wallet(wallet_address)
+        if (
+            not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 50
+            or not isinstance(max_age_seconds, int) or isinstance(max_age_seconds, bool)
+            or max_age_seconds < 1
+            or not isinstance(future_skew_seconds, int) or isinstance(future_skew_seconds, bool)
+            or future_skew_seconds < 0
+        ):
+            raise ValueError("Invalid fresh signature selection.")
+        current_time = int(time.time()) if now is None else now
+        if not isinstance(current_time, (int, float)) or isinstance(current_time, bool):
+            raise ValueError("Current time must be numeric.")
+        lower = current_time - max_age_seconds
+        upper = current_time + future_skew_seconds
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT signature, slot, block_time
+                FROM seen_signatures
+                WHERE wallet_address=? AND status='pending'
+                  AND block_time IS NOT NULL
+                  AND block_time BETWEEN ? AND ?
+                ORDER BY attempts ASC, COALESCE(last_checked_at,'') ASC,
+                         block_time DESC, slot DESC, first_seen_at DESC, signature DESC
+                LIMIT ?
+                """,
+                (wallet_address, lower, upper, limit),
+            ).fetchall()
+        return [
+            {"signature": row[0], "slot": row[1], "blockTime": row[2]}
+            for row in rows
+        ]
+
+
+    def set_global_rpc_cooldown(self, seconds):
+        """Persist a process-wide provider cooldown so restarts do not bypass 429 backoff."""
+        if (
+            not isinstance(seconds, (int, float))
+            or isinstance(seconds, bool)
+            or seconds < 0
+            or seconds != seconds
+            or seconds == float("inf")
+        ):
+            raise ValueError("RPC cooldown must be a finite non-negative number.")
+        deadline = time.time() + float(seconds)
+        with closing(self._connect()) as connection:
+            with connection:
+                connection.execute(
+                    """
+                    INSERT INTO rpc_cooldown_state(state_id,cooldown_until)
+                    VALUES(1,?)
+                    ON CONFLICT(state_id) DO UPDATE SET
+                        cooldown_until=MAX(rpc_cooldown_state.cooldown_until,excluded.cooldown_until)
+                    """,
+                    (deadline,),
+                )
+
+    def get_global_rpc_cooldown_remaining(self):
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT cooldown_until FROM rpc_cooldown_state WHERE state_id=1"
+            ).fetchone()
+        if row is None:
+            return 0.0
+        return max(0.0, float(row[0]) - time.time())
+
+
+    def get_history_pending_signatures(
+        self, wallet_address, limit=25, history_cap=1000, exclude_signatures=(),
+        before_block_time=None,
+    ):
+        """Select newest pending history only from the wallet's newest bounded window."""
+        self._validate_wallet(wallet_address)
+        if (
+            not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 25
+            or not isinstance(history_cap, int) or isinstance(history_cap, bool)
+            or not 1 <= history_cap <= 1000
+            or not isinstance(exclude_signatures, (list, tuple))
+            or len(exclude_signatures) > 50
+            or (
+                before_block_time is not None
+                and (
+                    not isinstance(before_block_time, int)
+                    or isinstance(before_block_time, bool)
+                    or before_block_time < 0
+                )
+            )
+        ):
+            raise ValueError("Invalid bounded history selection.")
+        excluded = []
+        for signature in exclude_signatures:
+            self._validate_signature(signature)
+            if signature not in excluded:
+                excluded.append(signature)
+        exclusion_sql = ""
+        params = [wallet_address, history_cap]
+        fresh_exclusion_sql = ""
+        if before_block_time is not None:
+            # Exclude every still-fresh row, not just the first 50 selected for
+            # this scan. The remaining fresh signatures must stay Fresh next scan.
+            fresh_exclusion_sql = " AND (block_time IS NULL OR block_time < ?)"
+            params.append(before_block_time)
+        if excluded:
+            exclusion_sql = " AND signature NOT IN (" + ",".join("?" for _ in excluded) + ")"
+            params.extend(excluded)
+        params.append(limit)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                WITH newest_window AS (
+                    SELECT signature, status, first_seen_at, block_time,
+                           attempts, last_checked_at
+                    FROM seen_signatures
+                    WHERE wallet_address = ?
+                    ORDER BY
+                        CASE WHEN block_time IS NULL THEN 1 ELSE 0 END,
+                        block_time DESC,
+                        CASE WHEN slot IS NULL THEN 1 ELSE 0 END,
+                        slot DESC,
+                        first_seen_at DESC,
+                        signature DESC
+                    LIMIT ?
+                )
+                SELECT signature
+                FROM newest_window
+                WHERE status = 'pending'""" + fresh_exclusion_sql + exclusion_sql + """
+                ORDER BY attempts ASC, COALESCE(last_checked_at,'') ASC,
+                         first_seen_at DESC, signature DESC
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
+        return [row[0] for row in rows]
+
+    def touch_pending_signature(self, wallet_address, signature):
+        """Move a still-pending item behind untouched work without increasing error attempts."""
+        self._validate_wallet(wallet_address)
+        self._validate_signature(signature)
+        with closing(self._connect()) as connection:
+            with connection:
+                cursor = connection.execute(
+                    """UPDATE seen_signatures
+                       SET last_checked_at=CURRENT_TIMESTAMP
+                       WHERE wallet_address=? AND signature=? AND status='pending'""",
+                    (wallet_address, signature),
+                )
+        return cursor.rowcount == 1
+
+
+    def touch_pending_signatures(self, wallet_address, signatures):
+        """Rotate still-pending work behind untouched items after a completed scan."""
+        self._validate_wallet(wallet_address)
+        if not isinstance(signatures, (list, tuple)) or len(signatures) > 75:
+            raise ValueError("Pending scan touch batch must contain at most 75 signatures.")
+        cleaned = []
+        for signature in signatures:
+            self._validate_signature(signature)
+            if signature not in cleaned:
+                cleaned.append(signature)
+        if not cleaned:
+            return 0
+        placeholders = ",".join("?" for _ in cleaned)
+        with closing(self._connect()) as connection:
+            with connection:
+                cursor = connection.execute(
+                    "UPDATE seen_signatures SET last_checked_at=CURRENT_TIMESTAMP "
+                    "WHERE wallet_address=? AND status='pending' "
+                    "AND signature IN (" + placeholders + ")",
+                    [wallet_address, *cleaned],
+                )
+        return cursor.rowcount
+
+
+    def requeue_recoverable_needs_review(
+        self, wallet_address, limit=10, cooldown_seconds=30, history_cap=1000
+    ):
+        """Requeue only known transient failures once, after cooldown, within recent history."""
+        self._validate_wallet(wallet_address)
+        if (
+            not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 10
+            or not isinstance(cooldown_seconds, int) or isinstance(cooldown_seconds, bool)
+            or cooldown_seconds < 30
+            or not isinstance(history_cap, int) or isinstance(history_cap, bool)
+            or not 1 <= history_cap <= 1000
+        ):
+            raise ValueError("Invalid bounded needs-review requeue policy.")
+        cutoff = "-%d seconds" % cooldown_seconds
+        # rpc_error is retained for old rows written before structured PR #43
+        # diagnostics existed; retry it once only inside the bounded recent window.
+        recoverable_codes = (
+            "http_429", "http_429_cooldown", "http_error",
+            "timeout", "network_error", "rpc_error", "invalid_response",
+        )
+        with closing(self._connect()) as connection:
+            with connection:
+                rows = connection.execute(
+                    """
+                    WITH newest_window AS (
+                        SELECT wallet_address, signature, status, error_code,
+                               last_checked_at, requeue_count, first_seen_at,
+                               block_time, slot
+                        FROM seen_signatures
+                        WHERE wallet_address = ?
+                        ORDER BY
+                            CASE WHEN block_time IS NULL THEN 1 ELSE 0 END,
+                            block_time DESC,
+                            CASE WHEN slot IS NULL THEN 1 ELSE 0 END,
+                            slot DESC,
+                            first_seen_at DESC,
+                            signature DESC
+                        LIMIT ?
+                    )
+                    SELECT signature
+                    FROM newest_window
+                    WHERE status = 'needs_review'
+                      AND requeue_count < 1
+                      AND error_code IN (?,?,?,?,?,?,?)
+                      AND last_checked_at <= datetime('now', ?)
+                    ORDER BY last_checked_at ASC, first_seen_at DESC, signature DESC
+                    LIMIT ?
+                    """,
+                    (wallet_address, history_cap, *recoverable_codes, cutoff, limit),
+                ).fetchall()
+                signatures = [row[0] for row in rows]
+                for signature in signatures:
+                    connection.execute(
+                        """
+                        UPDATE seen_signatures
+                        SET status='pending', attempts=0,
+                            last_checked_at=CURRENT_TIMESTAMP,
+                            requeue_count=requeue_count+1
+                        WHERE wallet_address=? AND signature=?
+                          AND status='needs_review' AND requeue_count < 1
+                        """,
+                        (wallet_address, signature),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE transaction_records
+                        SET processing_status='incomplete',
+                            updated_at=CURRENT_TIMESTAMP
+                        WHERE wallet_address=? AND signature=?
+                          AND processing_status='needs_review'
+                        """,
+                        (wallet_address, signature),
+                    )
+        return signatures
 
     def get_backlog_stats(self, wallet_address):
         """Return per-wallet queue counts and the age of its oldest pending item."""

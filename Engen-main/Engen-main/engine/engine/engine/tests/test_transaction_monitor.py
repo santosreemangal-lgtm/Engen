@@ -1,4 +1,5 @@
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -202,19 +203,9 @@ class TransactionMonitorTests(unittest.TestCase):
             self.assertEqual(results, [])
             mock_get_new.assert_called_once()
 
-            process_kwargs = mock_process_new.call_args.kwargs
-
-            self.assertEqual(process_kwargs["signatures"], [])
-            self.assertEqual(
-                process_kwargs["rpc_url"],
-                DEFAULT_RPC_URL,
-            )
-            self.assertEqual(process_kwargs["timeout"], 10)
-            self.assertEqual(
-                process_kwargs["wallet_address"],
-                "PublicWalletAddress",
-            )
-            self.assertIs(process_kwargs["store"], mock_store)
+            # Empty Fresh/History batches are skipped rather than invoking
+            # transaction processing with no work.
+            mock_process_new.assert_not_called()
 
     @patch("engine.transaction_monitor.process_transaction_signature")
     def test_filters_token_balance_changes_to_watched_wallet(
@@ -654,6 +645,55 @@ class TransactionMonitorTests(unittest.TestCase):
             ],
         )
 
+
+    def test_history_item_with_verified_fresh_transaction_block_time_is_promoted(self):
+        wallet = "11111111111111111111111111111111"
+        signature = "1" * 64
+        with tempfile.TemporaryDirectory() as directory:
+            store = SignatureStore(Path(directory) / "signatures.db")
+            store.save(wallet, signature)
+            resolved_block_time = int(time.time())
+            with (
+                patch(
+                    "engine.transaction_monitor.get_and_store_new_wallet_signatures",
+                    return_value={
+                        "fresh": [],
+                        "history": [{"signature": signature}],
+                    },
+                ),
+                patch(
+                    "engine.transaction_monitor.process_new_signatures",
+                    return_value=[{
+                        "signature": signature,
+                        "status": "success",
+                        "available": True,
+                        "metadata_complete": True,
+                        "raw_transaction": {
+                            "slot": 123,
+                            "blockTime": resolved_block_time,
+                        },
+                        "trade_signal": {
+                            "classification": "BUY_CANDIDATE",
+                        },
+                    }],
+                ),
+            ):
+                results = monitor_wallet(
+                    wallet, store=store, defer_processed=True,
+                )
+
+            self.assertEqual(len(results), 1)
+            self.assertTrue(results[0]["copy_eligible"])
+            self.assertFalse(results[0]["history_backfill"])
+            self.assertEqual(
+                results[0]["signature_observation"]["block_time"],
+                resolved_block_time,
+            )
+            fresh = store.get_fresh_pending_signatures(
+                wallet, limit=50, max_age_seconds=60,
+                future_skew_seconds=5, now=resolved_block_time,
+            )
+            self.assertEqual([item["signature"] for item in fresh], [signature])
 
 if __name__ == "__main__":
     unittest.main()

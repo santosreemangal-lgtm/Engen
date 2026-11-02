@@ -1,7 +1,13 @@
 """Read-only monitoring of public Solana wallet signatures."""
 
 from contextlib import nullcontext
+import time
+import math
 
+from engine.config import (
+    MAX_SOURCE_FUTURE_SKEW_SECONDS,
+    load_max_source_age_seconds,
+)
 from engine.solana_public import (
     DEFAULT_RPC_URL,
     SolanaRPCError,
@@ -12,7 +18,11 @@ from engine.solana_validation import is_valid_solana_address, is_valid_transacti
 
 
 MAX_DISCOVERY_PAGES = 5
+MAX_FRESH_SIGNATURES_PER_SCAN = 50
+MAX_HISTORY_SIGNATURES_PER_SCAN = 25
 MAX_PENDING_SIGNATURES_PER_SCAN = 50
+MAX_HISTORY_SIGNATURES_PER_WALLET = 1000
+WALLET_SCAN_BUDGET_SECONDS = 10.0
 
 
 def get_wallet_signatures(
@@ -125,12 +135,25 @@ def get_and_store_new_wallet_signatures(
     rpc_url=DEFAULT_RPC_URL,
     timeout=10,
     latency_recorder=None,
+    return_batches=False,
+    now=None,
+    deadline=None,
 ):
-    """Persist signatures, establish baseline, and return pending entries."""
+    """Persist signatures and return fresh copy candidates separately from bounded history."""
+    if deadline is None:
+        deadline = time.monotonic() + WALLET_SCAN_BUDGET_SECONDS
     if not is_valid_solana_address(wallet_address):
         raise ValueError("Invalid Solana public wallet address.")
     if store is None:
         store = SignatureStore()
+
+    cooldown_reader = getattr(store, "get_global_rpc_cooldown_remaining", None)
+    if callable(cooldown_reader):
+        try:
+            if cooldown_reader() > 0:
+                return {"fresh": [], "history": []} if return_batches else []
+        except (TypeError, ValueError, OSError, RuntimeError):
+            pass
 
     options = {
         "wallet_address": wallet_address,
@@ -142,12 +165,28 @@ def get_and_store_new_wallet_signatures(
         options["latency_recorder"] = latency_recorder
     discovery_error = None
     try:
-        signatures = get_wallet_signatures(**options)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            signatures = []
+            discovery_error = SolanaRPCError("Wallet scan budget exhausted before discovery.")
+        else:
+            options["timeout"] = min(timeout, remaining, 5.0)
+            signatures = get_wallet_signatures(**options)
     except SolanaRPCError as exc:
-        # A discovery outage must not block work that was already persisted.
+        # Persist a provider-wide cooldown even when this is the first baseline
+        # scan, so another wallet cannot immediately hit the same throttled RPC.
+        diagnostics = getattr(exc, "diagnostics", {})
+        cooldown = diagnostics.get("cooldown_seconds") if isinstance(diagnostics, dict) else None
+        setter = getattr(store, "set_global_rpc_cooldown", None)
+        if callable(setter) and isinstance(cooldown, (int, float)) and not isinstance(cooldown, bool):
+            try:
+                setter(cooldown)
+            except (TypeError, ValueError, OSError, RuntimeError):
+                pass
         # The first scan still needs a successful read to establish its baseline.
         if not store.has_baseline(wallet_address):
             raise
+        # A discovery outage must not block work that was already persisted.
         discovery_error = exc
         signatures = []
 
@@ -161,7 +200,10 @@ def get_and_store_new_wallet_signatures(
             signature = item.get("signature")
             if not is_valid_transaction_signature(signature):
                 continue
-            store.save(wallet_address, signature, slot=item.get("slot"))
+            store.save(
+                wallet_address, signature, slot=item.get("slot"),
+                block_time=item.get("blockTime"),
+            )
             store.mark_processed(wallet_address, signature)
         store.mark_baseline(wallet_address)
         return []
@@ -176,6 +218,8 @@ def get_and_store_new_wallet_signatures(
         pages = 0
         page = signatures
         while True:
+            if deadline - time.monotonic() <= 0:
+                break
             pages += 1
             anchor_found = False
             for item in page:
@@ -185,7 +229,10 @@ def get_and_store_new_wallet_signatures(
                 if not is_valid_transaction_signature(signature):
                     continue
                 records_by_signature[signature] = item
-                store.save(wallet_address, signature, slot=item.get("slot"))
+                store.save(
+                    wallet_address, signature, slot=item.get("slot"),
+                    block_time=item.get("blockTime"),
+                )
                 if anchor_signature and signature == anchor_signature:
                     anchor_found = True
                     break
@@ -198,7 +245,7 @@ def get_and_store_new_wallet_signatures(
                 "wallet_address": wallet_address,
                 "limit": limit,
                 "rpc_url": rpc_url,
-                "timeout": timeout,
+                "timeout": min(timeout, max(0.1, deadline - time.monotonic()), 5.0),
                 "before": next_before,
             }
             if latency_recorder is not None:
@@ -206,30 +253,138 @@ def get_and_store_new_wallet_signatures(
             try:
                 page = get_wallet_signatures(**page_options)
             except SolanaRPCError as exc:
+                diagnostics = getattr(exc, "diagnostics", {})
+                cooldown = diagnostics.get("cooldown_seconds") if isinstance(diagnostics, dict) else None
+                setter = getattr(store, "set_global_rpc_cooldown", None)
+                if callable(setter) and isinstance(cooldown, (int, float)) and not isinstance(cooldown, bool):
+                    try:
+                        setter(cooldown)
+                    except (TypeError, ValueError, OSError, RuntimeError):
+                        pass
                 # Keep signatures already collected and continue processing the
                 # durable queue; the next scan can resume discovery from its anchor.
                 discovery_error = exc
                 break
 
-    # The discovery loop can collect up to five pages. Process a bounded batch
-    # of pending work even when discovery is temporarily unavailable.
-    pending_limit = min(limit * MAX_DISCOVERY_PAGES, MAX_PENDING_SIGNATURES_PER_SCAN)
-    pending_signatures = store.get_pending_signatures(
-        wallet_address, limit=pending_limit
+    # If discovery hit a provider cooldown, do not spend the remaining wallet
+    # budget retrying each pending signature against the same throttled endpoint.
+    cooldown_reader = getattr(store, "get_global_rpc_cooldown_remaining", None)
+    if callable(cooldown_reader):
+        try:
+            if cooldown_reader() > 0:
+                return {"fresh": [], "history": []} if return_batches else []
+        except (TypeError, ValueError, OSError, RuntimeError):
+            pass
+
+    # Recover only explicitly transient needs_review entries, once per signature,
+    # after the RPC cooldown, and only inside the wallet's newest 1,000-signature
+    # history window.
+    requeue = getattr(store, "requeue_recoverable_needs_review", None)
+    if callable(requeue):
+        try:
+            requeue(
+                wallet_address,
+                limit=10,
+                cooldown_seconds=30,
+                history_cap=MAX_HISTORY_SIGNATURES_PER_WALLET,
+            )
+        except (TypeError, ValueError, OSError, RuntimeError):
+            pass
+
+    current_time = time.time() if now is None else now
+    max_source_age = load_max_source_age_seconds()
+    fresh_reader = getattr(store, "get_fresh_pending_signatures", None)
+    fresh = []
+    if callable(fresh_reader):
+        try:
+            fresh = fresh_reader(
+                wallet_address,
+                limit=MAX_FRESH_SIGNATURES_PER_SCAN,
+                max_age_seconds=max_source_age,
+                future_skew_seconds=MAX_SOURCE_FUTURE_SKEW_SECONDS,
+                now=current_time,
+            )
+        except (TypeError, ValueError, OSError, RuntimeError):
+            fresh = []
+    else:
+        # Compatibility fallback for legacy test doubles; production stores the
+        # block_time column and retrieves pending fresh observations durably.
+        for item in records_by_signature.values():
+            block_time = item.get("blockTime")
+            if isinstance(block_time, int) and not isinstance(block_time, bool):
+                age = current_time - block_time
+                if -5 <= age <= max_source_age:
+                    fresh.append(dict(item))
+        fresh = fresh[:MAX_FRESH_SIGNATURES_PER_SCAN]
+
+    fresh = [
+        {
+            **records_by_signature.get(item["signature"], item),
+            "copy_eligible": True,
+            "history_backfill": False,
+        }
+        for item in fresh
+        if isinstance(item, dict) and isinstance(item.get("signature"), str)
+    ]
+    fresh_signatures = [item["signature"] for item in fresh]
+    history_limit = min(
+        MAX_HISTORY_SIGNATURES_PER_SCAN,
+        max(0, MAX_PENDING_SIGNATURES_PER_SCAN - len(fresh)),
     )
-    if discovery_error is not None and not pending_signatures:
+    history_reader = getattr(store, "get_history_pending_signatures", None)
+    if history_limit and callable(history_reader):
+        try:
+            history_signatures = history_reader(
+                wallet_address,
+                limit=history_limit,
+                history_cap=MAX_HISTORY_SIGNATURES_PER_WALLET,
+                exclude_signatures=fresh_signatures,
+                before_block_time=math.ceil(current_time - max_source_age),
+            )
+        except (TypeError, ValueError, OSError, RuntimeError):
+            history_signatures = []
+    elif history_limit:
+        # Compatibility fallback for older test doubles; production SignatureStore
+        # always uses the newest-1,000 bounded history selector above.
+        history_signatures = store.get_pending_signatures(
+            wallet_address, limit=history_limit
+        )
+    else:
+        history_signatures = []
+        history_signatures = [
+            signature for signature in history_signatures
+            if signature not in set(fresh_signatures)
+        ][:MAX_HISTORY_SIGNATURES_PER_SCAN]
+
+    history = [
+        {
+            **records_by_signature.get(signature, {"signature": signature}),
+            "copy_eligible": False,
+            "history_backfill": True,
+        }
+        for signature in history_signatures
+    ]
+    if discovery_error is not None and not fresh and not history:
         raise discovery_error
 
-    results = [
-        records_by_signature.get(signature, {"signature": signature})
-        for signature in pending_signatures
-    ]
     if discovery_error is not None:
-        for item in results:
-            item["discovery_warning"] = (
-                "New signature discovery failed; saved pending signatures are still being processed."
-            )
-    return results
+        warning = (
+            "New signature discovery failed; saved bounded history is still being processed."
+        )
+        for item in fresh + history:
+            item["discovery_warning"] = warning
+
+    if return_batches:
+        return {"fresh": fresh, "history": history}
+    # Preserve the original flat-list API for callers that have not opted into
+    # the explicit Fresh/History result structure.
+    legacy_results = []
+    for item in fresh + history:
+        legacy_results.append({
+            key: value for key, value in item.items()
+            if key not in {"copy_eligible", "history_backfill"}
+        })
+    return legacy_results
 
 
 if __name__ == "__main__":

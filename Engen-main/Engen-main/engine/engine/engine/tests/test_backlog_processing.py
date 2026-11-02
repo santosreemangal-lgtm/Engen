@@ -45,6 +45,23 @@ class BacklogProcessingTests(unittest.TestCase):
         self.assertEqual(pending[0]["discovery_warning"], DISCOVERY_WARNING)
         self.assertEqual(self.store.get_status(WALLET, SIGNATURE), "pending")
 
+    def test_first_baseline_429_persists_global_cooldown_for_other_wallets(self):
+        provider_error = SolanaRPCError(
+            "HTTP 429",
+            {"failure_kind": "http_429", "cooldown_seconds": 30},
+        )
+        with patch(
+            "engine.wallet_monitor.get_wallet_signatures",
+            side_effect=provider_error,
+        ):
+            with self.assertRaises(SolanaRPCError):
+                get_and_store_new_wallet_signatures(
+                    WALLET, store=self.store, limit=10
+                )
+        self.assertGreaterEqual(
+            self.store.get_global_rpc_cooldown_remaining(), 29
+        )
+
     def test_pagination_rpc_failure_still_drains_saved_queue(self):
         self.store.mark_baseline(WALLET)
         saved_pending = "1" * 64
@@ -226,6 +243,89 @@ class BacklogProcessingTests(unittest.TestCase):
         self.assertEqual(delta, -2)
         self.assertEqual(rate, -2.0)
 
+
+    def test_fresh_queue_precedes_history_without_downgrading_excess_fresh_rows(self):
+        now = 1_800_000_000
+        fresh_signatures = []
+        history_signatures = []
+        for index in range(55):
+            signature = (format(index + 1, "064x"))
+            fresh_signatures.append(signature)
+            self.store.save(
+                WALLET, signature, slot=2000 + index,
+                block_time=now - index - 1,
+            )
+        for index in range(40):
+            signature = format(1000 + index, "064x")
+            history_signatures.append(signature)
+            self.store.save(
+                WALLET, signature, slot=1000 + index,
+                block_time=now - 100 - index,
+            )
+
+        first_fresh = self.store.get_fresh_pending_signatures(
+            WALLET, limit=50, max_age_seconds=60,
+            future_skew_seconds=5, now=now,
+        )
+        history = self.store.get_history_pending_signatures(
+            WALLET, limit=25, history_cap=1000,
+            exclude_signatures=[item["signature"] for item in first_fresh],
+            before_block_time=now - 60,
+        )
+        self.store.touch_pending_signatures(
+            WALLET, [item["signature"] for item in first_fresh]
+        )
+        remaining_fresh = self.store.get_fresh_pending_signatures(
+            WALLET, limit=50, max_age_seconds=60,
+            future_skew_seconds=5, now=now,
+        )
+
+        self.assertEqual(len(first_fresh), 50)
+        self.assertEqual(len(history), 25)
+        self.assertTrue(set(history).issubset(set(history_signatures)))
+        self.assertEqual(
+            set(item["signature"] for item in remaining_fresh),
+            set(fresh_signatures) - {item["signature"] for item in first_fresh},
+        )
+
+    def test_recoverable_needs_review_is_requeued_once_inside_recent_window(self):
+        signature = "7" * 64
+        self.store.save(WALLET, signature)
+        for _ in range(5):
+            self.store.record_failure(
+                WALLET, signature, "rpc_fetch", "rpc_error",
+                "legacy generic RPC failure",
+            )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE seen_signatures SET last_checked_at=datetime('now','-60 seconds') "
+                "WHERE wallet_address=? AND signature=?",
+                (WALLET, signature),
+            )
+
+        requeued = self.store.requeue_recoverable_needs_review(
+            WALLET, limit=10, cooldown_seconds=30, history_cap=1000,
+        )
+        self.assertEqual(requeued, [signature])
+        self.assertEqual(self.store.get_status(WALLET, signature), "pending")
+        with self.store._connect() as db:
+            count = db.execute(
+                "SELECT requeue_count FROM seen_signatures "
+                "WHERE wallet_address=? AND signature=?",
+                (WALLET, signature),
+            ).fetchone()[0]
+            db.execute(
+                "UPDATE seen_signatures SET last_checked_at=datetime('now','-60 seconds') "
+                "WHERE wallet_address=? AND signature=?",
+                (WALLET, signature),
+            )
+        self.assertEqual(count, 1)
+        self.assertEqual(
+            self.store.requeue_recoverable_needs_review(
+                WALLET, limit=10, cooldown_seconds=30, history_cap=1000,
+            ),
+            [],
+        )
 
 if __name__ == "__main__":
     unittest.main()

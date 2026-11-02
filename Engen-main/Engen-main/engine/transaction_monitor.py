@@ -1,11 +1,18 @@
 """Monitor public Solana wallet transactions without submitting trades."""
 
+import json
+import time
+
+from engine.config import load_max_source_age_seconds
 from engine.solana_public import DEFAULT_RPC_URL, SolanaRPCError, get_signature_status
 from engine.signature_store import SignatureStore
 from engine.solana_validation import is_valid_solana_address, is_valid_transaction_signature
 from engine.transaction_analysis import classify_transaction
 from engine.transaction_processor import process_transaction_signature
-from engine.wallet_monitor import get_and_store_new_wallet_signatures
+from engine.wallet_monitor import (
+    WALLET_SCAN_BUDGET_SECONDS,
+    get_and_store_new_wallet_signatures,
+)
 
 
 def _include_signature_observation(result, item):
@@ -49,8 +56,10 @@ def process_new_signatures(
     store=None,
     defer_processed=False,
     latency_recorder=None,
+    deadline=None,
+    history_backfill=False,
 ):
-    """Analyze signatures and update persistent processing status."""
+    """Analyze a bounded signature batch and tag history as non-copyable."""
 
     if not isinstance(signatures, list):
         raise ValueError("Signatures must be provided as a list.")
@@ -58,19 +67,27 @@ def process_new_signatures(
     results = []
 
     for item in signatures:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
         if not isinstance(item, dict):
             continue
 
+        rate_limited = False
         signature = item.get("signature")
 
         if not isinstance(signature, str) or not signature.strip():
             continue
 
         try:
+            remaining = (
+                max(0.1, deadline - time.monotonic())
+                if deadline is not None else timeout
+            )
+            request_timeout = min(timeout, remaining)
             processor_options = {
                 "signature": signature,
                 "rpc_url": rpc_url,
-                "timeout": timeout,
+                "timeout": request_timeout,
             }
             if latency_recorder is not None:
                 processor_options["latency_recorder"] = latency_recorder
@@ -87,6 +104,30 @@ def process_new_signatures(
             }, item))
             continue
         except SolanaRPCError as exc:
+            diagnostics = getattr(exc, "diagnostics", {})
+            diagnostics = diagnostics if isinstance(diagnostics, dict) else {}
+            safe_diagnostics = {
+                key: diagnostics.get(key)
+                for key in (
+                    "failure_kind", "http_status", "json_rpc_code",
+                    "exception_class", "retry_after", "request_duration_ms",
+                    "attempts", "cooldown_seconds",
+                )
+            }
+            rate_limited = safe_diagnostics.get("failure_kind") in (
+                "http_429", "http_429_cooldown"
+            )
+            cooldown = safe_diagnostics.get("cooldown_seconds")
+            cooldown_writer = getattr(store, "set_global_rpc_cooldown", None)
+            if (
+                callable(cooldown_writer)
+                and isinstance(cooldown, (int, float))
+                and not isinstance(cooldown, bool)
+            ):
+                try:
+                    cooldown_writer(cooldown)
+                except (TypeError, ValueError, OSError, RuntimeError):
+                    pass
             if item.get("err") is not None:
                 # The signature-list RPC has already reported an on-chain
                 # execution error. A transaction-details RPC outage cannot
@@ -119,20 +160,29 @@ def process_new_signatures(
                     "metadata_status": "rpc_error",
                     "error": str(exc),
                     "retryable": True,
+                    "rpc_diagnostics": safe_diagnostics,
                 }
                 if (
                     wallet_address is not None
                     and store is not None
                     and is_valid_transaction_signature(signature)
                 ):
+                    diagnostic_message = (
+                        "RPC diagnostics: " + json.dumps(
+                            safe_diagnostics, sort_keys=True, separators=(",", ":")
+                        )
+                    )
+                    failure_code = safe_diagnostics.get("failure_kind") or "rpc_error"
                     failure = store.record_failure(
                         wallet_address, signature, "rpc_fetch",
-                        "rpc_error", str(exc),
+                        str(failure_code)[:80], diagnostic_message,
                     )
                     error_result["processing_status"] = failure["status"]
                     if failure["status"] == "needs_review":
                         error_result["retryable"] = False
             results.append(_include_signature_observation(error_result, item))
+            if rate_limited:
+                break
             continue
         except Exception as exc:
             if item.get("err") is not None:
@@ -232,10 +282,33 @@ def process_new_signatures(
             and item.get("confirmationStatus") not in ("confirmed", "finalized")
         ):
             try:
-                resolved_status = get_signature_status(
-                    signature, rpc_url=rpc_url, timeout=timeout
+                remaining = (
+                    max(0.1, deadline - time.monotonic())
+                    if deadline is not None else timeout
                 )
-            except SolanaRPCError:
+                resolved_status = get_signature_status(
+                    signature, rpc_url=rpc_url,
+                    timeout=min(timeout, remaining),
+                )
+            except SolanaRPCError as exc:
+                diagnostics = getattr(exc, "diagnostics", {})
+                rate_limited = (
+                    isinstance(diagnostics, dict)
+                    and diagnostics.get("failure_kind") in (
+                        "http_429", "http_429_cooldown"
+                    )
+                )
+                cooldown = diagnostics.get("cooldown_seconds") if isinstance(diagnostics, dict) else None
+                cooldown_writer = getattr(store, "set_global_rpc_cooldown", None)
+                if (
+                    callable(cooldown_writer)
+                    and isinstance(cooldown, (int, float))
+                    and not isinstance(cooldown, bool)
+                ):
+                    try:
+                        cooldown_writer(cooldown)
+                    except (TypeError, ValueError, OSError, RuntimeError):
+                        pass
                 resolved_status = None
             if isinstance(resolved_status, dict):
                 item = {
@@ -378,7 +451,14 @@ def process_new_signatures(
                 store.mark_processed(wallet_address, signature)
 
         results.append(result)
+        if rate_limited:
+            break
 
+    if history_backfill:
+        for result in results:
+            if isinstance(result, dict):
+                result["history_backfill"] = True
+                result["copy_eligible"] = False
     return results
 
 
@@ -390,6 +470,7 @@ def monitor_wallet(
     timeout=10,
     defer_processed=False,
     latency_recorder=None,
+    deadline=None,
 ):
     """Monitor a public wallet and retry pending transactions."""
 
@@ -399,28 +480,99 @@ def monitor_wallet(
     if store is None:
         store = SignatureStore()
 
+    # Start the per-wallet deadline before discovery so pagination cannot
+    # consume the entire cycle and starve later wallets.
+    deadline = (
+        time.monotonic() + WALLET_SCAN_BUDGET_SECONDS
+        if deadline is None else deadline
+    )
     signature_options = {
         "wallet_address": wallet_address,
         "store": store,
         "limit": limit,
         "rpc_url": rpc_url,
         "timeout": timeout,
+        "return_batches": True,
+        "deadline": deadline,
     }
     if latency_recorder is not None:
         signature_options["latency_recorder"] = latency_recorder
-    pending_signatures = get_and_store_new_wallet_signatures(**signature_options)
+    batches = get_and_store_new_wallet_signatures(**signature_options)
+    if not isinstance(batches, dict):
+        batches = {"fresh": batches if isinstance(batches, list) else [], "history": []}
 
-    monitor_options = {
-        "signatures": pending_signatures,
+    # A single per-wallet deadline bounds discovery, fresh processing and history.
+    # Fresh source swaps always get the first share of the wallet's scan budget.
+    common_options = {
         "rpc_url": rpc_url,
         "timeout": timeout,
         "wallet_address": wallet_address,
         "store": store,
         "defer_processed": defer_processed,
+        "latency_recorder": latency_recorder,
+        "deadline": deadline,
     }
-    if latency_recorder is not None:
-        monitor_options["latency_recorder"] = latency_recorder
-    return process_new_signatures(**monitor_options)
+    fresh_batch = batches.get("fresh", [])
+    fresh_results = (
+        process_new_signatures(
+            signatures=fresh_batch,
+            history_backfill=False,
+            **common_options,
+        )
+        if fresh_batch else []
+    )
+    history_batch = batches.get("history", [])
+    history_results = []
+    if history_batch and time.monotonic() < deadline:
+        history_results = process_new_signatures(
+            signatures=history_batch,
+            history_backfill=True,
+            **common_options,
+        )
+
+    # Some RPC nodes omit blockTime from getSignaturesForAddress but return it
+    # in getTransaction. Promote only a history result whose fetched on-chain
+    # timestamp proves that it is still inside the fresh-copy window.
+    current_time = time.time()
+    max_source_age = load_max_source_age_seconds()
+    for result in history_results:
+        raw = result.get("raw_transaction")
+        if not isinstance(raw, dict):
+            continue
+        block_time = raw.get("blockTime")
+        if (
+            not isinstance(block_time, int)
+            or isinstance(block_time, bool)
+            or block_time < 0
+        ):
+            continue
+        age = current_time - block_time
+        if not -5 <= age <= max_source_age:
+            continue
+        signature = result.get("signature")
+        if not isinstance(signature, str):
+            continue
+        slot = raw.get("slot")
+        if not isinstance(slot, int) or isinstance(slot, bool) or slot < 0:
+            slot = None
+        try:
+            store.save(
+                wallet_address, signature, slot=slot, block_time=block_time
+            )
+        except (TypeError, ValueError, OSError, RuntimeError):
+            # The verified block time remains attached to the result; the
+            # next discovery/scan can persist it again.
+            pass
+        observation = dict(result.get("signature_observation") or {})
+        observation["block_time"] = block_time
+        if slot is not None:
+            observation["slot"] = slot
+        result["signature_observation"] = observation
+        result["history_backfill"] = False
+        result["copy_eligible"] = True
+        result["history_promoted_to_fresh"] = True
+
+    return fresh_results + history_results
 
 
 if __name__ == "__main__":

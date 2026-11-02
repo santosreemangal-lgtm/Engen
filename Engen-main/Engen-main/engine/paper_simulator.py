@@ -1,12 +1,17 @@
 """Deterministic paper-only order simulator. Contains no RPC or transaction-signing code."""
 import json
 import sqlite3
+import time
 import uuid
 from datetime import datetime, timezone
 from contextlib import closing
 from decimal import Decimal
 from pathlib import Path
 
+from engine.config import (
+    MAX_SOURCE_FUTURE_SKEW_SECONDS,
+    load_max_source_age_seconds,
+)
 from engine.pnl import MarketPrice, decimal_value, parse_timestamp
 
 
@@ -574,6 +579,89 @@ class PaperSimulator:
                        "execution_state":"FILLED",
                        "reference_price":str(reference),"execution_price":str(execution),
                        "fee":str(fee),"network_cost":str(network),"fill_id":fill["fill_id"]})
+        # Final source-age gate: this check is inside the simulator immediately
+        # before the atomic order/balance/fill persistence call.
+        details = order.get("details") or {}
+        if details.get("origin") == "AUTOMATIC_WALLET_COPY":
+            source_block_time = details.get("source_block_time")
+            age_seconds = (
+                time.time() - source_block_time
+                if isinstance(source_block_time, int)
+                and not isinstance(source_block_time, bool)
+                and source_block_time >= 0
+                else None
+            )
+            max_source_age = load_max_source_age_seconds()
+            if (
+                age_seconds is None
+                or age_seconds < -MAX_SOURCE_FUTURE_SKEW_SECONDS
+                or age_seconds > max_source_age
+            ):
+                reason = (
+                    "Source transaction is missing, invalid, more than 5 seconds "
+                    "in the future, or older than the configured "
+                    f"{max_source_age}-second paper-copy window."
+                )
+                terminal_status = "EXPIRED" if order.get("side") == "BUY" else "REJECTED"
+                terminal_state = "EXPIRED_SOURCE" if terminal_status == "EXPIRED" else "STALE_SOURCE"
+                terminal = dict(
+                    order,
+                    status=terminal_status,
+                    reason=reason,
+                    details={**details, "execution_state":terminal_state},
+                )
+                self._persist(terminal)
+                self.orders[order_id] = terminal
+                if terminal_status == "EXPIRED":
+                    for candidate in list(self.orders.values()):
+                        candidate_details = candidate.get("details") or {}
+                        candidate_slot = candidate_details.get("source_slot")
+                        buy_slot = details.get("source_slot")
+                        candidate_time = candidate_details.get("source_block_time")
+                        buy_time = details.get("source_block_time")
+                        if (
+                            isinstance(candidate_slot, int) and not isinstance(candidate_slot, bool)
+                            and isinstance(buy_slot, int) and not isinstance(buy_slot, bool)
+                            and candidate_slot != buy_slot
+                        ):
+                            follows_buy = candidate_slot > buy_slot
+                        elif (
+                            isinstance(candidate_time, int) and not isinstance(candidate_time, bool)
+                            and isinstance(buy_time, int) and not isinstance(buy_time, bool)
+                            and candidate_time != buy_time
+                        ):
+                            follows_buy = candidate_time > buy_time
+                        else:
+                            candidate_created = str(candidate.get("created_at") or "")
+                            buy_created = str(order.get("created_at") or "")
+                            follows_buy = bool(candidate_created and buy_created and candidate_created > buy_created)
+                        if (
+                            candidate.get("status") == "CREATED"
+                            and candidate.get("side") == "SELL"
+                            and candidate.get("asset_mint") == order.get("asset_mint")
+                            and candidate_details.get("origin") == "AUTOMATIC_WALLET_COPY"
+                            and candidate_details.get("source_wallet") == details.get("source_wallet")
+                            and follows_buy
+                        ):
+                            rejected = dict(
+                                candidate,
+                                status="REJECTED",
+                                reason="Dependent copied SELL rejected because its earlier source BUY expired: " + reason,
+                                details={
+                                    **candidate_details,
+                                    "execution_state":"DEPENDENCY_REJECTED",
+                                    "dependency_order_id":order_id,
+                                },
+                            )
+                            self._persist(rejected)
+                            self.orders[candidate["order_id"]] = rejected
+                return {
+                    "status":terminal_status,
+                    "reason":reason,
+                    "order":dict(terminal),
+                    "real_trading":False,
+                    "transaction_broadcast":False,
+                }
         self._persist(updated, balances=balances, fill=fill)
         self.orders[order_id] = updated
         self.balances = balances

@@ -1249,7 +1249,8 @@ async function loadTransactionHistory(){
 function paperOrderState(order,details,orders){
  const sourceWallet=details.source_wallet;
  if(order.status==="FILLED"||order.status==="COMPLETED")return "FILLED";
- if(order.status==="REJECTED"||details.execution_state==="REJECTED")return "FAILED TO EXECUTE";
+ if(order.status==="EXPIRED"||details.execution_state==="EXPIRED_SOURCE")return "EXPIRED — SOURCE TOO OLD";
+ if(order.status==="REJECTED"||details.execution_state==="REJECTED"||details.execution_state==="DEPENDENCY_REJECTED")return "FAILED TO EXECUTE";
  if(details.execution_state==="AWAITING_VIRTUAL_BALANCE")return "NEEDS PAPER BALANCE";
  if(details.execution_state==="WAITING_FOR_LIQUIDITY")return "CHECKING LIQUIDITY";
  if(details.execution_state==="AWAITING_VERIFIED_MARKET_DATA"||details.execution_state==="WAITING_FOR_MARKET_DATA")return "PREPARING TO EXECUTE";

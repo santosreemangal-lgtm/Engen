@@ -1,0 +1,112 @@
+name: CI-0 Offline Tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: Engen-main/Engen-main
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+
+      - name: Install project requirements when present
+        run: |
+          if [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt
+          else
+            echo "No requirements.txt found; using the Python standard library."
+          fi
+
+      - name: Run unit tests with network access blocked
+        env:
+          PROFILE_STORE_DB: ${{ runner.temp }}/ci0/profile-store/profiles.db
+          PAPER_SIMULATOR_DB: ${{ runner.temp }}/ci0/paper-simulator.db
+          PROFILE_DATA_DIR: ${{ runner.temp }}/ci0/profile-data
+          WALLETS_FILE: ${{ runner.temp }}/ci0/wallets.json
+          MONITOR_STATE_FILE: ${{ runner.temp }}/ci0/monitoring_state.json
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          mkdir -p "$RUNNER_TEMP/ci0/profile-store" "$RUNNER_TEMP/ci0/profile-data"
+          LOG_PATH="$RUNNER_TEMP/ci0-unittest.log"
+
+          IPV4_CHAIN_CREATED=0
+          IPV4_JUMP_INSERTED=0
+          IPV6_CHAIN_CREATED=0
+          IPV6_JUMP_INSERTED=0
+
+          cleanup() {
+            local status=$?
+
+            if [ "$IPV4_JUMP_INSERTED" -eq 1 ]; then
+              sudo iptables -D OUTPUT -j CI0_OFFLINE || true
+            fi
+            if [ "$IPV4_CHAIN_CREATED" -eq 1 ]; then
+              sudo iptables -F CI0_OFFLINE || true
+              sudo iptables -X CI0_OFFLINE || true
+            fi
+
+            if [ "$IPV6_JUMP_INSERTED" -eq 1 ]; then
+              sudo ip6tables -D OUTPUT -j CI0_OFFLINE || true
+            fi
+            if [ "$IPV6_CHAIN_CREATED" -eq 1 ]; then
+              sudo ip6tables -F CI0_OFFLINE || true
+              sudo ip6tables -X CI0_OFFLINE || true
+            fi
+
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          # Keep loopback and already-established runner connections available,
+          # while rejecting new outbound connections during the test process.
+          sudo iptables -N CI0_OFFLINE
+          IPV4_CHAIN_CREATED=1
+          sudo iptables -A CI0_OFFLINE -o lo -j ACCEPT
+          sudo iptables -A CI0_OFFLINE -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+          sudo iptables -A CI0_OFFLINE -j REJECT
+          sudo iptables -I OUTPUT 1 -j CI0_OFFLINE
+          IPV4_JUMP_INSERTED=1
+
+          sudo ip6tables -N CI0_OFFLINE
+          IPV6_CHAIN_CREATED=1
+          sudo ip6tables -A CI0_OFFLINE -o lo -j ACCEPT
+          sudo ip6tables -A CI0_OFFLINE -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+          sudo ip6tables -A CI0_OFFLINE -j REJECT
+          sudo ip6tables -I OUTPUT 1 -j CI0_OFFLINE
+          IPV6_JUMP_INSERTED=1
+
+          set +e
+          PYTHONPATH=. python -m unittest discover -s engine/engine/engine/tests -p 'test_*.py' -v 2>&1 | tee "$LOG_PATH"
+          TEST_EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+
+          TEST_COUNT="$(sed -nE 's/^Ran ([0-9]+) tests?.*/\1/p' "$LOG_PATH" | tail -n 1)"
+          echo "TESTS_RUN=${TEST_COUNT:-UNKNOWN}"
+
+          exit "$TEST_EXIT_CODE"
+
+      - name: Upload unittest log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci0-offline-unittest-log
+          path: ${{ runner.temp }}/ci0-unittest.log
+          if-no-files-found: warn
+          retention-days: 14

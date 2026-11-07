@@ -6,13 +6,26 @@ from decimal import Decimal, InvalidOperation
 
 from engine.signature_store import SignatureStore
 from engine.transaction_monitor import monitor_wallet
-from engine.paper_copy_runner import queue_paper_orders, execute_pending_paper_orders, PAPER_SIMULATOR_LOCK
+from engine.paper_copy_runner import (
+    queue_paper_orders,
+    execute_pending_paper_orders,
+    PAPER_SIMULATOR_LOCK,
+    get_pending_copy_status,
+)
 from engine.profile_store import LABELS
 from engine.solana_validation import is_valid_transaction_signature
 
 
-def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter=None,
-                         simulator_getter=None, profile_id=None, profile_store=None):
+def create_scan_function(
+    limit=10,
+    timeout=10,
+    side_getter=None,
+    settings_getter=None,
+    simulator_getter=None,
+    profile_id=None,
+    profile_store=None,
+    latency_recorder=None,
+):
     """Create a read-only scanner with profile-specific paper execution and history."""
     store = SignatureStore()
 
@@ -70,9 +83,16 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     mint = change.get("mint")
                     decimals = change.get("decimals")
                     raw_change = change.get("delta_amount")
-                    if not isinstance(mint, str) or not isinstance(decimals, int) or isinstance(decimals, bool) or not 0 <= decimals <= 30:
+                    if (
+                        not isinstance(mint, str)
+                        or not isinstance(decimals, int)
+                        or isinstance(decimals, bool)
+                        or not 0 <= decimals <= 30
+                    ):
                         continue
-                    if not isinstance(raw_change, str) or not (raw_change[1:].isdigit() if raw_change.startswith("-") else raw_change.isdigit()):
+                    if not isinstance(raw_change, str) or not (
+                        raw_change[1:].isdigit() if raw_change.startswith("-") else raw_change.isdigit()
+                    ):
                         continue
                     token_mint = mint
                     token_decimals = decimals
@@ -83,22 +103,32 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                 "confirmation_status": confirmation,
                 "classification_reason": str(signal.get("reason", ""))[:400],
                 "confidence": str(signal.get("confidence", "unknown"))[:40],
-                "monitored_wallet_is_signer": address in item.get("signers", []) if isinstance(item.get("signers"), list) else False,
+                "monitored_wallet_is_signer": (
+                    address in item.get("signers", [])
+                    if isinstance(item.get("signers"), list)
+                    else False
+                ),
                 "real_trading": False,
                 "transaction_broadcast": False,
             }
             try:
                 profile_store.save_transaction(
-                    signature, address, classification=classification, status=status,
-                    evidence=evidence, slot=slot, block_time=block_time,
-                    raw_amount=raw_amount, token_mint=token_mint, token_decimals=token_decimals,
+                    signature,
+                    address,
+                    classification=classification,
+                    status=status,
+                    evidence=evidence,
+                    slot=slot,
+                    block_time=block_time,
+                    raw_amount=raw_amount,
+                    token_mint=token_mint,
+                    token_decimals=token_decimals,
                     profile_ids=(profile_id,),
                 )
                 persisted.append({**item, "profile_history_status": "saved"})
             except (ValueError, OSError, RuntimeError, sqlite3.Error):
                 persisted.append({**item, "profile_history_status": "save_failed"})
         return persisted
-
 
     def scan_wallet(address):
         """Analyze new wallet signatures and queue eligible paper-copy orders."""
@@ -117,22 +147,32 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
             # Serialize order execution and balance writes against dashboard requests.
             with PAPER_SIMULATOR_LOCK:
                 queued_orders = queue_paper_orders(
-                    address, results, simulator=simulator,
-                    allowed_sides=allowed_sides, copy_settings=copy_settings
+                    address,
+                    results,
+                    simulator=simulator,
+                    allowed_sides=allowed_sides,
+                    copy_settings=copy_settings,
+                    latency_recorder=latency_recorder,
                 )
-                execution_outcomes = execute_pending_paper_orders(address, simulator=simulator)
+                execution_outcomes = execute_pending_paper_orders(
+                    address,
+                    simulator=simulator,
+                    latency_recorder=latency_recorder,
+                )
+                pending_status = get_pending_copy_status(
+                    simulator=simulator,
+                    wallet_address=address,
+                )
             outcomes_by_signal = {
-                item["signal_id"]: item for item in execution_outcomes
+                item["signal_id"]: item
+                for item in execution_outcomes
                 if item.get("signal_id")
             }
             # Queue persistence succeeded. Mark complete, non-retryable scans
             # processed so unsupported transactions do not loop forever.
             for item in results:
                 signature = item.get("signature")
-                if (
-                    isinstance(signature, str)
-                    and item.get("retryable") is not True
-                ):
+                if isinstance(signature, str) and item.get("retryable") is not True:
                     store.mark_processed(address, signature)
             if queued_orders:
                 # Keep the monitor response auditable without exposing raw transactions.
@@ -147,11 +187,19 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                                 "paper_copy_order": {
                                     **queued_by_signature[item.get("signature")],
                                     **(
-                                        {"execution_status": outcomes_by_signal[
-                                            "wallet-copy:" + address + ":" + item.get("signature")
-                                        ]["status"]}
+                                        {
+                                            "execution_status": outcomes_by_signal[
+                                                "wallet-copy:"
+                                                + address
+                                                + ":"
+                                                + item.get("signature")
+                                            ]["status"]
+                                        }
                                         if (
-                                            "wallet-copy:" + address + ":" + item.get("signature")
+                                            "wallet-copy:"
+                                            + address
+                                            + ":"
+                                            + item.get("signature")
                                             in outcomes_by_signal
                                         )
                                         else {}
@@ -164,6 +212,14 @@ def create_scan_function(limit=10, timeout=10, side_getter=None, settings_getter
                     }
                     for item in results
                 ]
+            # Attach lightweight pending summary for operators/debugging.
+            results = [
+                {
+                    **item,
+                    "paper_pending_count": pending_status.get("pending_count", 0),
+                }
+                for item in results
+            ]
         except Exception:
             # If queue persistence fails, leave potential swap candidates pending
             # so the next scan can retry; mark only clearly non-candidate results.

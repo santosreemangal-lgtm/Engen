@@ -6,9 +6,11 @@ and liquidity provider is connected.
 """
 import os
 import threading
+from contextlib import nullcontext
 from pathlib import Path
 from datetime import datetime, timezone
 from decimal import Decimal
+from time import perf_counter_ns
 
 from engine.paper_simulator import PaperSimulator
 from engine.market_data import fetch_market_price
@@ -30,8 +32,46 @@ def get_paper_simulator():
     global _SIMULATOR
     with PAPER_SIMULATOR_LOCK:
         if _SIMULATOR is None:
+            PAPER_SIMULATOR_DB.parent.mkdir(parents=True, exist_ok=True)
             _SIMULATOR = PaperSimulator(db_path=PAPER_SIMULATOR_DB)
         return _SIMULATOR
+
+
+def reset_paper_simulator_for_tests():
+    """Clear the process-local simulator singleton (tests only)."""
+    global _SIMULATOR
+    with PAPER_SIMULATOR_LOCK:
+        _SIMULATOR = None
+
+
+def get_pending_copy_status(simulator=None, wallet_address=None):
+    """Return counts of queued automatic copy orders for observability."""
+    simulator = simulator or get_paper_simulator()
+    pending = []
+    for order in simulator.orders.values():
+        details = order.get("details") or {}
+        if order.get("status") != "CREATED":
+            continue
+        if details.get("origin") != "AUTOMATIC_WALLET_COPY":
+            continue
+        if wallet_address is not None and details.get("source_wallet") != wallet_address:
+            continue
+        pending.append({
+            "order_id": order.get("order_id"),
+            "signal_id": order.get("signal_id"),
+            "side": order.get("side"),
+            "asset_mint": order.get("asset_mint"),
+            "source_wallet": details.get("source_wallet"),
+            "source_signature": details.get("source_signature"),
+            "execution_state": details.get("execution_state"),
+            "created_at": order.get("created_at"),
+        })
+    return {
+        "pending_count": len(pending),
+        "pending_orders": pending,
+        "real_trading": False,
+        "transaction_broadcast": False,
+    }
 
 
 def _human_amount(change):
@@ -47,6 +87,7 @@ def _human_amount(change):
     ):
         return None
     return Decimal(raw) / (Decimal(10) ** decimals)
+
 
 def _aggregate_wallet_mint_changes(changes, wallet_address, mint, *, source):
     """Aggregate one wallet/mint's account deltas without mixing SOL representations."""
@@ -91,12 +132,28 @@ def _aggregate_wallet_mint_changes(changes, wallet_address, mint, *, source):
         aggregate[field] = str(sum(values)) if all(value is not None for value in values) else None
     return aggregate
 
-def execute_pending_paper_orders(wallet_address=None, simulator=None, price_provider=None):
-    """Retry queued automatic paper orders using fresh public market snapshots."""
+
+def execute_pending_paper_orders(
+    wallet_address=None,
+    simulator=None,
+    price_provider=None,
+    latency_recorder=None,
+):
+    """Retry queued automatic paper orders using fresh public market snapshots.
+
+    Returns structured outcomes. Never signs or broadcasts real transactions.
+    Optional latency_recorder records local stage timings only.
+    """
     simulator = simulator or get_paper_simulator()
     price_provider = price_provider or fetch_market_price
     now = datetime.now(timezone.utc).isoformat()
     outcomes = []
+
+    measure = (
+        latency_recorder.measure
+        if latency_recorder is not None and hasattr(latency_recorder, "measure")
+        else None
+    )
 
     for order in list(simulator.orders.values()):
         details = order.get("details") or {}
@@ -106,6 +163,9 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
             or (wallet_address is not None and details.get("source_wallet") != wallet_address)
         ):
             continue
+
+        order_started = perf_counter_ns()
+
         if order.get("side") == "SELL":
             fraction_raw = details.get("source_sell_fraction")
             try:
@@ -119,6 +179,7 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                     "signal_id": order.get("signal_id"),
                     "status": "WAITING_FOR_POSITION",
                     "reason": "Source sell fraction is unavailable or invalid; no paper sell was executed.",
+                    "elapsed_ms": round((perf_counter_ns() - order_started) / 1_000_000, 3),
                 })
                 continue
             if owned_quantity <= 0:
@@ -127,53 +188,80 @@ def execute_pending_paper_orders(wallet_address=None, simulator=None, price_prov
                     "signal_id": order.get("signal_id"),
                     "status": "WAITING_FOR_POSITION",
                     "reason": "No copied token position is currently held; sell remains queued.",
+                    "elapsed_ms": round((perf_counter_ns() - order_started) / 1_000_000, 3),
                 })
                 continue
             order["quantity"] = str(owned_quantity * sell_fraction)
             simulator._persist(order)
+
+        price_ctx = measure("paper.copy_price_lookup") if measure else nullcontext()
         try:
-            market_price = price_provider(order.get("asset_mint"))
+            with price_ctx:
+                market_price = price_provider(order.get("asset_mint"))
         except Exception:
             market_price = None
+
         if market_price is None:
             outcomes.append({
                 "order_id": order.get("order_id"),
                 "signal_id": order.get("signal_id"),
                 "status": "WAITING_FOR_MARKET_DATA",
                 "reason": "No usable public USD price/liquidity snapshot; order remains queued.",
+                "elapsed_ms": round((perf_counter_ns() - order_started) / 1_000_000, 3),
             })
             continue
+
+        exec_ctx = measure("paper.copy_execute_order") if measure else nullcontext()
         try:
-            result = simulator.execute_order(
-                order["order_id"],
-                market_price,
-                now=now,
-                max_price_age_seconds=60,
-                slippage_bps=50,
-                fee_bps=10,
-                min_liquidity_usd=10000,
-                max_liquidity_age_seconds=60,
-                require_liquidity=True,
-            )
+            with exec_ctx:
+                result = simulator.execute_order(
+                    order["order_id"],
+                    market_price,
+                    now=now,
+                    max_price_age_seconds=60,
+                    slippage_bps=50,
+                    fee_bps=10,
+                    min_liquidity_usd=10000,
+                    max_liquidity_age_seconds=60,
+                    require_liquidity=True,
+                )
         except Exception:
             outcomes.append({
                 "order_id": order.get("order_id"),
                 "signal_id": order.get("signal_id"),
                 "status": "EXECUTION_ERROR",
                 "reason": "Paper execution failed; no real transaction was sent.",
+                "elapsed_ms": round((perf_counter_ns() - order_started) / 1_000_000, 3),
             })
             continue
+
+        status = result.get("status", "UNKNOWN") if isinstance(result, dict) else "UNKNOWN"
         outcomes.append({
             "order_id": order.get("order_id"),
             "signal_id": order.get("signal_id"),
-            "status": result.get("status", "UNKNOWN"),
-            "reason": result.get("reason"),
+            "status": status,
+            "reason": result.get("reason") if isinstance(result, dict) else None,
+            "elapsed_ms": round((perf_counter_ns() - order_started) / 1_000_000, 3),
         })
+        if latency_recorder is not None and hasattr(latency_recorder, "record"):
+            latency_recorder.record(
+                "paper.copy_order_total",
+                (perf_counter_ns() - order_started) / 1_000_000,
+            )
+
     return outcomes
 
 
-def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="BOTH", copy_settings=None):
+def queue_paper_orders(
+    wallet_address,
+    results,
+    simulator=None,
+    allowed_sides="BOTH",
+    copy_settings=None,
+    latency_recorder=None,
+):
     """Queue conservative paper-copy orders; buys use virtual USD sizing and sells are position-capped."""
+    queue_started = perf_counter_ns()
     if not isinstance(allowed_sides, str) or allowed_sides.upper() not in ("BUY", "SELL", "BOTH", "NONE"):
         raise ValueError("allowed_sides must be BUY, SELL, BOTH, or NONE")
     mode = allowed_sides.upper()
@@ -185,8 +273,11 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
     simulator = simulator or get_paper_simulator()
     settings = copy_settings if isinstance(copy_settings, dict) else {}
     sizing_mode = settings.get("sizing_mode", "SOURCE_PERCENT")
-    aliases = {"FIXED_PERCENTAGE": "SOURCE_PERCENT", "FIXED_AMOUNT": "FIXED_USD",
-               "MIRROR_BUY_SELL_AMOUNT": "MIRROR_AMOUNT"}
+    aliases = {
+        "FIXED_PERCENTAGE": "SOURCE_PERCENT",
+        "FIXED_AMOUNT": "FIXED_USD",
+        "MIRROR_BUY_SELL_AMOUNT": "MIRROR_AMOUNT",
+    }
     sizing_mode = aliases.get(sizing_mode, sizing_mode)
     if sizing_mode not in ("SOURCE_PERCENT", "FIXED_USD", "MIRROR_AMOUNT"):
         raise ValueError("sizing_mode must be SOURCE_PERCENT, FIXED_USD, or MIRROR_AMOUNT")
@@ -271,6 +362,7 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
 
         source_quantity = abs(asset_amount)
         target_notional_usd = None
+        source_before = None
         if side == "BUY":
             balances = getattr(simulator, "balances", {})
             virtual_usd = balances.get("USD") if isinstance(balances, dict) else None
@@ -315,7 +407,12 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
                 "delta_amount": str(pre_source_amount),
                 "decimals": asset_change.get("decimals"),
             })
-            if source_before is None or not source_before.is_finite() or source_before <= 0 or source_quantity > source_before:
+            if (
+                source_before is None
+                or not source_before.is_finite()
+                or source_before <= 0
+                or source_quantity > source_before
+            ):
                 continue
             sell_fraction = source_quantity / source_before
             if sell_fraction <= 0 or sell_fraction > 1:
@@ -327,8 +424,12 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
         signal_id = f"wallet-copy:{wallet_address}:{signature}"
         created_at = datetime.now(timezone.utc).isoformat()
         order = simulator.create_order(
-            signal_id=signal_id, side=side, asset_mint=asset_mint,
-            quantity=str(order_quantity), quote_mint="USD", created_at=created_at,
+            signal_id=signal_id,
+            side=side,
+            asset_mint=asset_mint,
+            quantity=str(order_quantity),
+            quote_mint="USD",
+            created_at=created_at,
             details={
                 "sizing_mode": sizing_mode if side == "BUY" else "SOURCE_POSITION_REDUCTION",
                 "sizing_value": str(sizing_value) if side == "BUY" else None,
@@ -337,7 +438,11 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
                 "source_asset_quantity": str(source_quantity),
                 "source_asset_pre_amount": asset_change.get("pre_amount"),
                 "source_asset_post_amount": asset_change.get("post_amount"),
-                "source_sell_fraction": str(source_quantity / source_before) if side == "SELL" else None,
+                "source_sell_fraction": (
+                    str(source_quantity / source_before)
+                    if side == "SELL" and source_before is not None
+                    else None
+                ),
                 "origin": "AUTOMATIC_WALLET_COPY",
                 "source_quote_mint": quote_mint,
                 "source_quote_amount": str(abs(quote_amount)),
@@ -354,12 +459,23 @@ def queue_paper_orders(wallet_address, results, simulator=None, allowed_sides="B
         if order.get("status") == "DUPLICATE":
             continue
         queued.append({
-            "signature": signature, "order_id": order.get("order_id"), "side": side,
-            "asset_mint": asset_mint, "quantity": str(order_quantity),
+            "signature": signature,
+            "order_id": order.get("order_id"),
+            "side": side,
+            "asset_mint": asset_mint,
+            "quantity": str(order_quantity),
             "sizing_mode": sizing_mode if side == "BUY" else "SOURCE_POSITION_REDUCTION",
             "sizing_value": str(sizing_value) if side == "BUY" else None,
             "target_notional_usd": str(target_notional_usd) if target_notional_usd is not None else None,
-            "source_quote_mint": quote_mint, "status": order.get("status"),
+            "source_quote_mint": quote_mint,
+            "status": order.get("status"),
             "execution_state": "AWAITING_VERIFIED_MARKET_DATA",
         })
+
+    if latency_recorder is not None and hasattr(latency_recorder, "record"):
+        latency_recorder.record(
+            "paper.copy_queue_batch",
+            (perf_counter_ns() - queue_started) / 1_000_000,
+        )
+
     return queued

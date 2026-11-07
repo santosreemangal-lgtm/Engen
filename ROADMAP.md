@@ -20,7 +20,24 @@
 
 ---
 
-## Current State (as of this branch base)
+## Progress on this branch
+
+### Done
+- [x] ROADMAP documented
+- [x] `paper_copy_runner` hardened: latency hooks, `elapsed_ms` outcomes, `get_pending_copy_status()`
+- [x] `monitor_bridge` wires optional latency recorder into queue + execute
+- [x] Restart-recovery tests: filled copy survives new simulator instance; pending order fills after restart; latency stages recorded
+- [x] `pending_copy_report.attach_pending_copy()` helper for dashboard reports
+
+### In progress / next
+- [ ] Wire `attach_pending_copy` into `/api/paper-simulation` responses
+- [ ] Dashboard metric: Pending Copy Orders
+- [ ] Flatten nested `Engen-main/Engen-main` structure
+- [ ] Faster detection path (Yellowstone / gRPC) — later phase
+
+---
+
+## Current State (base + this branch)
 
 ### Already present (good foundation)
 - Safety boundary (no private keys, no live trading)
@@ -35,38 +52,11 @@
 
 | Gap | Severity | Notes |
 |-----|----------|-------|
-| Automatic copy is not fully reliable end-to-end | High | Orders often stay in WAITING state (price/liquidity) |
-| Nested repo structure (`Engen-main/Engen-main`) | High | Makes development and imports painful |
-| Sub-100ms detection-to-fill not measured or achieved | High | Still RPC polling style; no Yellowstone/gRPC path |
-| Full process restart recovery not fully proven | Medium-High | Component tests exist; full process rehearsal weaker |
-| Dashboard not yet matching full vision UX | Medium | Missing clean settings, reset, sell-all, clear P&L view |
-| Many stacked / draft PRs | Medium | Hard to know the single source of truth |
-
----
-
-## Prioritized Work Plan
-
-### Phase 1 — Make Paper Copy Reliable (Current Focus)
-1. Stabilize automatic copy pipeline (queue → fill)
-2. Guarantee restart-safe paper ledger + source references
-3. Strengthen stale-transaction protection
-4. Add clear end-to-end offline test: monitor → classify → queue → fill → restart → balances intact
-5. Improve observability (latency timers for detection and fill)
-
-### Phase 2 — Clean Structure + Dashboard
-1. Flatten nested `Engen-main/Engen-main` structure
-2. Make dashboard match vision (wallet management, copy %, P&L, history, reset, sell-all)
-3. Single clear entry point and README
-
-### Phase 3 — Latency Path
-1. Instrument Detection latency and Detection→Fill latency (P50/P95/P99)
-2. Evaluate Yellowstone gRPC / faster feeds
-3. Reduce blocking work on the hot path
-
-### Phase 4 — Production Hardening
-1. 24/7 monitoring recovery
-2. Health checks and alerting
-3. Deployment guide (still paper-only)
+| Automatic copy not fully reliable end-to-end | High | Improved; still depends on market data freshness |
+| Nested repo structure (`Engen-main/Engen-main`) | High | Makes development painful |
+| Sub-100ms detection-to-fill not measured/achieved | High | Local stage timers exist; not full path yet |
+| Dashboard UX vs full vision | Medium | Pending copy UI not fully wired |
+| Many stacked / draft PRs | Medium | Hard to know single source of truth |
 
 ---
 
@@ -77,15 +67,6 @@
 - No broadcast of real transactions
 - Paper simulation only in this phase
 - Live mode requires separate explicit approval and a different architecture
-
----
-
-## Next Immediate Actions on this branch
-
-1. Improve automatic paper-copy execution reliability
-2. Add / strengthen restart recovery tests for paper ledger
-3. Add latency measurement points
-4. Keep changes small and reviewable
 
 ---
 

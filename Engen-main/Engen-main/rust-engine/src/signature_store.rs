@@ -507,10 +507,16 @@ impl SignatureStore {
             .optional()?)
     }
 
-    pub fn seen_signatures(&self, wallet: &str, limit: usize) -> Result<Vec<String>, SignatureStoreError> {
+    pub fn seen_signatures(
+        &self,
+        wallet: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, SignatureStoreError> {
         Self::validate_wallet(wallet)?;
         if limit == 0 || limit > 10_000 {
-            return Err(SignatureStoreError::InvalidInput("Seen-signature limit must be between 1 and 10000.".to_string()));
+            return Err(SignatureStoreError::InvalidInput(
+                "Seen-signature limit must be between 1 and 10000.".to_string(),
+            ));
         }
         let connection = self.connect()?;
         let mut statement = connection.prepare(
@@ -537,7 +543,10 @@ mod tests {
         assert!(store.save(WALLET, SIGNATURE, Some(10)).unwrap());
         assert!(!store.save(WALLET, SIGNATURE, Some(11)).unwrap());
         assert!(store.has_seen(WALLET, SIGNATURE).unwrap());
-        assert_eq!(store.get_status(WALLET, SIGNATURE).unwrap().as_deref(), Some("pending"));
+        assert_eq!(
+            store.get_status(WALLET, SIGNATURE).unwrap().as_deref(),
+            Some("pending")
+        );
     }
 
     #[test]
@@ -545,16 +554,25 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = SignatureStore::open(dir.path().join("signatures.db")).unwrap();
         for attempt in 1..=5 {
-            let result = store.record_failure(
-                WALLET,
-                SIGNATURE,
-                ProcessingStage::RpcFetch,
-                Some("rpc_error"),
-                Some("provider unavailable"),
-                5,
-            ).unwrap();
+            let result = store
+                .record_failure(
+                    WALLET,
+                    SIGNATURE,
+                    ProcessingStage::RpcFetch,
+                    Some("rpc_error"),
+                    Some("provider unavailable"),
+                    5,
+                )
+                .unwrap();
             assert_eq!(result.attempts, attempt);
-            assert_eq!(result.status, if attempt == 5 { "needs_review" } else { "pending" });
+            assert_eq!(
+                result.status,
+                if attempt == 5 {
+                    "needs_review"
+                } else {
+                    "pending"
+                }
+            );
         }
     }
 
@@ -563,9 +581,16 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = SignatureStore::open(dir.path().join("signatures.db")).unwrap();
         let raw = serde_json::json!({"slot":10,"meta":{"err":null}});
-        store.save_transaction_record(WALLET, SIGNATURE, Some(&raw), "observed").unwrap();
-        store.save_transaction_record(WALLET, SIGNATURE, None, "processed").unwrap();
-        let record = store.get_transaction_record(WALLET, SIGNATURE).unwrap().unwrap();
+        store
+            .save_transaction_record(WALLET, SIGNATURE, Some(&raw), "observed")
+            .unwrap();
+        store
+            .save_transaction_record(WALLET, SIGNATURE, None, "processed")
+            .unwrap();
+        let record = store
+            .get_transaction_record(WALLET, SIGNATURE)
+            .unwrap()
+            .unwrap();
         assert_eq!(record.raw_transaction, Some(raw));
         assert_eq!(record.status, "processed");
     }
@@ -580,7 +605,10 @@ mod tests {
             assert!(store.mark_processed(WALLET, SIGNATURE).unwrap());
         }
         let store = SignatureStore::open(&path).unwrap();
-        assert_eq!(store.get_status(WALLET, SIGNATURE).unwrap().as_deref(), Some("processed"));
+        assert_eq!(
+            store.get_status(WALLET, SIGNATURE).unwrap().as_deref(),
+            Some("processed")
+        );
         assert_eq!(store.get_position(WALLET).unwrap().unwrap().slot, Some(42));
     }
 }

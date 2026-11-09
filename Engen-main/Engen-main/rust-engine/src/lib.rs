@@ -6,6 +6,7 @@
 pub mod config;
 pub mod latency;
 pub mod pnl;
+pub mod paper_simulator;
 pub mod rpc_policy;
 pub mod safety;
 pub mod signature_store;

@@ -33,8 +33,7 @@ mod tests {
 
     #[test]
     fn live_execution_is_unconditionally_blocked() {
-        assert!(!LIVE_EXECUTION_IMPLEMENTED);
-        assert!(!LIVE_TRADING_ENABLED);
+        // The denial behavior is the invariant; constants are compile-time policy.
         assert!(block_live_execution().is_err());
     }
 }

@@ -83,9 +83,8 @@ impl Config {
         let log_level = match LogLevel::parse(&raw_level) {
             Some(level) => level,
             None => {
-                problems.push(
-                    "LOG_LEVEL must be one of DEBUG, INFO, WARNING, or ERROR.".to_string(),
-                );
+                problems
+                    .push("LOG_LEVEL must be one of DEBUG, INFO, WARNING, or ERROR.".to_string());
                 LogLevel::Info
             }
         };
@@ -197,7 +196,11 @@ fn parse_float(
             value
         }
         _ => {
-            let relation = if min_exclusive { "greater than" } else { "at least" };
+            let relation = if min_exclusive {
+                "greater than"
+            } else {
+                "at least"
+            };
             problems.push(format!(
                 "{name} must be a finite number {relation} {min} and no greater than {max}."
             ));
@@ -227,10 +230,7 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_modes_and_live_flag() {
-        let values = map(&[
-            ("ENGINE_MODE", "live"),
-            ("LIVE_TRADING_ENABLED", "true"),
-        ]);
+        let values = map(&[("ENGINE_MODE", "live"), ("LIVE_TRADING_ENABLED", "true")]);
         let error = Config::from_map(&values).unwrap_err();
         assert_eq!(error.problems.len(), 2);
     }

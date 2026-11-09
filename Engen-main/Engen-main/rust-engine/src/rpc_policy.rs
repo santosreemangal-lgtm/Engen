@@ -2,6 +2,8 @@
 
 use std::{sync::Arc, time::Duration};
 
+use chrono::{DateTime, Utc};
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -63,6 +65,19 @@ struct RpcEnvelope {
     error: Option<Value>,
 }
 
+fn retry_after_delay(value: &str) -> Option<Duration> {
+    let value = value.trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds.min(600)));
+    }
+    DateTime::parse_from_rfc2822(value).ok().map(|date| {
+        date.signed_duration_since(Utc::now())
+            .to_std()
+            .unwrap_or_default()
+            .min(Duration::from_secs(600))
+    })
+}
+
 pub fn validate_rpc_url(raw: &str) -> Result<Url, RpcError> {
     let url = Url::parse(raw.trim()).map_err(|_| RpcError::InvalidUrl)?;
     let host = url.host_str().ok_or(RpcError::InvalidUrl)?.to_ascii_lowercase();
@@ -114,6 +129,7 @@ impl RpcClient {
         for attempt in 0..=self.policy.retries {
             self.pace().await;
             let response = self.client.post(self.endpoint.clone()).json(&body).send().await;
+            let mut provider_delay = None;
             match response {
                 Ok(response) if response.status().is_success() => {
                     let envelope: RpcEnvelope = response.json().await.map_err(|_| RpcError::InvalidResponse)?;
@@ -124,6 +140,9 @@ impl RpcClient {
                 }
                 Ok(response) => {
                     let status = response.status().as_u16();
+                    provider_delay = response.headers().get(reqwest::header::RETRY_AFTER)
+                        .and_then(|value| value.to_str().ok())
+                        .and_then(retry_after_delay);
                     if attempt == self.policy.retries || (status != 429 && status < 500) {
                         return Err(RpcError::Http(status));
                     }
@@ -132,7 +151,9 @@ impl RpcClient {
                 Err(_) => {}
             }
             let multiplier = 1u32.checked_shl(attempt.min(8)).unwrap_or(256);
-            sleep(self.policy.backoff.saturating_mul(multiplier)).await;
+            let exponential = self.policy.backoff.saturating_mul(multiplier);
+            let delay = provider_delay.unwrap_or(exponential).min(Duration::from_secs(600));
+            sleep(delay).await;
         }
         Err(RpcError::Transport)
     }
@@ -152,5 +173,11 @@ mod tests {
     #[test]
     fn rejects_embedded_credentials() {
         assert!(validate_rpc_url("https://user:pass@example.com").is_err());
+    }
+
+    #[test]
+    fn parses_retry_after_seconds_and_http_date() {
+        assert_eq!(retry_after_delay("30"), Some(Duration::from_secs(30)));
+        assert_eq!(retry_after_delay("not-a-date"), None);
     }
 }

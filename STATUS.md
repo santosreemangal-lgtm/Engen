@@ -1,54 +1,41 @@
-# Engen — Status (feature/engen-vision-core-20261108)
+# Engen — Honest Status
 
-## Language
+**Branch:** `feature/engen-vision-core-20261108`
 
-**Python stays** for the paper engine and dashboard.
+## Is everything perfect?
 
-- Local paper fill + SQLite is not the bottleneck
-- Sub-100ms end-to-end is mostly **RPC / feed latency**
-- Later optional: Rust sidecar only for Yellowstone/gRPC detection
+**No.** Phase 1 paper engine is **usable and much stronger**, but the full vision (sub-100ms live detection, clean repo tree, production 24/7 proof) is **not** finished.
 
----
+### Done (paper phase)
 
-## What replaced / unified previous work
+| Item | Status |
+|------|--------|
+| Automatic paper copy pipeline | Yes |
+| SQLite persistence + restart tests | Yes |
+| Latency stage timers (local) | Yes |
+| Pending copy API + dashboard UI | Yes |
+| Stale source gate (60s) | Yes |
+| Safe entry: `run_dashboard.py` / `python -m dashboard` | Yes |
+| No keys / no signing / no broadcast | Yes |
 
-| Piece | Role |
-|-------|------|
-| `engine/paper_copy_runner.py` | Queue + execute paper copy, latency hooks, pending helper |
-| `engine/pending_copy_report.py` | Attach `pending_copy` to API reports |
-| `dashboard/server_with_pending.py` | **Canonical dashboard** — API pending + injects UI script into HTML |
-| `dashboard/pending_copy_ui.js` | Pending Copy Orders metric in the browser |
-| `run_dashboard.py` (root + nested) | One-command start |
-| Restart / pending unit tests | Prove ledger survives process restart |
+### Not perfect yet
 
-Original `dashboard/server.py` is **unchanged** (safe). Use `server_with_pending.py` instead — it wraps the same handlers.
+| Item | Reality |
+|------|---------|
+| <100ms detection → fill | **Not proven** on live Solana; needs fast feed (gRPC), not only Python polling |
+| Nested `Engen-main/Engen-main` | Still nested; cleanup is a separate big PR |
+| Old stacked draft PRs | Not all merged/reconciled |
+| 24/7 hosted proof | Not verified here |
+| Market data | Public snapshots; can leave orders pending |
 
----
-
-## Run
+### Run
 
 ```bash
-# from repo root
-python run_dashboard.py
-
-# or from Engen-main/Engen-main
 python run_dashboard.py
 # or
-python dashboard/server_with_pending.py
+python -m dashboard
 ```
 
-Open the printed localhost URL. Portfolio should show pending copy after paper-simulation loads.
+### Safety
 
----
-
-## Safety
-
-Paper only. No private keys, signing, or broadcast.
-
----
-
-## Optional later
-
-1. Flatten `Engen-main/Engen-main` tree
-2. Merge old draft PRs carefully onto this line of work
-3. Faster detection feed (gRPC) when you outgrow polling
+Paper only. Live trading requires a separate architecture and explicit owner approval.

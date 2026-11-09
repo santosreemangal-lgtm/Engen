@@ -362,8 +362,10 @@ mod tests {
 
     #[test]
     fn retry_count_is_validated() {
-        let mut config = RpcConfig::default();
-        config.retries = 99;
+        let config = RpcConfig {
+            retries: 99,
+            ..RpcConfig::default()
+        };
         assert!(config.validate().is_err());
     }
 }

@@ -1,0 +1,16 @@
+[package]
+name = "engen-engine"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+publish = false
+description = "Read-only Solana wallet monitoring and paper-simulation engine"
+
+[lib]
+name = "engen_engine"
+path = "src/lib.rs"
+
+[dependencies]
+bs58 = "0.5"
+thiserror = "2"
+url = "2"

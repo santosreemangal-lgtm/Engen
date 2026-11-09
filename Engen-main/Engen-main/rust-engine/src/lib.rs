@@ -1,0 +1,14 @@
+//! Rust migration of Engen's read-only monitoring and paper-simulation core.
+//!
+//! The crate deliberately contains no transaction-signing or transaction-broadcast
+//! implementation. Paper fills are virtual ledger events only.
+
+pub mod config;
+pub mod latency;
+pub mod rpc_policy;
+pub mod safety;
+pub mod solana_validation;
+pub mod source_freshness;
+
+pub use config::{Config, ConfigError, LogLevel};
+pub use safety::{block_live_execution, LiveExecutionDisabled};

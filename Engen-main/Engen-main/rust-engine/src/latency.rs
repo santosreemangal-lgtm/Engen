@@ -44,7 +44,10 @@ impl LatencyRecorder {
             return Err("elapsed_ms must be a finite, non-negative number.");
         }
 
-        let mut guard = self.samples.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guard = self
+            .samples
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let stage_samples = guard
             .entry(stage.to_string())
             .or_insert_with(|| VecDeque::with_capacity(self.max_samples));

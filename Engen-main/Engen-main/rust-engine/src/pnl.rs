@@ -66,6 +66,8 @@ pub struct MarketPrice {
 }
 
 impl MarketPrice {
+    // Keep the market snapshot constructor aligned with all recorded source fields.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         mint: impl Into<String>,
         price: &str,
@@ -214,6 +216,7 @@ impl AverageCostLedger {
         Ok(self.positions.entry(mint.to_string()).or_default())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn buy(
         &mut self, mint: &str, quantity: &str, unit_price: &str, fee: &str,
         fee_included: bool, network_fee: &str, timestamp: Option<&str>,
@@ -242,6 +245,7 @@ impl AverageCostLedger {
         Ok(event)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn sell(
         &mut self, mint: &str, quantity: &str, unit_price: &str, fee: &str,
         fee_included: bool, network_fee: &str, timestamp: Option<&str>,
@@ -490,9 +494,9 @@ mod tests {
         ledger.deposit("TOKEN", "3", None, None).unwrap();
         let event = ledger.sell("TOKEN", "1", "20", "0", false, "0", None).unwrap();
         assert_eq!(event.realized_pnl, None);
-        assert_eq!(ledger.snapshot("TOKEN").basis_complete, false);
+        assert!(!ledger.snapshot("TOKEN").basis_complete);
         ledger.sell("TOKEN", "2", "20", "0", false, "0", None).unwrap();
-        assert_eq!(ledger.snapshot("TOKEN").basis_complete, true);
+        assert!(ledger.snapshot("TOKEN").basis_complete);
     }
 
     #[test]

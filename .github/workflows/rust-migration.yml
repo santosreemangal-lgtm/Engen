@@ -30,6 +30,6 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run offline unit tests
-        run: cargo test --locked
+        run: cargo test
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings

@@ -1,0 +1,35 @@
+name: Rust migration checks
+
+on:
+  pull_request:
+    paths:
+      - "Engen-main/Engen-main/rust-engine/**"
+      - ".github/workflows/rust-migration.yml"
+  push:
+    branches:
+      - "migration/full-rust-20261109"
+    paths:
+      - "Engen-main/Engen-main/rust-engine/**"
+      - ".github/workflows/rust-migration.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rust-engine:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Engen-main/Engen-main/rust-engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Run offline unit tests
+        run: cargo test --locked
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings

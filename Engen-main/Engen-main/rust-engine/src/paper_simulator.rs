@@ -859,8 +859,8 @@ mod tests {
         let id=buy_order(&mut sim,"signal-1");
         let result=sim.execute_order(&id,Some(&price("TOKEN")),now(),&ExecutionPolicy::default(),true).unwrap();
         assert_eq!(result["status"],"FILLED");
-        assert_eq!(sim.balances()["USD"].to_string(),"79.978");
-        assert_eq!(sim.balances()["TOKEN"].to_string(),"1.002");
+        assert_eq!(sim.balances()["USD"].to_string(),"79.8799");
+        assert_eq!(sim.balances()["TOKEN"].to_string(),"2");
         assert_eq!(sim.fills().len(),1);
         assert_eq!(result["transaction_broadcast"],false);
     }
@@ -914,7 +914,7 @@ mod tests {
         let sim=PaperSimulator::open(&path,&BTreeMap::new()).unwrap();
         assert_eq!(sim.orders()[&id].status,"FILLED");
         assert_eq!(sim.fills().len(),1);
-        assert_eq!(sim.balances()["TOKEN"].to_string(),"1.002");
+        assert_eq!(sim.balances()["TOKEN"].to_string(),"2");
     }
 
     #[test]

@@ -4,11 +4,13 @@ Replaces the need to hand-edit large server.py / index.html files.
 
 - Monkey-patches paper report loaders to attach pending_copy
 - Serves index.html with pending_copy_ui.js injected before </body>
+- Activates stale-source gate for paper-copy queueing
 
 Paper only: no keys, no signing, no broadcast.
 
 Usage:
   python run_dashboard.py
+  python -m dashboard
   python dashboard/server_with_pending.py
 """
 
@@ -24,6 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import dashboard.server as server
 from engine.pending_copy_report import attach_pending_copy
+import engine.apply_source_freshness  # noqa: F401  # activates stale-source gate
 
 _orig_profile = server.load_profile_paper_simulation_report
 _orig_global = server.load_paper_simulation_report
@@ -95,6 +98,7 @@ def main():
     )
     print("Wallet storage: %s" % server.WALLETS_FILE)
     print("Pending-copy API + UI injection: enabled")
+    print("Stale-source paper-copy gate: enabled (60s window)")
     print("Monitoring is opt-in; no scan starts automatically.")
     print("Read-only mode: no trades, signing, or private keys.")
     try:

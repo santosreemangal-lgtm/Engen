@@ -1,11 +1,14 @@
-"""Dashboard entry with pending-copy report wiring.
+"""Canonical paper dashboard entry: pending_copy on API + UI injection.
 
-Same dashboard as server.py, but paper-simulation reports include pending_copy.
-Paper-only: no signing, no broadcast.
+Replaces the need to hand-edit large server.py / index.html files.
+
+- Monkey-patches paper report loaders to attach pending_copy
+- Serves index.html with pending_copy_ui.js injected before </body>
+
+Paper only: no keys, no signing, no broadcast.
 
 Usage:
-  python -m dashboard.server_with_pending
-  # or from Engen-main/Engen-main:
+  python run_dashboard.py
   python dashboard/server_with_pending.py
 """
 
@@ -25,6 +28,8 @@ from engine.pending_copy_report import attach_pending_copy
 _orig_profile = server.load_profile_paper_simulation_report
 _orig_global = server.load_paper_simulation_report
 
+INJECT_SCRIPT = '<script src="/pending_copy_ui.js"></script>'
+
 
 def load_profile_paper_simulation_report(profile_id):
     report = _orig_profile(profile_id)
@@ -39,7 +44,6 @@ def load_profile_paper_simulation_report(profile_id):
 
 
 def load_paper_simulation_report(profile_id=None):
-    # When profile_id is set, orig_global delegates to the (patched) profile loader.
     report = _orig_global(profile_id)
     if profile_id is not None:
         return report
@@ -54,13 +58,43 @@ server.load_profile_paper_simulation_report = load_profile_paper_simulation_repo
 server.load_paper_simulation_report = load_paper_simulation_report
 
 
+class PendingDashboardHandler(server.DashboardHandler):
+    """Serve index with pending-copy UI script; keep all API routes unchanged."""
+
+    def do_GET(self):
+        from urllib.parse import urlparse
+
+        path = urlparse(self.path).path
+        if path in ("/", "/index.html"):
+            index_path = Path(self.translate_path("/index.html"))
+            try:
+                body = index_path.read_text(encoding="utf-8")
+            except OSError:
+                return super().do_GET()
+            if "pending_copy_ui.js" not in body:
+                if "</body>" in body:
+                    body = body.replace(
+                        "</body>", INJECT_SCRIPT + "\n</body>", 1
+                    )
+                else:
+                    body = body + "\n" + INJECT_SCRIPT + "\n"
+            data = body.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        return super().do_GET()
+
+
 def main():
     print(
         "Solana Monitor dashboard backend starting at %s:%s"
         % (server.HOST, server.PORT)
     )
     print("Wallet storage: %s" % server.WALLETS_FILE)
-    print("Pending-copy report wiring: enabled")
+    print("Pending-copy API + UI injection: enabled")
     print("Monitoring is opt-in; no scan starts automatically.")
     print("Read-only mode: no trades, signing, or private keys.")
     try:
@@ -74,7 +108,7 @@ def main():
         ) from exc
 
     httpd = server.ThreadingHTTPServer(
-        (server.HOST, server.PORT), server.DashboardHandler
+        (server.HOST, server.PORT), PendingDashboardHandler
     )
     try:
         resumed = server.restore_persisted_monitors()

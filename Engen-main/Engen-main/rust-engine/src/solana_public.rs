@@ -77,8 +77,7 @@ impl Default for RpcConfig {
 impl RpcConfig {
     pub fn validate(&self) -> Result<(), SolanaRpcError> {
         validate_rpc_url(&self.endpoint).map_err(SolanaRpcError::InvalidInput)?;
-        validate_rpc_timeout(self.timeout.as_secs_f64())
-            .map_err(SolanaRpcError::InvalidInput)?;
+        validate_rpc_timeout(self.timeout.as_secs_f64()).map_err(SolanaRpcError::InvalidInput)?;
         if self.retries > MAX_RPC_RETRIES {
             return Err(SolanaRpcError::InvalidInput(
                 "RPC retry count exceeds the configured safety maximum.".to_string(),
@@ -125,7 +124,11 @@ impl SolanaRpcClient {
 
         for attempt in 0..=self.config.retries {
             self.pace();
-            let response = self.client.post(&self.config.endpoint).json(&request).send();
+            let response = self
+                .client
+                .post(&self.config.endpoint)
+                .json(&request)
+                .send();
 
             match response {
                 Ok(response) => {
@@ -191,10 +194,7 @@ impl SolanaRpcClient {
             .ok_or(SolanaRpcError::InvalidResponse)
     }
 
-    pub fn get_signature_status(
-        &self,
-        signature: &str,
-    ) -> Result<Option<Value>, SolanaRpcError> {
+    pub fn get_signature_status(&self, signature: &str) -> Result<Option<Value>, SolanaRpcError> {
         require_transaction_signature(signature)
             .map_err(|error| SolanaRpcError::InvalidInput(error.to_string()))?;
 
@@ -221,19 +221,14 @@ impl SolanaRpcClient {
             return Err(SolanaRpcError::InvalidResponse);
         }
 
-        let confirmation = status
-            .get("confirmationStatus")
-            .and_then(Value::as_str);
+        let confirmation = status.get("confirmationStatus").and_then(Value::as_str);
         if !matches!(confirmation, Some("processed" | "confirmed" | "finalized")) {
             return Ok(None);
         }
         Ok(Some(status.clone()))
     }
 
-    pub fn get_transaction(
-        &self,
-        signature: &str,
-    ) -> Result<Option<Value>, SolanaRpcError> {
+    pub fn get_transaction(&self, signature: &str) -> Result<Option<Value>, SolanaRpcError> {
         require_transaction_signature(signature)
             .map_err(|error| SolanaRpcError::InvalidInput(error.to_string()))?;
 
@@ -281,7 +276,9 @@ impl SolanaRpcClient {
             .backoff
             .saturating_mul(factor)
             .min(Duration::from_secs(MAX_BACKOFF_SECONDS));
-        let delay = retry_after.unwrap_or(backoff).min(Duration::from_secs(MAX_BACKOFF_SECONDS));
+        let delay = retry_after
+            .unwrap_or(backoff)
+            .min(Duration::from_secs(MAX_BACKOFF_SECONDS));
         if !delay.is_zero() {
             thread::sleep(delay);
         }
@@ -333,7 +330,9 @@ mod tests {
             ReadOnlyMethod::GetSignatureStatuses,
             ReadOnlyMethod::GetTransaction,
         ];
-        assert!(methods.iter().all(|method| !method.as_str().contains("send")));
+        assert!(methods
+            .iter()
+            .all(|method| !method.as_str().contains("send")));
     }
 
     #[test]

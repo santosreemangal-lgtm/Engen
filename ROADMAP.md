@@ -1,40 +1,37 @@
 # Engen — Vision Roadmap
 
 **Branch:** `feature/engen-vision-core-20261108`  
-**Language:** Python for paper phase (Rust optional later for detection hot-path only)  
-**Goal:** Reliable ultra-low-latency **Paper** copy engine first. Real trading stays disabled.
+**Language:** Python (paper phase)  
+**Status:** Phase 1 complete on this branch
 
 ---
 
-## Progress
+## Phase 1 — Paper copy reliable ✅
 
-### Phase 1 — Paper copy reliable (this branch)
+- [x] ROADMAP / STATUS
+- [x] paper_copy_runner latency + pending helpers
+- [x] monitor_bridge latency wiring
+- [x] Restart-recovery tests
+- [x] pending_copy_report + tests
+- [x] server_with_pending (API + HTML UI inject)
+- [x] pending_copy_ui.js
+- [x] run_dashboard.py entrypoints
+- [x] README_PAPER.md
 
-- [x] ROADMAP / STATUS documented
-- [x] `paper_copy_runner` latency hooks + pending status helper
-- [x] `monitor_bridge` latency wiring
-- [x] Restart-recovery tests (fill + pending survive new process instance)
-- [x] `pending_copy_report` + unit tests
-- [x] `server_with_pending.py` entrypoint (API includes `pending_copy`)
-- [x] `pending_copy_ui.js` for dashboard metric
-- [ ] Optional: one-line script include in `index.html` (see STATUS.md)
-- [ ] Flatten nested directories (optional cleanup)
+## Phase 2 — Optional cleanup
 
-### Phase 2 — Structure + polish
-- Nested folder cleanup
-- Single clear README entrypoint
+- [ ] Flatten nested `Engen-main/Engen-main` (large move; do in dedicated PR)
+- [ ] Merge/reconcile older draft PRs onto this line
 
-### Phase 3 — Latency path
-- Instrument detection P50/P95/P99 end-to-end
-- Evaluate Yellowstone gRPC (likely Rust sidecar later)
+## Phase 3 — Faster detection (later)
+
+- [ ] End-to-end P50/P95/P99 measurement under real RPC
+- [ ] Yellowstone gRPC / shred path (likely Rust sidecar)
 
 ---
 
-## Safety (never violate)
+## Safety
 
-- No private keys / seeds
-- No signing / broadcast
-- Paper only in this phase
-- Live mode = separate approval + architecture
+No keys, no signing, no broadcast. Live trading requires separate approval.
 
-See `STATUS.md` for run commands.
+See `STATUS.md` and `Engen-main/Engen-main/README_PAPER.md`.

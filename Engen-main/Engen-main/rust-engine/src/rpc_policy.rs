@@ -45,7 +45,9 @@ pub fn validate_rpc_url(raw: &str) -> Result<String, String> {
 
 pub fn validate_rpc_timeout(timeout: f64) -> Result<f64, String> {
     if !timeout.is_finite() || timeout <= 0.0 || timeout > MAX_RPC_TIMEOUT_SECONDS {
-        return Err("RPC timeout must be finite and greater than 0 through 60 seconds.".to_string());
+        return Err(
+            "RPC timeout must be finite and greater than 0 through 60 seconds.".to_string(),
+        );
     }
     Ok(timeout)
 }

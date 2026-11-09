@@ -1,0 +1,27 @@
+[package]
+name = "engen-rust-engine"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+description = "Read-only Solana monitoring and paper-trading engine for Engen"
+license = "UNLICENSED"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde", "clock"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rust_decimal = { version = "1", features = ["serde"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+tracing = "0.1"
+url = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lib]
+name = "engen_rust_engine"
+path = "src/lib.rs"

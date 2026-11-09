@@ -399,9 +399,7 @@ impl SignatureStore {
                 "Invalid transaction processing status.".to_string(),
             ));
         }
-        let raw_json = raw_transaction
-            .map(|value| serde_json::to_string(value))
-            .transpose()?;
+        let raw_json = raw_transaction.map(serde_json::to_string).transpose()?;
 
         let connection = self.connect()?;
         connection.execute(

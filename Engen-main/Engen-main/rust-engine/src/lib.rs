@@ -4,6 +4,7 @@
 //! transaction-broadcast, or live-trading interfaces.
 
 pub mod config;
+pub mod pnl;
 pub mod rpc_policy;
 
 pub const ENGINE_MODE: &str = "read_only";

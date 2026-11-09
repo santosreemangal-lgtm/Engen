@@ -83,10 +83,11 @@ impl SignatureStore {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|_| SignatureStoreError::InvalidInput(
-                        "Unable to create database directory.".to_string()
-                    ))?;
+                std::fs::create_dir_all(parent).map_err(|_| {
+                    SignatureStoreError::InvalidInput(
+                        "Unable to create database directory.".to_string(),
+                    )
+                })?;
             }
         }
         let store = Self { path };
@@ -176,18 +177,23 @@ impl SignatureStore {
             .map_err(|error| SignatureStoreError::InvalidInput(error.to_string()))
     }
 
-    fn transaction<'a>(connection: &'a mut Connection) -> Result<Transaction<'a>, SignatureStoreError> {
+    fn transaction<'a>(
+        connection: &'a mut Connection,
+    ) -> Result<Transaction<'a>, SignatureStoreError> {
         Ok(connection.transaction()?)
     }
 
     pub fn has_baseline(&self, wallet: &str) -> Result<bool, SignatureStoreError> {
         Self::validate_wallet(wallet)?;
         let connection = self.connect()?;
-        let found = connection.query_row(
-            "SELECT 1 FROM wallet_baselines WHERE wallet_address=?1 LIMIT 1",
-            [wallet],
-            |_| Ok(()),
-        ).optional()?.is_some();
+        let found = connection
+            .query_row(
+                "SELECT 1 FROM wallet_baselines WHERE wallet_address=?1 LIMIT 1",
+                [wallet],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
         Ok(found)
     }
 
@@ -207,15 +213,22 @@ impl SignatureStore {
         Self::validate_wallet(wallet)?;
         Self::validate_signature(signature)?;
         let connection = self.connect()?;
-        let found = connection.query_row(
-            "SELECT 1 FROM seen_signatures WHERE wallet_address=?1 AND signature=?2 LIMIT 1",
-            params![wallet, signature],
-            |_| Ok(()),
-        ).optional()?.is_some();
+        let found = connection
+            .query_row(
+                "SELECT 1 FROM seen_signatures WHERE wallet_address=?1 AND signature=?2 LIMIT 1",
+                params![wallet, signature],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
         Ok(found)
     }
 
-    pub fn get_status(&self, wallet: &str, signature: &str) -> Result<Option<String>, SignatureStoreError> {
+    pub fn get_status(
+        &self,
+        wallet: &str,
+        signature: &str,
+    ) -> Result<Option<String>, SignatureStoreError> {
         Self::validate_wallet(wallet)?;
         Self::validate_signature(signature)?;
         let connection = self.connect()?;
@@ -226,12 +239,19 @@ impl SignatureStore {
         ).optional()?)
     }
 
-    pub fn save(&self, wallet: &str, signature: &str, slot: Option<u64>) -> Result<bool, SignatureStoreError> {
+    pub fn save(
+        &self,
+        wallet: &str,
+        signature: &str,
+        slot: Option<u64>,
+    ) -> Result<bool, SignatureStoreError> {
         Self::validate_wallet(wallet)?;
         Self::validate_signature(signature)?;
         let slot = match slot {
             Some(value) if value > i64::MAX as u64 => {
-                return Err(SignatureStoreError::InvalidInput("Slot is out of range.".to_string()));
+                return Err(SignatureStoreError::InvalidInput(
+                    "Slot is out of range.".to_string(),
+                ));
             }
             Some(value) => Some(value as i64),
             None => None,
@@ -267,7 +287,11 @@ impl SignatureStore {
         Ok(inserted)
     }
 
-    pub fn mark_processed(&self, wallet: &str, signature: &str) -> Result<bool, SignatureStoreError> {
+    pub fn mark_processed(
+        &self,
+        wallet: &str,
+        signature: &str,
+    ) -> Result<bool, SignatureStoreError> {
         Self::validate_wallet(wallet)?;
         Self::validate_signature(signature)?;
         let mut connection = self.connect()?;
@@ -280,11 +304,14 @@ impl SignatureStore {
             "UPDATE transaction_records SET processing_status='processed', updated_at=CURRENT_TIMESTAMP WHERE wallet_address=?1 AND signature=?2",
             params![wallet, signature],
         )?;
-        let slot: Option<i64> = transaction.query_row(
-            "SELECT slot FROM seen_signatures WHERE wallet_address=?1 AND signature=?2",
-            params![wallet, signature],
-            |row| row.get(0),
-        ).optional()?.flatten();
+        let slot: Option<i64> = transaction
+            .query_row(
+                "SELECT slot FROM seen_signatures WHERE wallet_address=?1 AND signature=?2",
+                params![wallet, signature],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
         if let Some(slot) = slot {
             transaction.execute(
                 "INSERT INTO wallet_positions(wallet_address,slot,signature) VALUES(?1,?2,?3)
@@ -310,11 +337,15 @@ impl SignatureStore {
     ) -> Result<FailureState, SignatureStoreError> {
         Self::validate_wallet(wallet)?;
         Self::validate_signature(signature)?;
-        if max_attempts == 0 || max_attempts > i64::MAX as u32 {
-            return Err(SignatureStoreError::InvalidInput("max_attempts must be a positive bounded integer.".to_string()));
+        if max_attempts == 0 {
+            return Err(SignatureStoreError::InvalidInput(
+                "max_attempts must be a positive bounded integer.".to_string(),
+            ));
         }
 
-        let safe_code = code.filter(|value| !value.is_empty()).unwrap_or("processing_error");
+        let safe_code = code
+            .filter(|value| !value.is_empty())
+            .unwrap_or("processing_error");
         let safe_message = message.unwrap_or("Processing failed.");
         let safe_message = safe_message.chars().take(300).collect::<String>();
 
@@ -330,14 +361,21 @@ impl SignatureStore {
             |row| row.get(0),
         )?;
         let attempts = attempts.saturating_add(1);
-        let status = if attempts >= max_attempts { "needs_review" } else { "pending" };
+        let status = if attempts >= max_attempts {
+            "needs_review"
+        } else {
+            "pending"
+        };
         transaction.execute(
             "UPDATE seen_signatures SET status=?1,attempts=?2,last_checked_at=CURRENT_TIMESTAMP,error_stage=?3,error_code=?4,error_message=?5 WHERE wallet_address=?6 AND signature=?7",
             params![status, attempts, stage.as_str(), safe_code, safe_message, wallet, signature],
         )?;
         transaction.commit()?;
 
-        Ok(FailureState { status: status.to_string(), attempts })
+        Ok(FailureState {
+            status: status.to_string(),
+            attempts,
+        })
     }
 
     pub fn save_transaction_record(
@@ -349,11 +387,21 @@ impl SignatureStore {
     ) -> Result<(), SignatureStoreError> {
         Self::validate_wallet(wallet)?;
         Self::validate_signature(signature)?;
-        const ALLOWED: &[&str] = &["observed", "incomplete", "failed", "processed", "needs_review"];
+        const ALLOWED: &[&str] = &[
+            "observed",
+            "incomplete",
+            "failed",
+            "processed",
+            "needs_review",
+        ];
         if !ALLOWED.contains(&processing_status) {
-            return Err(SignatureStoreError::InvalidInput("Invalid transaction processing status.".to_string()));
+            return Err(SignatureStoreError::InvalidInput(
+                "Invalid transaction processing status.".to_string(),
+            ));
         }
-        let raw_json = raw_transaction.map(|value| serde_json::to_string(value)).transpose()?;
+        let raw_json = raw_transaction
+            .map(|value| serde_json::to_string(value))
+            .transpose()?;
 
         let connection = self.connect()?;
         connection.execute(
@@ -367,25 +415,40 @@ impl SignatureStore {
         Ok(())
     }
 
-    pub fn get_transaction_record(&self, wallet: &str, signature: &str) -> Result<Option<TransactionRecord>, SignatureStoreError> {
+    pub fn get_transaction_record(
+        &self,
+        wallet: &str,
+        signature: &str,
+    ) -> Result<Option<TransactionRecord>, SignatureStoreError> {
         Self::validate_wallet(wallet)?;
         Self::validate_signature(signature)?;
         let connection = self.connect()?;
         let row = connection.query_row(
             "SELECT raw_transaction_json,processing_status,updated_at FROM transaction_records WHERE wallet_address=?1 AND signature=?2",
             params![wallet, signature],
-            |row| Ok((row.get::<_, Option<String>>(0)?,row.get::<_, String>(1)?,row.get::<_, String>(2)?)),
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
         ).optional()?;
-        row.map(|(raw,status,updated)| {
+        row.map(|(raw, status, updated)| {
             Ok(TransactionRecord {
                 raw_transaction: raw.map(|value| serde_json::from_str(&value)).transpose()?,
                 status,
                 updated_at: updated,
             })
-        }).transpose()
+        })
+        .transpose()
     }
 
-    pub fn get_error_record(&self, wallet: &str, signature: &str) -> Result<Option<ErrorRecord>, SignatureStoreError> {
+    pub fn get_error_record(
+        &self,
+        wallet: &str,
+        signature: &str,
+    ) -> Result<Option<ErrorRecord>, SignatureStoreError> {
         Self::validate_wallet(wallet)?;
         Self::validate_signature(signature)?;
         let connection = self.connect()?;
@@ -403,10 +466,16 @@ impl SignatureStore {
         ).optional()?)
     }
 
-    pub fn pending_signatures(&self, wallet: &str, limit: usize) -> Result<Vec<String>, SignatureStoreError> {
+    pub fn pending_signatures(
+        &self,
+        wallet: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, SignatureStoreError> {
         Self::validate_wallet(wallet)?;
         if limit == 0 || limit > 10_000 {
-            return Err(SignatureStoreError::InvalidInput("Pending-signature limit must be between 1 and 10000.".to_string()));
+            return Err(SignatureStoreError::InvalidInput(
+                "Pending-signature limit must be between 1 and 10000.".to_string(),
+            ));
         }
         let connection = self.connect()?;
         let mut statement = connection.prepare(
@@ -416,21 +485,26 @@ impl SignatureStore {
         Ok(rows.collect::<Result<Vec<String>, _>>()?)
     }
 
-    pub fn get_position(&self, wallet: &str) -> Result<Option<WalletPosition>, SignatureStoreError> {
+    pub fn get_position(
+        &self,
+        wallet: &str,
+    ) -> Result<Option<WalletPosition>, SignatureStoreError> {
         Self::validate_wallet(wallet)?;
         let connection = self.connect()?;
-        Ok(connection.query_row(
-            "SELECT slot,signature,updated_at FROM wallet_positions WHERE wallet_address=?1",
-            [wallet],
-            |row| {
-                let slot: Option<i64> = row.get(0)?;
-                Ok(WalletPosition {
-                    slot: slot.and_then(|value| u64::try_from(value).ok()),
-                    signature: row.get(1)?,
-                    updated_at: row.get(2)?,
-                })
-            },
-        ).optional()?)
+        Ok(connection
+            .query_row(
+                "SELECT slot,signature,updated_at FROM wallet_positions WHERE wallet_address=?1",
+                [wallet],
+                |row| {
+                    let slot: Option<i64> = row.get(0)?;
+                    Ok(WalletPosition {
+                        slot: slot.and_then(|value| u64::try_from(value).ok()),
+                        signature: row.get(1)?,
+                        updated_at: row.get(2)?,
+                    })
+                },
+            )
+            .optional()?)
     }
 
     pub fn seen_signatures(&self, wallet: &str, limit: usize) -> Result<Vec<String>, SignatureStoreError> {

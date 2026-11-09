@@ -7,6 +7,7 @@ pub mod config;
 pub mod latency;
 pub mod rpc_policy;
 pub mod safety;
+pub mod signature_store;
 pub mod solana_public;
 pub mod solana_validation;
 pub mod source_freshness;

@@ -61,12 +61,17 @@ mod tests {
     fn validates_signature_length() {
         let signature = "1".repeat(64);
         assert!(is_valid_transaction_signature(&signature));
-        assert!(!is_valid_transaction_signature("11111111111111111111111111111111"));
+        assert!(!is_valid_transaction_signature(
+            "11111111111111111111111111111111"
+        ));
     }
 
     #[test]
     fn distinguishes_invalid_base58_from_wrong_length() {
-        assert_eq!(require_solana_address("0"), Err(SolanaValueError::InvalidBase58));
+        assert_eq!(
+            require_solana_address("0"),
+            Err(SolanaValueError::InvalidBase58)
+        );
         assert_eq!(
             require_solana_address("1"),
             Err(SolanaValueError::InvalidAddressLength)

@@ -1043,8 +1043,8 @@ mod tests {
             "transaction":{"message":{"accountKeys":[WALLET,"Other"]}},
             "meta":{
                 "fee":5000,
-                "preBalances":[100000,200000],
-                "postBalances":[95000,150000],
+                "preBalances":[100000,200000,300000],
+                "postBalances":[95000,150000,300000],
                 "loadedAddresses":{"writable":["Loaded_W"],"readonly":[]}
             }
         });

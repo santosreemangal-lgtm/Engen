@@ -1,53 +1,38 @@
 # Python → Rust Migration
 
 **Branch:** `feature/rust-engine-core`  
-**Rule:** Paper only until `LIVE_BOUNDARY.md` / `LIVE_READINESS.md` are satisfied.
+**Goal:** Ultimately run the copy engine in Rust. Python stays until parity.
 
-## Can we convert all 7 files at once?
+## Progress
 
-**Not in one step.** Rough size of the current Python side:
+| Python module | Rust module | Status |
+|---------------|-------------|--------|
+| `paper_simulator.py` | `paper_simulator.rs` | **R2 advanced** — create/fill BUY·SELL, fees, slippage, optional SQLite |
+| `paper_copy_runner.py` | `paper_copy.rs` | Queue + stale gate + execute_pending |
+| `source_freshness` | `source_freshness.rs` | Done + unit tests |
+| `transaction_monitor.py` | `transaction_monitor.rs` | Stub (R3: RPC/gRPC) |
+| `monitor_service` / bridge | `monitor_service.rs` | Stub tick loop |
+| `profile_store.py` | `profile_store.rs` | Stub |
+| `dashboard/server.py` | — | Keep Python UI for now |
 
-| Module | Role | Rust priority |
-|--------|------|----------------|
-| `transaction_monitor.py` | Detect source txs | **P0** (latency) |
-| `paper_copy_runner.py` | Queue + execute paper copy | **P0** |
-| `paper_simulator.py` | Virtual ledger / fills | **P1** |
-| `monitor_bridge.py` | Wire monitor → paper | **P1** |
-| `monitor_service.py` | Background scan loop | **P1** |
-| `profile_store.py` | Profiles SQLite | **P2** |
-| `dashboard/server.py` | HTTP UI/API | **P3** (keep Python longer) |
+## Run (when Rust toolchain available)
 
-Dashboard HTTP + HTML is **not** where <100ms is won. Winning path is **detection → paper decision**. Keep Python dashboard; put hot path in Rust.
-
-## Recommended architecture (hybrid)
-
+```bash
+cd rust/engen_core
+cargo test
+cargo run --bin engen_paper
 ```
-[Rust: monitor + paper core]  --JSON/stdio or local HTTP-->  [Python: dashboard]
-```
-
-- Rust binary: watch wallets, classify swaps, paper queue/fill, SQLite ledger  
-- Python: existing `server_with_pending.py` UI until a Rust HTTP layer is worth it  
 
 ## Phases
 
-### Phase R1 (this branch scaffold)
-- [x] `rust/engen_core` Cargo crate layout
-- [x] Module map matching Python names
-- [x] Paper-only stubs (no signing / broadcast)
+- [x] R1 scaffold
+- [x] R2 paper ledger fill path (in progress → solid)
+- [ ] R2b SQLite restart tests parity with Python
+- [ ] R3 transaction monitor (RPC then Yellowstone gRPC)
+- [ ] R3 monitor service production loop
+- [ ] R4 profile store + optional Rust HTTP API
+- [ ] Cut over: Python dashboard talks to Rust core (JSON/HTTP)
 
-### Phase R2
-- [ ] `paper_simulator` SQLite ledger parity with Python tests
-- [ ] `paper_copy_runner` queue + dedupe + stale gate
+## Safety
 
-### Phase R3
-- [ ] `transaction_monitor` RPC or Yellowstone gRPC subscribe
-- [ ] `monitor_service` + bridge loop
-
-### Phase R4 (optional)
-- [ ] `profile_store`
-- [ ] Axum/Actix dashboard **or** keep Python UI
-
-## Do not
-
-- Delete working Python paper engine until Rust passes the same tests  
-- Put private keys or `sendTransaction` in this crate  
+No private keys, no signing, no broadcast in this crate.

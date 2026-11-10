@@ -326,8 +326,19 @@ pub fn analyze_native_sol_balance_changes(transaction: &Value) -> Vec<Value> {
             }
         }
     }
+    // Solana pre/post balance arrays are indexed against the complete account-key
+    // list (static keys plus loaded addresses). Never silently truncate mismatched
+    // arrays: doing so can attribute a partial transaction as a complete movement.
+    if account_keys.len() != pre_balances.len()
+        || account_keys.len() != post_balances.len()
+        || account_keys.iter().any(Option::is_none)
+        || pre_balances.iter().any(|value| value.as_u64().is_none())
+        || post_balances.iter().any(|value| value.as_u64().is_none())
+    {
+        return Vec::new();
+    }
     let fee = meta.get("fee").and_then(Value::as_u64);
-    let count = account_keys.len().min(pre_balances.len());
+    let count = account_keys.len();
     let mut changes = Vec::new();
 
     for index in 0..count {
@@ -609,6 +620,8 @@ pub fn classify_transaction(
     let mut signal = classify_token_balance_changes(base_changes, wallet_address);
 
     let mut instructions = Vec::new();
+    let mut direct_transfer_instruction = false;
+    let mut recognized_non_transfer_instruction = false;
     let fee = meta.and_then(|value| value.get("fee")).cloned().unwrap_or(Value::Null);
     if let Some(message) = transaction.get("transaction").and_then(|value| value.get("message")) {
         if let Some(outer) = message.get("instructions").and_then(Value::as_array) {
@@ -621,6 +634,12 @@ pub fn classify_transaction(
                     .and_then(|value| value.get("type"))
                     .cloned()
                     .unwrap_or(Value::Null);
+                let parsed_name = parsed_type.as_str().unwrap_or_default().to_ascii_lowercase();
+                if matches!(parsed_name.as_str(), "transfer" | "transferchecked" | "transfer_checked") {
+                    direct_transfer_instruction = true;
+                } else if !parsed_name.is_empty() {
+                    recognized_non_transfer_instruction = true;
+                }
                 instructions.push(json!({
                     "index": index,
                     "program": instruction.get("program").cloned().unwrap_or(Value::Null),
@@ -850,6 +869,19 @@ pub fn classify_transaction(
         .unwrap_or("Evidence is insufficient or ambiguous.")
         .to_string();
     let mut result: Map<String, Value> = signal_object;
+    let transaction_type = if classification == "FAILED_TRANSACTION" {
+        "FAILED"
+    } else if candidate && classification == "BUY_CANDIDATE" {
+        "BUY"
+    } else if candidate && classification == "SELL_CANDIDATE" {
+        "SELL"
+    } else if direct_transfer_instruction && !recognized_non_transfer_instruction {
+        "TRANSFER"
+    } else {
+        "UNKNOWN"
+    };
+    result.insert("transaction_type".to_string(), json!(transaction_type));
+    result.insert("trade_signal".to_string(), json!(if candidate { classification.as_str() } else { "NOT_COPYABLE" }));
     result.insert("confidence".to_string(), json!(if candidate { "medium" } else { "low" }));
     result.insert("evidence".to_string(), json!({
         "wallet_address": wallet_address,
@@ -920,6 +952,31 @@ mod tests {
         assert_eq!(result["program_ids"], json!(["TOKEN_PROGRAM"]));
         assert_eq!(result["instructions"][1]["source"], "inner");
         assert_eq!(result["instructions"][1]["parsed_type"], "checked_transfer");
+    }
+
+    #[test]
+    fn native_sol_balance_analysis_rejects_account_key_and_balance_length_mismatch() {
+        let transaction = json!({
+            "transaction":{"message":{"accountKeys":[WALLET, "Other"]}},
+            "meta":{"fee":5000,"preBalances":[10000],"postBalances":[9000]}
+        });
+        assert!(analyze_native_sol_balance_changes(&transaction).is_empty());
+    }
+
+    #[test]
+    fn direct_outer_transfer_is_explicitly_classified_and_never_copyable() {
+        let transaction = json!({
+            "transaction":{"message":{"accountKeys":[WALLET],"instructions":[{
+                "program":"system",
+                "programId":"11111111111111111111111111111111",
+                "parsed":{"type":"transfer"}
+            }]}},
+            "meta":{"err":null,"fee":5000,"preBalances":[100000],"postBalances":[90000]}
+        });
+        let result = classify_transaction(&transaction,WALLET,None);
+        assert_eq!(result["transaction_type"],"TRANSFER");
+        assert_eq!(result["trade_signal"],"NOT_COPYABLE");
+        assert_eq!(result["classification"],"UNKNOWN");
     }
 
     #[test]

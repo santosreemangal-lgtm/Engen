@@ -1,5 +1,7 @@
 //! End-to-end read-only transaction monitoring and conservative signal preparation.
 
+use std::collections::HashSet;
+
 use serde_json::{json, Value};
 use thiserror::Error;
 
@@ -17,6 +19,14 @@ use crate::wallet_monitor::{
 };
 
 const MAX_PROCESSING_ATTEMPTS: u32 = 6;
+
+fn first_signature_occurrence(signature: &str, seen: &mut HashSet<String>) -> bool {
+    seen.insert(signature.to_string())
+}
+
+fn is_terminal_signature_status(status: Option<&str>) -> bool {
+    matches!(status, Some("processed" | "stale" | "needs_review"))
+}
 
 #[derive(Debug, Error)]
 pub enum TransactionMonitorError {
@@ -197,10 +207,14 @@ pub fn process_new_signatures(
     }
 
     let mut results = Vec::new();
+    let mut seen_in_batch = HashSet::new();
     for item in signatures {
         let Some(signature) = item.get("signature").and_then(Value::as_str) else {
             continue;
         };
+        if !first_signature_occurrence(signature, &mut seen_in_batch) {
+            continue;
+        }
         if !is_valid_transaction_signature(signature) {
             let invalid = json!({
                 "signature":signature,
@@ -211,6 +225,9 @@ pub fn process_new_signatures(
                 "error":"Invalid transaction signature; RPC request was not sent."
             });
             results.push(include_signature_observation(invalid, item));
+            continue;
+        }
+        if is_terminal_signature_status(store.get_status(wallet_address, signature)?.as_deref()) {
             continue;
         }
 
@@ -457,6 +474,23 @@ mod tests {
                 {"owner":OTHER,"mint":ASSET,"decimals":6,"delta_amount":"9000000"}
             ]
         })
+    }
+
+    #[test]
+    fn duplicate_signature_occurrences_are_rejected_after_the_first() {
+        let mut seen = HashSet::new();
+        assert!(first_signature_occurrence("sig-a", &mut seen));
+        assert!(!first_signature_occurrence("sig-a", &mut seen));
+        assert!(first_signature_occurrence("sig-b", &mut seen));
+    }
+
+    #[test]
+    fn terminal_signature_statuses_are_not_reprocessed() {
+        assert!(is_terminal_signature_status(Some("processed")));
+        assert!(is_terminal_signature_status(Some("stale")));
+        assert!(is_terminal_signature_status(Some("needs_review")));
+        assert!(!is_terminal_signature_status(Some("pending")));
+        assert!(!is_terminal_signature_status(None));
     }
 
     #[test]

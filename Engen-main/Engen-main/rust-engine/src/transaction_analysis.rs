@@ -278,7 +278,7 @@ pub fn analyze_token_balance_changes(meta: &Value) -> Vec<Value> {
         let old_amount = old.map(|value| value.amount.clone()).unwrap_or_else(|| BigDecimal::from(0));
         let new_amount = new.map(|value| value.amount.clone()).unwrap_or_else(|| BigDecimal::from(0));
         let delta = &new_amount - &old_amount;
-        if delta == BigDecimal::from(0) {
+        if delta == 0 {
             continue;
         }
         changes.push(json!({
@@ -403,7 +403,7 @@ pub fn classify_token_balance_changes(changes: &Value, wallet_address: &str) -> 
         let Some(delta) = decimal_integer(raw_delta) else {
             continue;
         };
-        if delta == BigDecimal::from(0) {
+        if delta == 0 {
             continue;
         }
         if change.get("source").and_then(Value::as_str) == Some(NATIVE_SOL_SOURCE) {
@@ -419,7 +419,7 @@ pub fn classify_token_balance_changes(changes: &Value, wallet_address: &str) -> 
             .and_modify(|total| *total += &delta)
             .or_insert(delta);
     }
-    token_deltas.retain(|_, delta| *delta != BigDecimal::from(0));
+    token_deltas.retain(|_, delta| *delta != 0);
 
     let quote_token_mints = [USDC_MINT, USDT_MINT, WRAPPED_SOL_MINT];
     let token_quote_deltas: BTreeMap<_, _> = token_deltas
@@ -452,8 +452,8 @@ pub fn classify_token_balance_changes(changes: &Value, wallet_address: &str) -> 
 
     let asset_mints: Vec<_> = asset_deltas.keys().cloned().collect();
     let quote_mints: Vec<_> = quote_deltas.keys().cloned().collect();
-    if asset_deltas.values().all(|delta| delta > &BigDecimal::from(0))
-        && quote_deltas.values().all(|delta| delta < &BigDecimal::from(0))
+    if asset_deltas.values().all(|delta| delta > &0)
+        && quote_deltas.values().all(|delta| delta < &0)
     {
         return json!({
             "classification": "BUY_CANDIDATE",
@@ -462,8 +462,8 @@ pub fn classify_token_balance_changes(changes: &Value, wallet_address: &str) -> 
             "quote_mints": quote_mints
         });
     }
-    if asset_deltas.values().all(|delta| delta < &BigDecimal::from(0))
-        && quote_deltas.values().all(|delta| delta > &BigDecimal::from(0))
+    if asset_deltas.values().all(|delta| delta < &0)
+        && quote_deltas.values().all(|delta| delta > &0)
     {
         return json!({
             "classification": "SELL_CANDIDATE",
@@ -705,7 +705,7 @@ pub fn classify_transaction(
             let Some(delta) = decimal_integer(raw_delta) else {
                 continue;
             };
-            if delta == BigDecimal::from(0) {
+            if delta == 0 {
                 continue;
             }
             if item.get("source").and_then(Value::as_str) == Some(NATIVE_SOL_SOURCE) {
@@ -732,21 +732,21 @@ pub fn classify_transaction(
                     .unwrap_or_else(|| BigDecimal::from(0));
                 let (base_matches, quote_matches, classification) = if pumpfun_action == Some("BUY") {
                     (
-                        base_delta > BigDecimal::from(0),
+                        base_delta > 0,
                         if quote_mint != WRAPPED_SOL_MINT {
-                            quote_delta < BigDecimal::from(0)
+                            quote_delta < 0
                         } else {
-                            quote_delta < BigDecimal::from(0) || pumpfun_native_sol_delta < BigDecimal::from(0)
+                            quote_delta < 0 || pumpfun_native_sol_delta < 0
                         },
                         "BUY_CANDIDATE"
                     )
                 } else {
                     (
-                        base_delta < BigDecimal::from(0),
+                        base_delta < 0,
                         if quote_mint != WRAPPED_SOL_MINT {
-                            quote_delta > BigDecimal::from(0)
+                            quote_delta > 0
                         } else {
-                            quote_delta > BigDecimal::from(0) || pumpfun_native_sol_delta > BigDecimal::from(0)
+                            quote_delta > 0 || pumpfun_native_sol_delta > 0
                         },
                         "SELL_CANDIDATE"
                     )

@@ -1,7 +1,7 @@
 # Phase 2 — Solana Transaction Engine: Current-Head Implementation & Acceptance Report
 
 Audit date: 2026-11-10  
-Audited source head: \`4e46f53040d5ff9efe48950ea94fc738e4b9f635\`  
+Audited source head: \`786124cc8bbe800efc50815e15042ca46ba168be\`  
 Canonical branch: \`rewrite/rust-backend-20261109\`  
 Canonical review: PR #48 (Draft; do not merge before every phase gate passes)
 
@@ -13,8 +13,8 @@ Canonical review: PR #48 (Draft; do not merge before every phase gate passes)
 
 ### Latest CI evidence
 
-PR check run #237: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42873571488  
-Push verification run #236: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42873562429
+PR check run #241: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42874976271  
+Push verification run #240: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42874963029
 
 | Check | Result |
 |---|---:|
@@ -42,7 +42,7 @@ Rust \`solana_public.rs\` currently provides:
 - JSON-RPC 2.0 envelope and request-ID validation.
 - Bounded timeout/retry count and request pacing.
 - Bounded retry for HTTP 429/5xx and recognized provider-side rate-limit errors.
-- Retry-After parsing for seconds and HTTP dates, capped backoff.
+- Retry-After parsing for seconds and valid HTTP-date values (the date case is asserted using a generated future HTTP date), capped backoff.
 - An 8 MiB maximum response body, enforced even when Content-Length is absent.
 - Typed invalid-response, transport, oversized-body and unsupported-transaction-version errors.
 - Signature-page row validation and bounded page sizes.

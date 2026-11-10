@@ -1,7 +1,7 @@
 # Phase 1 — Current-Head Rust Architecture, Parity & Runtime Audit
 
 Audit date: 2026-11-10  
-Audited source head: \`4e46f53040d5ff9efe48950ea94fc738e4b9f635\`  
+Audited source head: \`786124cc8bbe800efc50815e15042ca46ba168be\`  
 Canonical branch: \`rewrite/rust-backend-20261109\`  
 Canonical review: PR #48 (Draft; do not merge before all gates pass)  
 Baseline: \`feature/engen-vision-core-20261108\`
@@ -24,8 +24,8 @@ Baseline: \`feature/engen-vision-core-20261108\`
 | Real data or production cutover | Not touched | No migration/cutover authorized |
 
 CI evidence for this audited head:
-- Rust Engine Checks run #237: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42873571488
-- Push verification run #236: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42873562429
+- Rust Engine Checks PR run #241: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42874976271
+- Push verification run #240: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42874963029
 - Formatting, \`cargo test --all-targets\`, selected Python references and Clippy passed.
 
 ## 2. Canonical repository decision

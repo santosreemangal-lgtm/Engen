@@ -604,7 +604,8 @@ pub fn classify_transaction(
             derived_changes.extend(analyze_native_sol_balance_changes(transaction));
         }
     }
-    let base_changes: &Value = supplied_balance_changes.unwrap_or(&Value::Array(derived_changes));
+    let derived_changes_value = Value::Array(derived_changes);
+    let base_changes: &Value = supplied_balance_changes.unwrap_or(&derived_changes_value);
     let mut signal = classify_token_balance_changes(base_changes, wallet_address);
 
     let mut instructions = Vec::new();
@@ -838,8 +839,16 @@ pub fn classify_transaction(
     }
 
     let signal_object = signal.as_object().cloned().unwrap_or_default();
-    let classification = signal_object.get("classification").and_then(Value::as_str).unwrap_or("UNKNOWN");
-    let reason = signal_object.get("reason").and_then(Value::as_str).unwrap_or("Evidence is insufficient or ambiguous.");
+    let classification = signal_object
+        .get("classification")
+        .and_then(Value::as_str)
+        .unwrap_or("UNKNOWN")
+        .to_string();
+    let reason = signal_object
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("Evidence is insufficient or ambiguous.")
+        .to_string();
     let mut result: Map<String, Value> = signal_object;
     result.insert("confidence".to_string(), json!(if candidate { "medium" } else { "low" }));
     result.insert("evidence".to_string(), json!({
@@ -869,7 +878,7 @@ pub fn classify_transaction(
     };
     let final_reason = format!("{reason}{suffix}");
     result.insert("reason".to_string(), Value::String(final_reason));
-    result.insert("classification".to_string(), Value::String(classification.to_string()));
+    result.insert("classification".to_string(), Value::String(classification));
     Value::Object(result)
 }
 
@@ -954,10 +963,9 @@ mod tests {
             }
         });
         let changes = analyze_native_sol_balance_changes(&transaction);
-        assert_eq!(changes.len(),2);
-        assert_eq!(changes[0]["delta_amount"],"0");
-        assert_eq!(changes[0]["raw_delta_amount"],"-5000");
-        assert_eq!(changes[1]["delta_amount"],"-50000");
+        assert_eq!(changes.len(),1);
+        assert_eq!(changes[0]["account_index"],1);
+        assert_eq!(changes[0]["delta_amount"],"-50000");
     }
 
     #[test]

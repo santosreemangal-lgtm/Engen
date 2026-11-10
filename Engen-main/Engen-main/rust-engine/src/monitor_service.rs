@@ -148,6 +148,7 @@ impl MonitorService {
                 .collect();
             state.wallets = next_wallets;
             state.enabled = true;
+            drop(state);
             return self.status_value();
         }
 

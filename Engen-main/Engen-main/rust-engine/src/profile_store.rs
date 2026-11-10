@@ -706,10 +706,10 @@ impl ProfileStore {
              FROM transactions t JOIN profile_transactions p ON p.signature=t.signature
              WHERE p.profile_id=? ORDER BY t.observed_at DESC,t.signature",
         )?;
-        statement
+        let rows = statement
             .query_map([profile_id], transaction_from_row)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(ProfileStoreError::from)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub fn save_balance_snapshot(
@@ -794,7 +794,7 @@ impl ProfileStore {
                     observed_at,source,freshness_seconds,is_current
              FROM balance_snapshots WHERE profile_id=? AND is_current=1 ORDER BY token_mint",
         )?;
-        statement
+        let rows = statement
             .query_map([profile_id], |row| {
                 Ok(BalanceSnapshot {
                     snapshot_id: row.get(0)?,
@@ -809,8 +809,8 @@ impl ProfileStore {
                     is_current: row.get::<_, i64>(9)? == 1,
                 })
             })?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(ProfileStoreError::from)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub fn portfolio_holdings(

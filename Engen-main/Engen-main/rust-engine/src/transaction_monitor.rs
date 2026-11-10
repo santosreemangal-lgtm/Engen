@@ -7,6 +7,7 @@ use crate::latency::LatencyRecorder;
 use crate::signature_store::{ProcessingStage, SignatureStore, SignatureStoreError};
 use crate::solana_public::{SolanaRpcClient, SolanaRpcError};
 use crate::solana_validation::{is_valid_solana_address, is_valid_transaction_signature};
+use crate::source_freshness::source_block_time_ok;
 use crate::transaction_analysis::classify_transaction;
 use crate::transaction_processor::{
     process_transaction_signature, TransactionProcessorError,
@@ -348,6 +349,47 @@ pub fn process_new_signatures(
     Ok(results)
 }
 
+/// Mark stale BUY/SELL candidates as retained audit records and annotate the skip.
+pub fn annotate_stale_candidates(
+    store: &SignatureStore,
+    wallet_address: &str,
+    results: Vec<Value>,
+    now_ts: i64,
+) -> Result<Vec<Value>, TransactionMonitorError> {
+    let mut annotated = Vec::with_capacity(results.len());
+    for mut result in results {
+        let classification = result
+            .get("trade_signal")
+            .and_then(|signal| signal.get("classification"))
+            .and_then(Value::as_str);
+        if matches!(classification, Some("BUY_CANDIDATE" | "SELL_CANDIDATE")) {
+            let signature = result.get("signature").and_then(Value::as_str);
+            let block_time = result
+                .get("signature_observation")
+                .and_then(|observation| observation.get("block_time"))
+                .and_then(Value::as_i64);
+            if !source_block_time_ok(block_time, now_ts) {
+                if let Some(signature) = signature.filter(|value| is_valid_transaction_signature(value)) {
+                    store.mark_stale(wallet_address, signature)?;
+                }
+                if let Some(object) = result.as_object_mut() {
+                    object.insert(
+                        "paper_copy_skip_reason".to_string(),
+                        Value::String("SOURCE_TRANSACTION_STALE_OR_TIMESTAMP_MISSING".to_string()),
+                    );
+                    object.insert(
+                        "processing_status".to_string(),
+                        Value::String("stale".to_string()),
+                    );
+                    object.insert("retryable".to_string(), Value::Bool(false));
+                }
+            }
+        }
+        annotated.push(result);
+    }
+    Ok(annotated)
+}
+
 /// Discover signatures, persist the baseline/cursor state, and process only saved pending items.
 pub fn monitor_wallet(
     client: &SolanaRpcClient,
@@ -369,14 +411,15 @@ pub fn monitor_wallet(
         limit,
         latency_recorder,
     )?;
-    process_new_signatures(
+    let processed = process_new_signatures(
         client,
         store,
         wallet_address,
         &pending,
         defer_processed,
         latency_recorder,
-    )
+    )?;
+    annotate_stale_candidates(store, wallet_address, processed, chrono::Utc::now().timestamp())
 }
 
 #[cfg(test)]
@@ -413,6 +456,26 @@ mod tests {
                 {"owner":OTHER,"mint":ASSET,"decimals":6,"delta_amount":"9000000"}
             ]
         })
+    }
+
+    #[test]
+    fn stale_candidate_is_annotated_and_persisted_without_being_deleted() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = SignatureStore::open(directory.path().join("signatures.db")).unwrap();
+        let signature = signature_item()["signature"].as_str().unwrap().to_string();
+        store.save(WALLET, &signature, Some(100)).unwrap();
+        let mut candidate = processed_transaction();
+        candidate["trade_signal"] = json!({"classification":"BUY_CANDIDATE"});
+        candidate["signature_observation"] = json!({"block_time":1_759_999_900});
+        let results = annotate_stale_candidates(
+            &store,
+            WALLET,
+            vec![candidate],
+            1_760_000_001,
+        ).unwrap();
+        assert_eq!(results[0]["processing_status"], "stale");
+        assert_eq!(results[0]["paper_copy_skip_reason"], "SOURCE_TRANSACTION_STALE_OR_TIMESTAMP_MISSING");
+        assert_eq!(store.get_status(WALLET, &signature).unwrap().as_deref(), Some("stale"));
     }
 
     #[test]

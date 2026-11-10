@@ -801,7 +801,7 @@ mod tests {
     fn restart_preserves_position_processed_status_and_instruction_evidence() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("signatures.db");
-        let evidence = serde_json::json!({
+        let raw_evidence = serde_json::json!({
             "transaction": {"message": {"instructions": [{
                 "program": "system",
                 "parsed": {"type": "transfer"}
@@ -814,11 +814,28 @@ mod tests {
                 }]
             }]}
         });
+        let parsed_evidence = serde_json::json!({
+            "instructions": [
+                {"source":"message","parsed_type":"transfer"},
+                {"source":"inner","parsed_type":"transferChecked"}
+            ]
+        });
+        let classification = serde_json::json!({
+            "transaction_type":"TRANSFER",
+            "trade_signal":"NOT_COPYABLE"
+        });
         {
             let store = SignatureStore::open(&path).unwrap();
             store.save(WALLET, SIGNATURE, Some(42)).unwrap();
             store
-                .save_transaction_record(WALLET, SIGNATURE, Some(&evidence), "observed")
+                .save_transaction_evidence(
+                    WALLET,
+                    SIGNATURE,
+                    Some(&raw_evidence),
+                    Some(&parsed_evidence),
+                    Some(&classification),
+                    "observed",
+                )
                 .unwrap();
             assert!(store.mark_processed(WALLET, SIGNATURE).unwrap());
         }
@@ -832,7 +849,9 @@ mod tests {
             .get_transaction_record(WALLET, SIGNATURE)
             .unwrap()
             .unwrap();
-        assert_eq!(record.raw_transaction, Some(evidence));
+        assert_eq!(record.raw_transaction, Some(raw_evidence));
+        assert_eq!(record.parsed_evidence, Some(parsed_evidence));
+        assert_eq!(record.classification, Some(classification));
         assert_eq!(record.status, "processed");
     }
 }

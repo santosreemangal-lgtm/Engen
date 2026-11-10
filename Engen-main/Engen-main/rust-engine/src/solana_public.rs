@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 
 use crate::rpc_policy::{validate_rpc_timeout, validate_rpc_url, MAX_RPC_RETRIES};
-use crate::solana_validation::require_transaction_signature;
+use crate::solana_validation::{is_valid_transaction_signature, require_solana_address, require_transaction_signature};
 
 pub const DEFAULT_RPC_URL: &str = "https://api.mainnet-beta.solana.com";
 const MAX_BACKOFF_SECONDS: u64 = 600;
@@ -24,6 +24,7 @@ pub enum ReadOnlyMethod {
     GetSlot,
     GetLatestBlockhash,
     GetSignatureStatuses,
+    GetSignaturesForAddress,
     GetTransaction,
 }
 
@@ -34,6 +35,7 @@ impl ReadOnlyMethod {
             Self::GetSlot => "getSlot",
             Self::GetLatestBlockhash => "getLatestBlockhash",
             Self::GetSignatureStatuses => "getSignatureStatuses",
+            Self::GetSignaturesForAddress => "getSignaturesForAddress",
             Self::GetTransaction => "getTransaction",
         }
     }
@@ -228,6 +230,38 @@ impl SolanaRpcClient {
         Ok(Some(status.clone()))
     }
 
+    /// Fetch a bounded, newest-first page of public wallet signatures.
+    pub fn get_signatures_for_address(
+        &self,
+        wallet_address: &str,
+        limit: usize,
+        before: Option<&str>,
+    ) -> Result<Vec<Value>, SolanaRpcError> {
+        require_solana_address(wallet_address)
+            .map_err(|error| SolanaRpcError::InvalidInput(error.to_string()))?;
+        if !(1..=1000).contains(&limit) {
+            return Err(SolanaRpcError::InvalidInput(
+                "Signature-page limit must be between 1 and 1000.".to_string(),
+            ));
+        }
+        if let Some(cursor) = before {
+            require_transaction_signature(cursor)
+                .map_err(|error| SolanaRpcError::InvalidInput(error.to_string()))?;
+        }
+        let mut options = serde_json::Map::new();
+        options.insert("limit".to_string(), json!(limit));
+        if let Some(cursor) = before {
+            options.insert("before".to_string(), json!(cursor));
+        }
+        let value = self.request(
+            ReadOnlyMethod::GetSignaturesForAddress,
+            json!([wallet_address, Value::Object(options)]),
+            6,
+        )?;
+        let rows = value.as_array().ok_or(SolanaRpcError::InvalidResponse)?;
+        Ok(normalize_signature_rows(rows))
+    }
+
     pub fn get_transaction(&self, signature: &str) -> Result<Option<Value>, SolanaRpcError> {
         require_transaction_signature(signature)
             .map_err(|error| SolanaRpcError::InvalidInput(error.to_string()))?;
@@ -283,6 +317,27 @@ impl SolanaRpcClient {
             thread::sleep(delay);
         }
     }
+}
+
+fn normalize_signature_rows(rows: &[Value]) -> Vec<Value> {
+    rows.iter()
+        .filter(|item| {
+            if !item.is_object() {
+                return false;
+            }
+            let Some(signature) = item.get("signature").and_then(Value::as_str) else {
+                return false;
+            };
+            if !is_valid_transaction_signature(signature) {
+                return false;
+            }
+            match item.get("slot") {
+                None | Some(Value::Null) => true,
+                Some(slot) => slot.as_u64().is_some(),
+            }
+        })
+        .cloned()
+        .collect()
 }
 
 fn validate_response(value: Value, expected_id: u64) -> Result<Value, SolanaRpcError> {
@@ -358,6 +413,22 @@ mod tests {
         assert_eq!(parse_retry_after("12"), Some(Duration::from_secs(12)));
         assert_eq!(parse_retry_after("9999"), Some(Duration::from_secs(600)));
         assert!(parse_retry_after("not-a-date").is_none());
+    }
+
+    #[test]
+    fn signature_page_filter_preserves_provider_metadata_and_drops_malformed_rows() {
+        let signature = "1".repeat(64);
+        let rows = vec![
+            json!({"signature":signature,"slot":123,"err":null,"blockTime":456}),
+            json!({"signature":"bad","slot":123}),
+            json!({"signature": "1".repeat(64), "slot":-1}),
+            json!("not-an-object"),
+            json!({"slot":123}),
+        ];
+        let result = normalize_signature_rows(&rows);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0]["slot"], 123);
+        assert_eq!(result[0]["blockTime"], 456);
     }
 
     #[test]

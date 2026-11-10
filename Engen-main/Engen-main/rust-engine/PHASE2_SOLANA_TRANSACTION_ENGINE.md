@@ -1,7 +1,7 @@
 # Phase 2 — Solana Transaction Engine: Current-Head Implementation & Acceptance Report
 
 Audit date: 2026-11-10  
-Audited source head: \`786124cc8bbe800efc50815e15042ca46ba168be\`  
+Audited source head: \`06bceb284d57d29ff5f27d9ffd8c47dd8616ee01\`  
 Canonical branch: \`rewrite/rust-backend-20261109\`  
 Canonical review: PR #48 (Draft; do not merge before every phase gate passes)
 
@@ -13,15 +13,15 @@ Canonical review: PR #48 (Draft; do not merge before every phase gate passes)
 
 ### Latest CI evidence
 
-PR check run #241: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42874976271  
-Push verification run #240: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42874963029
+PR check run #247: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42876209174  
+Push verification run #246: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42876194051
 
 | Check | Result |
 |---|---:|
-| Rust library unit tests | 116 passed |
+| Rust library unit tests | 117 passed |
 | Rust CLI unit tests | 3 passed |
-| Rust integration tests | 4 passed |
-| Total Rust tests | **123 passed, 0 failed** |
+| Rust integration tests | 8 passed |
+| Total Rust tests | **128 passed, 0 failed** |
 | Python transaction reference tests | 102 passed |
 | Python Solana validation tests | 5 passed |
 | Python RPC policy tests | 10 passed |
@@ -82,6 +82,7 @@ This is not a universal decoder for every DEX or aggregator program.
 - Primary key is wallet + signature; repeated and cross-wallet cases are separately tested.
 - Repeated values inside one batch are deduplicated.
 - Concurrent SQLite inserts commit exactly one row.
+- Concurrent `MonitorService.start()` calls on one service instance reuse its existing worker; an instrumented test proves no overlapping scans.
 - Baseline, pending, processed, stale and needs-review states are retained.
 - Raw transaction, parsed evidence and classification survive close/reopen in tested scenarios.
 
@@ -109,7 +110,7 @@ The Phase 2 golden test asserts both \`transaction_type\` and \`trade_signal\` i
 | BUY/SELL/TRANSFER/FAILED/OTHER/UNKNOWN | Unit tests and 11 shared transaction scenarios | PARTIAL — not an exhaustive DEX/aggregator corpus |
 | Native SOL and SPL balance matrix | Integer precision, fee payer, owner, decimals and length-mismatch regressions | PARTIAL — complete balance-account lifecycle matrix remains |
 | Evidence persistence and restart | Successful transfer, failed transaction and unsupported version scenarios survive reopen | PARTIAL — broader transient failure/retry fault matrix remains |
-| Duplicate handling | Same-batch, repeated scans/terminal states, concurrent SQLite inserts, cross-wallet independence and restart tests | PARTIAL — simultaneous monitor-worker claim/execute race is not proven |
+| Duplicate handling | Same-batch, repeated scans/terminal states, concurrent SQLite inserts, cross-wallet independence and restart tests | PARTIAL — same-instance concurrent starts are covered; independent service/process claims and lease recovery are not proven |
 | Offline wallet-to-store E2E | Wallet discovery → mock RPC → processor/classifier → evidence store → restart | PASS for transaction/evidence pipeline; it does not run the whole application or paper-copy service |
 | Python/Rust differential | Shared fixtures consumed in both languages and expected type/signal checked | PARTIAL — complete output/schema parity across all reference tests is not proven |
 | Current-head CI | Rust tests, Python selected references, format check and Clippy | PASS |

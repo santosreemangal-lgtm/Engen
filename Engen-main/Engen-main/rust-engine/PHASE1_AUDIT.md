@@ -1,7 +1,7 @@
 # Phase 1 — Current-Head Rust Architecture, Parity & Runtime Audit
 
 Audit date: 2026-11-10  
-Audited source head: \`786124cc8bbe800efc50815e15042ca46ba168be\`  
+Audited source head: \`06bceb284d57d29ff5f27d9ffd8c47dd8616ee01\`  
 Canonical branch: \`rewrite/rust-backend-20261109\`  
 Canonical review: PR #48 (Draft; do not merge before all gates pass)  
 Baseline: \`feature/engen-vision-core-20261108\`
@@ -13,10 +13,10 @@ Baseline: \`feature/engen-vision-core-20261108\`
 | Area | Current evidence | Decision |
 |---|---|---|
 | Rust library modules | 20 modules under \`rust-engine/src\` | Implemented, mostly partial |
-| Rust executable | \`src/main.rs\` with CLI/help, config, validation, classification and one-shot read-only scan commands | CLI foundation present; not a production app bootstrap |
+| Rust executable | \`src/main.rs\` with CLI/help, config, validation, classification and one-shot read-only scan commands; real-binary smoke tests cover help/version, validation, secret-safe config output and explicit DB requirement | CLI foundation present; not a production app bootstrap |
 | Rust HTTP/API server | No Rust HTTP server, API router, auth middleware or static-asset server | NOT IMPLEMENTED |
 | Production runtime composition | No single bootstrap composes API, profile/paper services, monitoring scheduler, wallet scan, transaction processor, stores and paper-copy runner | NOT IMPLEMENTED |
-| Rust tests on audited head | 116 library unit tests + 3 CLI unit tests + 4 integration tests = 123 passed | CI PASS |
+| Rust tests on audited head | 117 library unit tests + 3 CLI unit tests + 8 integration tests = 128 passed | CI PASS |
 | Python Phase 2 reference tests | 145 selected tests across transaction, validation, RPC, signature-store and wallet-monitor suites | CI PASS |
 | Python source inventory | 76 Python files: 35 test files, 3 package \`__init__.py\`, 38 non-test/non-init production/runtime files | Inventory verified |
 | Full Python/Rust behavioral parity | No complete route/store/runtime differential or full-suite parity report | NOT PROVEN |
@@ -24,8 +24,8 @@ Baseline: \`feature/engen-vision-core-20261108\`
 | Real data or production cutover | Not touched | No migration/cutover authorized |
 
 CI evidence for this audited head:
-- Rust Engine Checks PR run #241: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42874976271
-- Push verification run #240: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42874963029
+- Rust Engine Checks PR run #247: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42876209174
+- Push verification run #246: https://github.com/santosreemangal-lgtm/Engen/actions/runs/42876194051
 - Formatting, \`cargo test --all-targets\`, selected Python references and Clippy passed.
 
 ## 2. Canonical repository decision

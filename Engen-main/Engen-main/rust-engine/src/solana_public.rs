@@ -1,5 +1,6 @@
 //! Read-only Solana JSON-RPC client with a closed method allowlist.
 
+use std::io::Read;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
@@ -14,6 +15,7 @@ use crate::solana_validation::{is_valid_transaction_signature, require_solana_ad
 
 pub const DEFAULT_RPC_URL: &str = "https://api.mainnet-beta.solana.com";
 const MAX_BACKOFF_SECONDS: u64 = 600;
+pub const MAX_RPC_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
 static PACER: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
 
@@ -49,6 +51,8 @@ pub enum SolanaRpcError {
     Http(u16),
     #[error("Public Solana RPC returned invalid JSON or an invalid response envelope.")]
     InvalidResponse,
+    #[error("Public Solana RPC response exceeded the configured size limit.")]
+    ResponseTooLarge,
     #[error("Solana RPC provider returned an error (code {0:?}).")]
     Provider(Option<i64>),
     #[error("The supplied value is invalid: {0}")]
@@ -149,10 +153,19 @@ impl SolanaRpcClient {
                         continue;
                     }
 
-                    let body: Value = response
-                        .json()
-                        .map_err(|_| SolanaRpcError::InvalidResponse)?;
-                    return validate_response(body, request_id);
+                    let content_length = response.content_length();
+                    let body = read_limited_body(response, content_length)?;
+                    let retryable_provider_error = provider_error_is_retryable(&body);
+                    match validate_response(body, request_id) {
+                        Ok(value) => return Ok(value),
+                        Err(SolanaRpcError::Provider(code))
+                            if retryable_provider_error && attempt < self.config.retries =>
+                        {
+                            self.wait_before_retry(attempt, None);
+                            continue;
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 Err(error) => {
                     let retryable = error.is_timeout() || error.is_connect() || error.is_request();
@@ -319,6 +332,43 @@ impl SolanaRpcClient {
     }
 }
 
+fn read_limited_body<R: Read>(
+    reader: R,
+    content_length: Option<u64>,
+) -> Result<Value, SolanaRpcError> {
+    if content_length.is_some_and(|length| length > MAX_RPC_RESPONSE_BYTES as u64) {
+        return Err(SolanaRpcError::ResponseTooLarge);
+    }
+
+    let mut bytes = Vec::new();
+    reader
+        .take((MAX_RPC_RESPONSE_BYTES as u64) + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| SolanaRpcError::Transport)?;
+    if bytes.len() > MAX_RPC_RESPONSE_BYTES {
+        return Err(SolanaRpcError::ResponseTooLarge);
+    }
+    serde_json::from_slice(&bytes).map_err(|_| SolanaRpcError::InvalidResponse)
+}
+
+fn provider_error_is_retryable(value: &Value) -> bool {
+    let Some(error) = value.get("error").and_then(Value::as_object) else {
+        return false;
+    };
+    let code = error.get("code").and_then(Value::as_i64);
+    if matches!(code, Some(429 | -32005)) {
+        return true;
+    }
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    ["rate limit", "rate-limit", "too many request", "429"]
+        .iter()
+        .any(|marker| message.contains(marker))
+}
+
 fn normalize_signature_rows(rows: &[Value]) -> Vec<Value> {
     rows.iter()
         .filter(|item| {
@@ -438,5 +488,80 @@ mod tests {
             ..RpcConfig::default()
         };
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn rpc_response_body_is_bounded_even_without_content_length() {
+        use std::io::Cursor;
+
+        let too_large = vec![b' '; MAX_RPC_RESPONSE_BYTES + 1];
+        assert!(matches!(
+            read_limited_body(Cursor::new(too_large), None),
+            Err(SolanaRpcError::ResponseTooLarge)
+        ));
+        assert!(matches!(
+            read_limited_body(Cursor::new(b"{}".to_vec()), Some((MAX_RPC_RESPONSE_BYTES + 1) as u64)),
+            Err(SolanaRpcError::ResponseTooLarge)
+        ));
+        assert_eq!(
+            read_limited_body(Cursor::new(br#"{"ok":true}"#.to_vec()), Some(11)).unwrap(),
+            json!({"ok":true})
+        );
+    }
+
+    #[test]
+    fn provider_rate_limit_errors_are_retryable_but_version_errors_are_not() {
+        assert!(provider_error_is_retryable(&json!({
+            "error":{"code":429,"message":"Too many requests"}
+        })));
+        assert!(provider_error_is_retryable(&json!({
+            "error":{"code":-32005,"message":"Node is unhealthy"}
+        })));
+        assert!(provider_error_is_retryable(&json!({
+            "error":{"code":-32000,"message":"Provider rate limit exceeded"}
+        })));
+        assert!(!provider_error_is_retryable(&json!({
+            "error":{"code":-32015,"message":"Transaction version not supported"}
+        })));
+        assert!(!provider_error_is_retryable(&json!({"result":null})));
+    }
+
+    #[test]
+    fn retries_provider_rate_limit_response_using_offline_mock_server() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let responses = [
+                json!({"jsonrpc":"2.0","id":7,"error":{"code":429,"message":"rate limit"}}),
+                json!({"jsonrpc":"2.0","id":7,"result":42}),
+            ];
+            for body in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                let payload = serde_json::to_vec(&body).unwrap();
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    payload.len()
+                );
+                stream.write_all(header.as_bytes()).unwrap();
+                stream.write_all(&payload).unwrap();
+                stream.flush().unwrap();
+            }
+        });
+
+        let client = SolanaRpcClient::new(RpcConfig {
+            endpoint: format!("http://{address}"),
+            timeout: Duration::from_secs(2),
+            retries: 1,
+            backoff: Duration::ZERO,
+            min_interval: Duration::ZERO,
+        }).unwrap();
+        assert_eq!(
+            client.request(ReadOnlyMethod::GetSlot, json!([]), 7).unwrap(),
+            json!(42)
+        );
+        server.join().unwrap();
     }
 }

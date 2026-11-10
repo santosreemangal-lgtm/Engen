@@ -708,26 +708,33 @@ mod tests {
         let raw = serde_json::json!({"slot":88,"meta":{"err":null}});
         {
             let connection = Connection::open(&path).unwrap();
-            connection.execute_batch(
-                "CREATE TABLE transaction_records (
+            connection
+                .execute_batch(
+                    "CREATE TABLE transaction_records (
                     wallet_address TEXT NOT NULL,
                     signature TEXT NOT NULL,
                     raw_transaction_json TEXT,
                     processing_status TEXT NOT NULL,
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (wallet_address, signature)
-                );"
-            ).unwrap();
-            connection.execute(
-                "INSERT INTO transaction_records(
+                );",
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO transaction_records(
                     wallet_address,signature,raw_transaction_json,processing_status
                  ) VALUES(?1,?2,?3,'observed')",
-                params![WALLET, SIGNATURE, serde_json::to_string(&raw).unwrap()],
-            ).unwrap();
+                    params![WALLET, SIGNATURE, serde_json::to_string(&raw).unwrap()],
+                )
+                .unwrap();
         }
 
         let store = SignatureStore::open(&path).unwrap();
-        let before = store.get_transaction_record(WALLET, SIGNATURE).unwrap().unwrap();
+        let before = store
+            .get_transaction_record(WALLET, SIGNATURE)
+            .unwrap()
+            .unwrap();
         assert_eq!(before.raw_transaction, Some(raw.clone()));
         assert_eq!(before.parsed_evidence, None);
         assert_eq!(before.classification, None);
@@ -737,15 +744,20 @@ mod tests {
             "transaction_type":"TRANSFER",
             "trade_signal":"NOT_COPYABLE"
         });
-        store.save_transaction_evidence(
-            WALLET,
-            SIGNATURE,
-            None,
-            Some(&parsed),
-            Some(&classification),
-            "observed",
-        ).unwrap();
-        let after = store.get_transaction_record(WALLET, SIGNATURE).unwrap().unwrap();
+        store
+            .save_transaction_evidence(
+                WALLET,
+                SIGNATURE,
+                None,
+                Some(&parsed),
+                Some(&classification),
+                "observed",
+            )
+            .unwrap();
+        let after = store
+            .get_transaction_record(WALLET, SIGNATURE)
+            .unwrap()
+            .unwrap();
         assert_eq!(after.raw_transaction, Some(raw));
         assert_eq!(after.parsed_evidence, Some(parsed));
         assert_eq!(after.classification, Some(classification));

@@ -142,8 +142,8 @@ impl SignatureStore {
             ",
         )?;
 
-        let mut transaction_record_columns = transaction
-            .prepare("PRAGMA table_info(transaction_records)")?;
+        let mut transaction_record_columns =
+            transaction.prepare("PRAGMA table_info(transaction_records)")?;
         let transaction_record_columns = transaction_record_columns
             .query_map([], |row| row.get::<_, String>(1))?
             .collect::<Result<std::collections::HashSet<_>, _>>()?;
@@ -541,7 +541,9 @@ impl SignatureStore {
         row.map(|(raw, parsed, classification, status, updated)| {
             Ok(TransactionRecord {
                 raw_transaction: raw.map(|value| serde_json::from_str(&value)).transpose()?,
-                parsed_evidence: parsed.map(|value| serde_json::from_str(&value)).transpose()?,
+                parsed_evidence: parsed
+                    .map(|value| serde_json::from_str(&value))
+                    .transpose()?,
                 classification: classification
                     .map(|value| serde_json::from_str(&value))
                     .transpose()?,

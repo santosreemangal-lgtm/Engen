@@ -566,6 +566,80 @@ class TransactionAnalysisTests(unittest.TestCase):
         self.assertEqual(wallet_changes[0]["delta_amount"], "-1000000")
         self.assertFalse(wallet_changes[0]["fee_adjusted"])
 
+    def test_versioned_lookup_table_program_indices_resolve_for_outer_and_inner(self):
+        from engine.transaction_analysis import classify_transaction
+        wallet = "WALLET_A"
+        system_program = "11111111111111111111111111111111"
+        transaction = {
+            "slot": 101,
+            "transaction": {"message": {
+                "header": {"numRequiredSignatures": 1},
+                "accountKeys": [wallet, "OTHER"],
+                "instructions": [{
+                    "programIdIndex": 2,
+                    "parsed": {"type": "transfer"},
+                }],
+            }},
+            "meta": {
+                "err": None,
+                "fee": 5000,
+                "preBalances": [10_000, 20_000, 30_000],
+                "postBalances": [9_000, 21_000, 30_000],
+                "loadedAddresses": {
+                    "writable": [system_program],
+                    "readonly": [],
+                },
+                "innerInstructions": [{
+                    "index": 0,
+                    "instructions": [{
+                        "programIdIndex": 2,
+                        "parsed": {"type": "transferChecked"},
+                    }],
+                }],
+            },
+        }
+        summary = analyze_transaction(transaction)
+        self.assertEqual(summary["account_count"], 3)
+        self.assertEqual(summary["instructions"][0]["program_id"], system_program)
+        self.assertEqual(summary["instructions"][1]["program_id"], system_program)
+        result = classify_transaction(transaction, wallet, [])
+        self.assertEqual(result["transaction_type"], "TRANSFER")
+        self.assertEqual(result["trade_signal"], "NOT_COPYABLE")
+
+    def test_parsed_lookup_table_keys_are_not_duplicated(self):
+        transaction = {
+            "transaction": {"message": {
+                "accountKeys": [
+                    {"pubkey": "WALLET_A", "source": "transaction"},
+                    {"pubkey": "11111111111111111111111111111111", "source": "lookupTable"},
+                ],
+                "instructions": [{"programIdIndex": 1, "parsed": {"type": "transfer"}}],
+            }},
+            "meta": {
+                "err": None,
+                "fee": 5000,
+                "preBalances": [10_000, 20_000],
+                "postBalances": [9_000, 21_000],
+                "loadedAddresses": {
+                    "writable": ["11111111111111111111111111111111"],
+                    "readonly": [],
+                },
+            },
+        }
+        summary = analyze_transaction(transaction)
+        self.assertEqual(summary["account_count"], 2)
+        self.assertEqual(
+            summary["instructions"][0]["program_id"],
+            "11111111111111111111111111111111",
+        )
+
+    def test_native_sol_analysis_rejects_account_key_balance_length_mismatch(self):
+        transaction = {
+            "transaction": {"message": {"accountKeys": ["WALLET_A", "OTHER"]}},
+            "meta": {"fee": 5000, "preBalances": [10_000], "postBalances": [9_000]},
+        }
+        self.assertEqual(analyze_native_sol_balance_changes(transaction), [])
+
     def test_classifies_native_sol_buy_candidate(self):
         wallet = "WALLET_A"
 

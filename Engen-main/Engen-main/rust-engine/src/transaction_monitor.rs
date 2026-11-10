@@ -378,7 +378,22 @@ pub fn process_new_signatures(
         } else {
             "observed"
         };
-        store.save_transaction_record(wallet_address, signature, raw, record_status)?;
+        let parsed_evidence = json!({
+            "slot": result.get("slot"),
+            "fee": result.get("fee"),
+            "signers": result.get("signers"),
+            "program_ids": result.get("program_ids"),
+            "instructions": result.get("instructions"),
+            "token_balance_changes": result.get("token_balance_changes")
+        });
+        store.save_transaction_evidence(
+            wallet_address,
+            signature,
+            raw,
+            Some(&parsed_evidence),
+            result.get("trade_signal"),
+            record_status,
+        )?;
 
         let retryable = result.get("retryable").and_then(Value::as_bool) == Some(true);
         if !defer_processed && !retryable {

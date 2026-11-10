@@ -568,6 +568,14 @@ mod tests {
             ];
             for body in responses {
                 let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                // Drain the request before closing the socket. Otherwise TCP may
+                // reset a connection with unread request bytes and look like a
+                // client transport failure rather than a retry assertion.
+                let mut request = [0_u8; 4096];
+                let _ = stream.read(&mut request);
                 let payload = serde_json::to_vec(&body).unwrap();
                 let header = format!(
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",

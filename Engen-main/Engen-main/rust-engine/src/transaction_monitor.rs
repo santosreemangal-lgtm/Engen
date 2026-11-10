@@ -238,28 +238,53 @@ pub fn process_new_signatures(
                     SolanaRpcError::Http(429) => "http_429",
                     SolanaRpcError::Http(_) => "http_error",
                     SolanaRpcError::Provider(_) => "rpc_provider_error",
+                    SolanaRpcError::UnsupportedTransactionVersion => "unsupported_transaction_version",
                     SolanaRpcError::Transport => "rpc_transport_error",
                     SolanaRpcError::InvalidResponse => "rpc_invalid_response",
                     SolanaRpcError::ResponseTooLarge => "rpc_response_too_large",
                     SolanaRpcError::InvalidInput(_) => "rpc_invalid_input",
                 };
                 let message = error.to_string();
-                let processing_status = record_retry(
-                    store,
-                    wallet_address,
-                    signature,
-                    ProcessingStage::RpcFetch,
-                    error_code,
-                    &message,
-                    None,
-                )?;
+                let unsupported_version =
+                    matches!(error, SolanaRpcError::UnsupportedTransactionVersion);
+                let processing_status = if unsupported_version {
+                    let failure = store.record_failure(
+                        wallet_address,
+                        signature,
+                        ProcessingStage::RpcFetch,
+                        Some(error_code),
+                        Some(&message),
+                        1,
+                    )?;
+                    store.save_transaction_record(
+                        wallet_address,
+                        signature,
+                        None,
+                        "needs_review",
+                    )?;
+                    failure.status
+                } else {
+                    record_retry(
+                        store,
+                        wallet_address,
+                        signature,
+                        ProcessingStage::RpcFetch,
+                        error_code,
+                        &message,
+                        None,
+                    )?
+                };
                 let error_result = json!({
                     "signature":signature,
                     "available":false,
                     "metadata_complete":false,
-                    "metadata_status":"rpc_error",
+                    "metadata_status":if unsupported_version {
+                        "unsupported_transaction_version"
+                    } else {
+                        "rpc_error"
+                    },
                     "error":message,
-                    "retryable":processing_status == "pending",
+                    "retryable":!unsupported_version && processing_status == "pending",
                     "processing_status":processing_status
                 });
                 results.push(include_signature_observation(error_result, item));

@@ -580,9 +580,10 @@ impl ProfileStore {
             ));
         }
 
-        let effective_status = if stored.status == "confirmed" || stored.status == "failed" {
-            stored.status.clone()
-        } else if input.status == "unknown" {
+        let effective_status = if stored.status == "confirmed"
+            || stored.status == "failed"
+            || input.status == "unknown"
+        {
             stored.status.clone()
         } else {
             input.status.to_string()
@@ -962,7 +963,7 @@ fn serialize_settings(settings: &Value) -> Result<String, ProfileStoreError> {
         match value {
             Value::Object(map) => {
                 for (key, child) in map {
-                    let normalized = key.trim().to_ascii_lowercase().replace('-', "_").replace(' ', "_");
+                    let normalized = key.trim().to_ascii_lowercase().replace(['-', ' '], "_");
                     if FORBIDDEN_SETTINGS_KEYS.contains(&normalized.as_str()) {
                         return Err(ProfileStoreError::InvalidInput(
                             "Secret authorization fields cannot be stored in profile settings."

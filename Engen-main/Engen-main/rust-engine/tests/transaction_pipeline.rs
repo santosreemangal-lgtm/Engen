@@ -79,6 +79,88 @@ fn shared_phase2_golden_corpus_matches_transaction_type_contract() {
     }
 }
 
+
+#[test]
+fn unsupported_transaction_version_is_retained_for_manual_review_after_restart() {
+    let (endpoint, server) = spawn_mock_rpc(vec![
+        rpc_response(
+            6,
+            json!([{
+                "signature": OLD_SIGNATURE,
+                "slot": 100,
+                "err": null,
+                "confirmationStatus": "finalized",
+                "blockTime": 1760000000
+            }]),
+        ),
+        rpc_response(
+            6,
+            json!([{
+                "signature": NEW_SIGNATURE,
+                "slot": 101,
+                "err": null,
+                "confirmationStatus": "confirmed",
+                "blockTime": 1760000001
+            }]),
+        ),
+        json!({
+            "jsonrpc":"2.0",
+            "id":4,
+            "error":{
+                "code":-32015,
+                "message":"Transaction version (1) is not supported by this RPC node"
+            }
+        }),
+    ]);
+
+    let client = SolanaRpcClient::new(RpcConfig {
+        endpoint,
+        timeout: Duration::from_secs(3),
+        retries: 0,
+        backoff: Duration::ZERO,
+        min_interval: Duration::ZERO,
+    }).expect("create loopback-only unsupported-version RPC client");
+
+    let directory = tempfile::tempdir().expect("create disposable DB directory");
+    let database_path = directory.path().join("signatures.db");
+    {
+        let store = SignatureStore::open(&database_path).expect("open disposable store");
+        let baseline = monitor_wallet(&client, &store, WALLET, 10, false, None)
+            .expect("initialize public-wallet baseline");
+        assert!(baseline.is_empty());
+
+        let results = monitor_wallet(&client, &store, WALLET, 10, false, None)
+            .expect("scan unsupported transaction version");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["metadata_status"], "unsupported_transaction_version");
+        assert_eq!(results[0]["processing_status"], "needs_review");
+        assert_eq!(results[0]["retryable"], false);
+        assert_eq!(
+            store.get_status(WALLET, NEW_SIGNATURE).unwrap().as_deref(),
+            Some("needs_review")
+        );
+        let record = store
+            .get_transaction_record(WALLET, NEW_SIGNATURE)
+            .unwrap()
+            .expect("unsupported version must be retained");
+        assert_eq!(record.status, "needs_review");
+        assert_eq!(record.raw_transaction, None);
+    }
+
+    let reopened = SignatureStore::open(&database_path).expect("reopen disposable store");
+    assert_eq!(
+        reopened.get_status(WALLET, NEW_SIGNATURE).unwrap().as_deref(),
+        Some("needs_review")
+    );
+    let record = reopened
+        .get_transaction_record(WALLET, NEW_SIGNATURE)
+        .unwrap()
+        .expect("review evidence survives process restart");
+    assert_eq!(record.status, "needs_review");
+    assert_eq!(record.raw_transaction, None);
+    server.join().expect("mock RPC server completed expected calls");
+}
+
 #[test]
 fn wallet_discovery_to_transfer_classification_and_restart_evidence_is_offline() {
     let transaction = json!({

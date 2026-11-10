@@ -135,6 +135,7 @@ fn run_scan(options: ScanOptions) -> Result<(), Box<dyn Error>> {
         None,
     )?;
 
+    let transaction_count = results.len();
     let output = json!({
         "engine_mode": "read_only",
         "monitoring": "one_shot",
@@ -142,7 +143,7 @@ fn run_scan(options: ScanOptions) -> Result<(), Box<dyn Error>> {
         "signature_database": options.signature_db,
         "scan_limit": options.limit,
         "transactions": results,
-        "transaction_count": results.len(),
+        "transaction_count": transaction_count,
         "paper_execution_enabled": false,
         "live_trading_enabled": false,
         "transaction_broadcast": false

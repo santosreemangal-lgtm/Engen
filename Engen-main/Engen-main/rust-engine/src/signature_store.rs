@@ -561,6 +561,8 @@ impl SignatureStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
     use tempfile::tempdir;
 
     const WALLET: &str = "11111111111111111111111111111111";
@@ -604,6 +606,48 @@ mod tests {
             store.get_status(WALLET, SIGNATURE).unwrap().as_deref(),
             Some("pending")
         );
+    }
+
+    #[test]
+    fn save_many_deduplicates_repeated_signatures_in_one_batch() {
+        let dir = tempdir().unwrap();
+        let store = SignatureStore::open(dir.path().join("signatures.db")).unwrap();
+        assert_eq!(
+            store.save_many(WALLET, [SIGNATURE, SIGNATURE, SIGNATURE]).unwrap(),
+            1
+        );
+        assert_eq!(store.pending_signatures(WALLET, 10).unwrap(), vec![SIGNATURE]);
+    }
+
+    #[test]
+    fn same_signature_is_independent_for_two_wallets() {
+        let dir = tempdir().unwrap();
+        let store = SignatureStore::open(dir.path().join("signatures.db")).unwrap();
+        const OTHER_WALLET: &str = "11111111111111111111111111111112";
+        assert!(store.save(WALLET, SIGNATURE, Some(10)).unwrap());
+        assert!(store.save(OTHER_WALLET, SIGNATURE, Some(10)).unwrap());
+        assert!(store.has_seen(WALLET, SIGNATURE).unwrap());
+        assert!(store.has_seen(OTHER_WALLET, SIGNATURE).unwrap());
+    }
+
+    #[test]
+    fn concurrent_duplicate_saves_commit_exactly_one_signature_row() {
+        let dir = tempdir().unwrap();
+        let store = Arc::new(SignatureStore::open(dir.path().join("signatures.db")).unwrap());
+        let barrier = Arc::new(Barrier::new(8));
+        let handles = (0..8).map(|_| {
+            let store = Arc::clone(&store);
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                store.save(WALLET, SIGNATURE, Some(10)).unwrap()
+            })
+        }).collect::<Vec<_>>();
+        let inserted = handles.into_iter()
+            .map(|handle| usize::from(handle.join().unwrap()))
+            .sum::<usize>();
+        assert_eq!(inserted, 1);
+        assert_eq!(store.pending_signatures(WALLET, 10).unwrap().len(), 1);
     }
 
     #[test]
@@ -653,12 +697,26 @@ mod tests {
     }
 
     #[test]
-    fn restart_preserves_position_and_processed_status() {
+    fn restart_preserves_position_processed_status_and_instruction_evidence() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("signatures.db");
+        let evidence = serde_json::json!({
+            "transaction": {"message": {"instructions": [{
+                "program": "system",
+                "parsed": {"type": "transfer"}
+            }]}},
+            "meta": {"innerInstructions": [{
+                "index": 0,
+                "instructions": [{
+                    "program": "spl-token-2022",
+                    "parsed": {"type": "transferChecked"}
+                }]
+            }]}
+        });
         {
             let store = SignatureStore::open(&path).unwrap();
             store.save(WALLET, SIGNATURE, Some(42)).unwrap();
+            store.save_transaction_record(WALLET, SIGNATURE, Some(&evidence), "observed").unwrap();
             assert!(store.mark_processed(WALLET, SIGNATURE).unwrap());
         }
         let store = SignatureStore::open(&path).unwrap();
@@ -667,5 +725,8 @@ mod tests {
             Some("processed")
         );
         assert_eq!(store.get_position(WALLET).unwrap().unwrap().slot, Some(42));
+        let record = store.get_transaction_record(WALLET, SIGNATURE).unwrap().unwrap();
+        assert_eq!(record.raw_transaction, Some(evidence));
+        assert_eq!(record.status, "processed");
     }
 }

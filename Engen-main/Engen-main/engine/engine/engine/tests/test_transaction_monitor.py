@@ -567,6 +567,9 @@ class TransactionMonitorTests(unittest.TestCase):
                 )
             record = store.get_transaction_record(wallet, signature)
             self.assertEqual(record["raw_transaction"], raw)
+            self.assertIn("instructions", record["parsed_evidence"])
+            self.assertIn("token_balance_changes", record["parsed_evidence"])
+            self.assertIsInstance(record["classification"], dict)
             # A failed transaction remains failed evidence even when a later
             # idempotent pass marks its signature row as processed.
             self.assertEqual(record["status"], "failed")

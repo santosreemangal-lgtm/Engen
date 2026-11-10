@@ -102,6 +102,18 @@ pub struct PaperPnlSummary {
     pub unrealized_note: String,
 }
 
+/// Inputs for creating one idempotent paper order.
+#[derive(Debug, Clone)]
+pub struct CreateOrderRequest<'a> {
+    pub signal_id: &'a str,
+    pub side: &'a str,
+    pub asset_mint: &'a str,
+    pub quantity: &'a str,
+    pub quote_mint: &'a str,
+    pub created_at: &'a str,
+    pub details: Option<Value>,
+}
+
 pub struct PaperSimulator {
     db_path: Option<PathBuf>,
     balances: BTreeMap<String, BigDecimal>,
@@ -421,14 +433,9 @@ impl PaperSimulator {
 
     pub fn create_order(
         &mut self,
-        signal_id: &str,
-        side: &str,
-        asset_mint: &str,
-        quantity: &str,
-        quote_mint: &str,
-        created_at: &str,
-        details: Option<Value>,
+        request: CreateOrderRequest<'_>,
     ) -> Result<Value, PaperSimulatorError> {
+        let CreateOrderRequest { signal_id, side, asset_mint, quantity, quote_mint, created_at, details } = request;
         if signal_id.trim().is_empty() {
             return Err(PaperSimulatorError::InvalidInput("Signal ID is required for deduplication.".to_string()));
         }
@@ -848,9 +855,12 @@ mod tests {
     }
 
     fn buy_order(sim: &mut PaperSimulator, signal: &str) -> String {
-        sim.create_order(signal,"BUY","TOKEN","1","USD",now(),Some(json!({
-            "target_notional_usd":"20","origin":"AUTOMATIC_WALLET_COPY"
-        }))).unwrap()["order_id"].as_str().unwrap().to_string()
+        sim.create_order(CreateOrderRequest {
+            signal_id: signal, side: "BUY", asset_mint: "TOKEN", quantity: "1",
+            quote_mint: "USD", created_at: now(), details: Some(json!({
+                "target_notional_usd":"20","origin":"AUTOMATIC_WALLET_COPY"
+            })),
+        }).unwrap()["order_id"].as_str().unwrap().to_string()
     }
 
     #[test]
@@ -869,7 +879,10 @@ mod tests {
     fn duplicate_signal_cannot_create_a_second_order() {
         let mut sim=PaperSimulator::in_memory(&virtual_cash()).unwrap();
         let first=buy_order(&mut sim,"same-signal");
-        let second=sim.create_order("same-signal","BUY","TOKEN","1","USD",now(),None).unwrap();
+        let second=sim.create_order(CreateOrderRequest {
+            signal_id: "same-signal", side: "BUY", asset_mint: "TOKEN", quantity: "1",
+            quote_mint: "USD", created_at: now(), details: None,
+        }).unwrap();
         assert_eq!(second["status"],"DUPLICATE");
         assert_eq!(sim.orders().len(),1);
         assert!(!first.is_empty());
@@ -893,7 +906,10 @@ mod tests {
         let mut balances=virtual_cash();
         balances.insert("TOKEN".to_string(),"1".to_string());
         let mut sim=PaperSimulator::in_memory(&balances).unwrap();
-        let order=sim.create_order("sell-too-much","SELL","TOKEN","2","USD",now(),None).unwrap();
+        let order=sim.create_order(CreateOrderRequest {
+            signal_id: "sell-too-much", side: "SELL", asset_mint: "TOKEN", quantity: "2",
+            quote_mint: "USD", created_at: now(), details: None,
+        }).unwrap();
         let id=order["order_id"].as_str().unwrap();
         let result=sim.execute_order(id,Some(&price("TOKEN")),now(),&ExecutionPolicy::default(),true).unwrap();
         assert_eq!(result["status"],"REJECTED");

@@ -162,13 +162,13 @@ The HTTP server and Telegram adapter must call the same application services; ne
 
 ## 9. Phase 1 conclusion
 
-- Current-head inventory/audit: **UPDATED**
+- Phase 1 audit deliverable (current-head inventory, parity matrix, runtime architecture and ordered exit criteria): **COMPLETE**
 - Rust CLI foundation: **PRESENT, PARTIAL**
 - Rust HTTP/API server: **NOT IMPLEMENTED**
 - Full Rust production runtime composition: **NOT IMPLEMENTED**
 - Full Python/Rust parity: **NOT PROVEN**
 - Full application restart/fault/deployment proof: **NOT PROVEN**
 - Under-100-ms local paper-fill target: **NOT BENCHMARKED**
-- Phase 1 overall: **IN PROGRESS — NOT ACCEPTED**
+- Full Rust production-runtime replacement tracked by this audit: **IN PROGRESS — NOT ACCEPTED**
 
 No user \`data/\` database was opened, migrated or modified. No production process or deployment was changed.

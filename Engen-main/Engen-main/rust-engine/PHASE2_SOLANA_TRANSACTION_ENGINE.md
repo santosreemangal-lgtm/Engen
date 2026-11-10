@@ -117,7 +117,7 @@ The Phase 2 golden test asserts both \`transaction_type\` and \`trade_signal\` i
 
 ## 5. Remaining Phase 2 work before acceptance
 
-1. **Concurrent monitor execution:** storage inserts are safe under concurrent attempts, but there is no end-to-end proof that two monitor workers cannot both fetch/process the same pending signature. Add an atomic claim/lease or a proven single-cycle runtime gate, then test concurrent duplicate execution and crash/restart lease recovery.
+1. **Concurrent monitor execution:** storage inserts are safe under concurrent attempts, and concurrent `start()` calls inside one `MonitorService` instance share one worker with a max-active-scan test. The missing proof is across separate service instances/processes and after worker/process failure. Add a per-profile singleton owner or durable atomic claim/lease, then test cross-instance duplicate execution and crash/restart lease recovery.
 2. **Complete differential parity:** expand the shared fixtures to compare complete normalized processor/classifier outputs, not only transaction type and trade signal. Include null blockTime, incomplete transaction, metadata errors and all important Python reference edge cases.
 3. **Token-2022 and balance matrix:** extend fixtures for Token-2022 account/balance variants, missing/closed accounts, malformed/duplicate rows, owner changes, decimals mismatch and loaded-address alignment.
 4. **Retry/fault recovery:** exercise pending → retry → recovered/needs_review through monitor/store restart and verify raw/parsed evidence is immutable and retained.
@@ -138,7 +138,7 @@ The Phase 2 golden test asserts both \`transaction_type\` and \`trade_signal\` i
 - Shared address/signature validation corpus: **PASS**
 - Transaction type distinction and current classification fixtures: **IMPLEMENTED; BROADER PARITY PARTIAL**
 - Raw/parsed/classification evidence storage: **IMPLEMENTED; FULL RECOVERY MATRIX PARTIAL**
-- Duplicate persistence: **IMPLEMENTED; CONCURRENT MONITOR EXECUTION NOT PROVEN**
+- Duplicate persistence: **IMPLEMENTED; SAME-INSTANCE WORKER SERIALIZATION TESTED; CROSS-INSTANCE/PROCESS CLAIM NOT PROVEN**
 - Rust/Python shared golden execution: **PASS; COMPLETE OUTPUT PARITY NOT PROVEN**
 - Current targeted CI: **PASS**
 - Overall Phase 2: **IN PROGRESS — NOT ACCEPTED**

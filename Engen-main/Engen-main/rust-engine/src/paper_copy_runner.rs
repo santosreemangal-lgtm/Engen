@@ -1,12 +1,11 @@
 //! Conservative source-wallet copy orchestration using virtual paper orders only.
 
-use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use bigdecimal::BigDecimal;
 use chrono::{SecondsFormat, Utc};
-use num_traits::{Signed, Zero};
+use num_traits::Zero;
 use serde_json::{json, Value};
 use thiserror::Error;
 
@@ -265,7 +264,7 @@ fn raw_to_string(value: &BigDecimal) -> String {
     value.normalized().to_string()
 }
 
-fn result_status(result: &Value) -> &'static str {
+fn result_status(result: &Value) -> &str {
     result
         .get("status")
         .and_then(Value::as_str)
@@ -800,7 +799,6 @@ mod tests {
             None,
         )
         .unwrap();
-        let order = simulator.orders().values().next().unwrap().clone();
         let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
         let price = MarketPrice::new(
             ASSET,

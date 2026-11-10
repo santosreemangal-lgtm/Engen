@@ -644,6 +644,8 @@ class TransactionAnalysisTests(unittest.TestCase):
             [{"owner": "WALLET_A", "mint": "TOKEN_A", "delta_amount": "100"}],
         )
         self.assertEqual(result["classification"], "FAILED_TRANSACTION")
+        self.assertEqual(result["transaction_type"], "FAILED")
+        self.assertEqual(result["trade_signal"], "NOT_COPYABLE")
         self.assertEqual(result["confidence"], "high")
         self.assertFalse(result["evidence"]["balance_changes_used"])
 
@@ -705,6 +707,59 @@ class TransactionAnalysisTests(unittest.TestCase):
         )
         self.assertEqual(result["classification"], "UNKNOWN")
 
+
+    def test_classifies_verified_token_2022_transfer_as_non_copyable(self):
+        from engine.transaction_analysis import classify_transaction
+        wallet = "WALLET_A"
+        transaction = {
+            "transaction": {
+                "message": {
+                    "accountKeys": [wallet, "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"],
+                    "instructions": [{
+                        "program": "spl-token-2022",
+                        "programId": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+                        "parsed": {"type": "transferChecked"},
+                    }],
+                }
+            },
+            "meta": {"err": None, "fee": 5000},
+        }
+        result = classify_transaction(transaction, wallet, [])
+        self.assertEqual(result["transaction_type"], "TRANSFER")
+        self.assertEqual(result["trade_signal"], "NOT_COPYABLE")
+
+    def test_unknown_program_cannot_claim_transfer_type(self):
+        from engine.transaction_analysis import classify_transaction
+        transaction = {
+            "transaction": {
+                "message": {
+                    "accountKeys": ["WALLET_A", "UnknownProgram"],
+                    "instructions": [{
+                        "program": "unknown",
+                        "programId": "UnknownProgram",
+                        "parsed": {"type": "transfer"},
+                    }],
+                }
+            },
+            "meta": {"err": None, "fee": 5000},
+        }
+        result = classify_transaction(transaction, "WALLET_A", [])
+        self.assertEqual(result["transaction_type"], "UNKNOWN")
+        self.assertEqual(result["trade_signal"], "NOT_COPYABLE")
+
+    def test_transaction_type_and_trade_signal_are_separate_for_buy_and_unknown(self):
+        from engine.transaction_analysis import classify_transaction
+        wallet = "WALLET_A"
+        buy = classify_transaction(None, wallet, [
+            {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "100", "decimals": 6},
+            {"owner": wallet, "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+             "delta_amount": "-500", "decimals": 6},
+        ])
+        unknown = classify_transaction(None, wallet, [])
+        self.assertEqual(buy["transaction_type"], "BUY")
+        self.assertEqual(buy["trade_signal"], "BUY_CANDIDATE")
+        self.assertEqual(unknown["transaction_type"], "UNKNOWN")
+        self.assertEqual(unknown["trade_signal"], "NOT_COPYABLE")
 
     def test_rent_or_transfer_like_native_sol_movement_is_not_auto_swap(self):
         from engine.transaction_analysis import classify_transaction

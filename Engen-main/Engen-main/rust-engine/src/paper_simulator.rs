@@ -595,12 +595,30 @@ impl PaperSimulator {
     }
 
     pub fn cancel_order(&mut self, order_id: &str) -> Result<Value, PaperSimulatorError> {
+        self.cancel_order_with_reason(order_id, "Cancelled before simulated execution.")
+    }
+
+    pub fn cancel_order_with_reason(
+        &mut self,
+        order_id: &str,
+        reason: &str,
+    ) -> Result<Value, PaperSimulatorError> {
+        let safe_reason = reason.trim();
+        if safe_reason.is_empty() || safe_reason.len() > 300 {
+            return Err(PaperSimulatorError::InvalidInput(
+                "Cancellation reason must contain 1 to 300 characters.".to_string(),
+            ));
+        }
         let mut order = self.orders.get(order_id).cloned().ok_or(PaperSimulatorError::OrderNotFound)?;
         if order.status != "CREATED" {
             return Ok(json!({"status":"REJECTED","reason":"Only unexecuted orders can be cancelled."}));
         }
         order.status = "CANCELLED".to_string();
-        order.reason = Some("Cancelled before simulated execution.".to_string());
+        order.reason = Some(safe_reason.to_string());
+        if let Some(details) = order.details.as_object_mut() {
+            details.insert("execution_state".to_string(), Value::String("CANCELLED".to_string()));
+            details.insert("paper_copy_skip_reason".to_string(), Value::String(safe_reason.to_string()));
+        }
         self.persist(&order, None, None)?;
         self.orders.insert(order_id.to_string(), order.clone());
         Ok(serde_json::to_value(order)?)

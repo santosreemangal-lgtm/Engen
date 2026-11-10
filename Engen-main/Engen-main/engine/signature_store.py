@@ -81,11 +81,25 @@ class SignatureStore:
                         wallet_address TEXT NOT NULL,
                         signature TEXT NOT NULL,
                         raw_transaction_json TEXT,
+                        parsed_evidence_json TEXT,
+                        classification_json TEXT,
                         processing_status TEXT NOT NULL,
                         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         PRIMARY KEY (wallet_address, signature)
                     )
                 """)
+
+                transaction_record_columns = {
+                    row[1]
+                    for row in connection.execute(
+                        "PRAGMA table_info(transaction_records)"
+                    ).fetchall()
+                }
+                for column in ("parsed_evidence_json", "classification_json"):
+                    if column not in transaction_record_columns:
+                        connection.execute(
+                            f"ALTER TABLE transaction_records ADD COLUMN {column} TEXT"
+                        )
 
     @staticmethod
     def _validate_wallet(wallet_address):
@@ -283,33 +297,77 @@ class SignatureStore:
         self, wallet_address, signature, raw_transaction=None,
         processing_status="observed",
     ):
-        """Idempotently preserve public transaction data for investigation."""
+        """Backward-compatible raw-payload persistence API."""
+        return self.save_transaction_evidence(
+            wallet_address,
+            signature,
+            raw_transaction=raw_transaction,
+            processing_status=processing_status,
+        )
+
+    def save_transaction_evidence(
+        self, wallet_address, signature, raw_transaction=None,
+        parsed_evidence=None, classification=None, processing_status="observed",
+    ):
+        """Atomically preserve raw, normalized, and classification evidence."""
         self._validate_wallet(wallet_address)
         self._validate_signature(signature)
-        if processing_status not in {"observed", "incomplete", "failed", "processed", "needs_review"}:
+        allowed = {
+            "observed", "incomplete", "failed", "processed",
+            "needs_review", "stale",
+        }
+        if processing_status not in allowed:
             raise ValueError("Invalid transaction processing status.")
-        raw_json = None if raw_transaction is None else json.dumps(
-            raw_transaction, sort_keys=True, separators=(",", ":"), default=str
-        )
+
+        def encode(value):
+            return None if value is None else json.dumps(
+                value, sort_keys=True, separators=(",", ":"), default=str
+            )
+
+        raw_json = encode(raw_transaction)
+        parsed_json = encode(parsed_evidence)
+        classification_json = encode(classification)
         with closing(self._connect()) as connection:
             with connection:
                 connection.execute(
                     """INSERT INTO transaction_records
-                       (wallet_address, signature, raw_transaction_json, processing_status)
-                       VALUES (?, ?, ?, ?)
+                       (wallet_address, signature, raw_transaction_json,
+                        parsed_evidence_json, classification_json, processing_status)
+                       VALUES (?, ?, ?, ?, ?, ?)
                        ON CONFLICT(wallet_address, signature) DO UPDATE SET
-                         raw_transaction_json = COALESCE(excluded.raw_transaction_json,
-                                                         transaction_records.raw_transaction_json),
-                         processing_status = excluded.processing_status,
+                         raw_transaction_json = COALESCE(
+                           excluded.raw_transaction_json,
+                           transaction_records.raw_transaction_json
+                         ),
+                         parsed_evidence_json = COALESCE(
+                           excluded.parsed_evidence_json,
+                           transaction_records.parsed_evidence_json
+                         ),
+                         classification_json = COALESCE(
+                           excluded.classification_json,
+                           transaction_records.classification_json
+                         ),
+                         processing_status = CASE
+                           WHEN transaction_records.processing_status IN
+                             ('stale', 'failed', 'incomplete', 'needs_review')
+                           THEN transaction_records.processing_status
+                           ELSE excluded.processing_status
+                         END,
                          updated_at = CURRENT_TIMESTAMP""",
-                    (wallet_address, signature, raw_json, processing_status),
+                    (
+                        wallet_address, signature, raw_json, parsed_json,
+                        classification_json, processing_status,
+                    ),
                 )
         return True
 
     def get_transaction_record(self, wallet_address, signature):
+        self._validate_wallet(wallet_address)
+        self._validate_signature(signature)
         with closing(self._connect()) as connection:
             row = connection.execute(
-                """SELECT raw_transaction_json, processing_status, updated_at
+                """SELECT raw_transaction_json, parsed_evidence_json,
+                          classification_json, processing_status, updated_at
                    FROM transaction_records
                    WHERE wallet_address = ? AND signature = ?""",
                 (wallet_address, signature),
@@ -318,8 +376,10 @@ class SignatureStore:
             return None
         return {
             "raw_transaction": json.loads(row[0]) if row[0] is not None else None,
-            "status": row[1],
-            "updated_at": row[2],
+            "parsed_evidence": json.loads(row[1]) if row[1] is not None else None,
+            "classification": json.loads(row[2]) if row[2] is not None else None,
+            "status": row[3],
+            "updated_at": row[4],
         }
 
     def get_error_record(self, wallet_address, signature):

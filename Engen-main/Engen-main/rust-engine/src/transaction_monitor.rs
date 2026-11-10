@@ -223,6 +223,7 @@ pub fn process_new_signatures(
                     SolanaRpcError::Provider(_) => "rpc_provider_error",
                     SolanaRpcError::Transport => "rpc_transport_error",
                     SolanaRpcError::InvalidResponse => "rpc_invalid_response",
+                    SolanaRpcError::ResponseTooLarge => "rpc_response_too_large",
                     SolanaRpcError::InvalidInput(_) => "rpc_invalid_input",
                 };
                 let message = error.to_string();

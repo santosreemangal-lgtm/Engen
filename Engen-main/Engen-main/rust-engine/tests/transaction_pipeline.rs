@@ -170,6 +170,124 @@ fn unsupported_transaction_version_is_retained_for_manual_review_after_restart()
 }
 
 #[test]
+fn failed_transaction_is_persisted_as_non_copyable_evidence_after_restart() {
+    let failed_transaction = json!({
+        "slot": 102,
+        "transaction": {
+            "message": {
+                "header": {"numRequiredSignatures": 1},
+                "accountKeys": [
+                    {"pubkey": WALLET, "signer": true, "writable": true},
+                    {"pubkey": OTHER, "signer": false, "writable": true},
+                    {"pubkey": SYSTEM_PROGRAM, "signer": false, "writable": false}
+                ],
+                "instructions": [{
+                    "program": "system",
+                    "programId": SYSTEM_PROGRAM,
+                    "parsed": {
+                        "type": "transfer",
+                        "info": {"source": WALLET, "destination": OTHER, "lamports": 1000000}
+                    }
+                }]
+            }
+        },
+        "meta": {
+            "err": {"InstructionError": [0, "Custom"]},
+            "fee": 5000,
+            "preBalances": [10000000, 0, 1],
+            "postBalances": [8995000, 1000000, 1],
+            "preTokenBalances": [{
+                "accountIndex": 0,
+                "mint": "ExampleMint",
+                "owner": WALLET,
+                "uiTokenAmount": {"amount": "0", "decimals": 6}
+            }],
+            "postTokenBalances": [{
+                "accountIndex": 0,
+                "mint": "ExampleMint",
+                "owner": WALLET,
+                "uiTokenAmount": {"amount": "100", "decimals": 6}
+            }]
+        }
+    });
+
+    let (endpoint, server) = spawn_mock_rpc(vec![
+        rpc_response(
+            6,
+            json!([{
+                "signature": OLD_SIGNATURE,
+                "slot": 100,
+                "err": null,
+                "confirmationStatus": "finalized",
+                "blockTime": 1760000000
+            }]),
+        ),
+        rpc_response(
+            6,
+            json!([{
+                "signature": NEW_SIGNATURE,
+                "slot": 102,
+                "err": {"InstructionError": [0, "Custom"]},
+                "confirmationStatus": "confirmed",
+                "blockTime": 1760000002
+            }]),
+        ),
+        rpc_response(4, failed_transaction.clone()),
+    ]);
+
+    let client = SolanaRpcClient::new(RpcConfig {
+        endpoint,
+        timeout: Duration::from_secs(3),
+        retries: 0,
+        backoff: Duration::ZERO,
+        min_interval: Duration::ZERO,
+    }).expect("create loopback-only failed-transaction RPC client");
+
+    let directory = tempfile::tempdir().expect("create disposable DB directory");
+    let database_path = directory.path().join("signatures.db");
+    {
+        let store = SignatureStore::open(&database_path).expect("open disposable store");
+        let baseline = monitor_wallet(&client, &store, WALLET, 10, false, None)
+            .expect("initialize public-wallet baseline");
+        assert!(baseline.is_empty());
+
+        let results = monitor_wallet(&client, &store, WALLET, 10, false, None)
+            .expect("process failed transaction evidence");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["status"], "failed");
+        assert_eq!(results[0]["trade_signal"]["transaction_type"], "FAILED");
+        assert_eq!(results[0]["trade_signal"]["trade_signal"], "NOT_COPYABLE");
+        assert_eq!(
+            store.get_status(WALLET, NEW_SIGNATURE).unwrap().as_deref(),
+            Some("processed")
+        );
+        let record = store
+            .get_transaction_record(WALLET, NEW_SIGNATURE)
+            .unwrap()
+            .expect("failed transaction evidence is persisted");
+        assert_eq!(record.status, "failed");
+        assert_eq!(record.raw_transaction, Some(failed_transaction.clone()));
+        assert_eq!(
+            record.classification.as_ref().unwrap()["transaction_type"],
+            "FAILED"
+        );
+    }
+
+    let reopened = SignatureStore::open(&database_path).expect("reopen disposable store");
+    let recovered = reopened
+        .get_transaction_record(WALLET, NEW_SIGNATURE)
+        .unwrap()
+        .expect("failed evidence survives restart");
+    assert_eq!(recovered.status, "failed");
+    assert_eq!(recovered.raw_transaction, Some(failed_transaction));
+    assert_eq!(
+        recovered.classification.unwrap()["trade_signal"],
+        "NOT_COPYABLE"
+    );
+    server.join().expect("mock RPC server completed expected calls");
+}
+
+#[test]
 fn wallet_discovery_to_transfer_classification_and_restart_evidence_is_offline() {
     let transaction = json!({
         "slot": 101,

@@ -15,6 +15,7 @@ pub mod solana_public;
 pub mod solana_validation;
 pub mod source_freshness;
 pub mod transaction_analysis;
+pub mod transaction_processor;
 
 pub use config::{Config, ConfigError, LogLevel};
 pub use safety::{block_live_execution, LiveExecutionDisabled};

@@ -13,9 +13,11 @@ on:
       - "Engen-main/Engen-main/rust-engine/**"
       - "Engen-main/Engen-main/engine/**"
       - ".github/workflows/rust-engine.yml"
+  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+  actions: write
 
 jobs:
   rust:
@@ -30,8 +32,10 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Produce formatted Rust source artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/rewrite/rust-backend-20261109'
         run: cargo fmt --all
       - name: Upload formatted Rust source
+        if: github.event_name == 'push' && github.ref == 'refs/heads/rewrite/rust-backend-20261109'
         uses: actions/upload-artifact@v4
         with:
           name: rustfmt-current-source
@@ -41,6 +45,27 @@ jobs:
           if-no-files-found: error
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
+      - name: Commit canonical rustfmt normalization and dispatch verification
+        if: github.event_name == 'push' && github.ref == 'refs/heads/rewrite/rust-backend-20261109'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- Engen-main/Engen-main/rust-engine; then
+            echo "Rust sources already match rustfmt."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -- 'Engen-main/Engen-main/rust-engine/src/*.rs' 'Engen-main/Engen-main/rust-engine/tests/*.rs'
+            git commit -m "chore(rust): apply canonical rustfmt normalization"
+            git push origin "HEAD:rewrite/rust-backend-20261109"
+            curl --fail-with-body --silent --show-error \
+              --request POST \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/rust-engine.yml/dispatches \
+              --data '{"ref":"rewrite/rust-backend-20261109"}'
+          fi
       - name: Rust unit and integration tests
         run: cargo test --all-targets
       - name: Python Phase 2 behavioral-reference tests

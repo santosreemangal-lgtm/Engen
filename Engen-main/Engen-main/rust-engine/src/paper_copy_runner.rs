@@ -99,7 +99,7 @@ impl Default for CopySettings {
     fn default() -> Self {
         Self {
             sizing_mode: SizingMode::SourcePercent,
-            sizing_value: "5".to_string(),
+            sizing_value: "10".to_string(),
             max_buy_usd: Some("10".to_string()),
         }
     }
@@ -115,11 +115,7 @@ impl CopySettings {
             .and_then(Value::as_str)
             .unwrap_or("SOURCE_PERCENT");
         let sizing_mode = SizingMode::parse(mode)?;
-        let default_value = if sizing_mode == SizingMode::SourcePercent {
-            "5"
-        } else {
-            "10"
-        };
+        let default_value = "10";
         let sizing_value = settings
             .get("sizing_value")
             .and_then(number_to_string)

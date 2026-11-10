@@ -799,8 +799,6 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
                     parsed = instruction.get("parsed")
                     parsed_type = parsed.get("type") if isinstance(parsed, Mapping) else None
                     parsed_name = parsed_type.lower() if isinstance(parsed_type, str) else ""
-                    program_name = instruction.get("program")
-                    program_name = program_name.lower() if isinstance(program_name, str) else ""
                     program_id = instruction.get("programId")
                     if not isinstance(program_id, str):
                         program_index = instruction.get("programIdIndex")
@@ -810,13 +808,10 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
                                 key.get("pubkey") if isinstance(key, Mapping) else None
                             )
                     is_transfer_type = parsed_name in ("transfer", "transferchecked", "transfer_checked")
-                    is_supported_transfer_program = (
-                        program_name in ("system", "spl-token", "spl-token-2022")
-                        or program_id in (
-                            SYSTEM_PROGRAM_ID,
-                            SPL_TOKEN_PROGRAM_ID,
-                            TOKEN_2022_PROGRAM_ID,
-                        )
+                    is_supported_transfer_program = program_id in (
+                        SYSTEM_PROGRAM_ID,
+                        SPL_TOKEN_PROGRAM_ID,
+                        TOKEN_2022_PROGRAM_ID,
                     )
                     if is_transfer_type and is_supported_transfer_program:
                         direct_transfer_instruction = True

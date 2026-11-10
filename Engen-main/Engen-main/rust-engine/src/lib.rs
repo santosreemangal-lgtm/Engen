@@ -6,6 +6,7 @@
 pub mod config;
 pub mod latency;
 pub mod market_data;
+pub mod monitor_scheduler;
 pub mod pnl;
 pub mod paper_simulator;
 pub mod paper_copy_runner;

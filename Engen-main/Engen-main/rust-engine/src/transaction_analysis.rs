@@ -452,8 +452,8 @@ pub fn classify_token_balance_changes(changes: &Value, wallet_address: &str) -> 
 
     let asset_mints: Vec<_> = asset_deltas.keys().cloned().collect();
     let quote_mints: Vec<_> = quote_deltas.keys().cloned().collect();
-    if asset_deltas.values().all(|delta| delta > &0)
-        && quote_deltas.values().all(|delta| delta < &0)
+    if asset_deltas.values().all(|delta| delta > 0)
+        && quote_deltas.values().all(|delta| delta < 0)
     {
         return json!({
             "classification": "BUY_CANDIDATE",
@@ -462,8 +462,8 @@ pub fn classify_token_balance_changes(changes: &Value, wallet_address: &str) -> 
             "quote_mints": quote_mints
         });
     }
-    if asset_deltas.values().all(|delta| delta < &0)
-        && quote_deltas.values().all(|delta| delta > &0)
+    if asset_deltas.values().all(|delta| delta < 0)
+        && quote_deltas.values().all(|delta| delta > 0)
     {
         return json!({
             "classification": "SELL_CANDIDATE",

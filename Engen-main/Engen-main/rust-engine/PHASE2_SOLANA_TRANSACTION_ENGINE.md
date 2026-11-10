@@ -27,7 +27,7 @@ However, this is not yet a complete production-grade transaction engine. Importa
 | BUY / SELL classification | Conservative wallet-owned balance-delta heuristic; stablecoin/native SOL quote handling; Pump.fun V2 instruction context; emits BUY_CANDIDATE / SELL_CANDIDATE | PARTIAL | Complete shared labelled corpus; broaden known DEX/aggregator cases; distinguish candidate from proven execution; confidence calibration and false-positive tests. |
 | TRANSFER classification | Transfer instructions are retained as evidence and transfer-only balance movement is not promoted to a swap candidate; no explicit \`TRANSFER\` transaction-type result is currently exposed | INCOMPLETE | Add explicit, separately exposed \`transaction_type=TRANSFER\` for verified transfer cases while keeping trade_signal non-copyable; distinguish outer transfer from inner swap settlement transfers. |
 | UNKNOWN and other types | Conservative UNKNOWN fallback; failed metadata can be identified as FAILED_TRANSACTION | PARTIAL | Define explicit output contract for FAILED, UNKNOWN and safely supported OTHER transaction types; never infer OTHER from incomplete evidence. |
-| Native SOL balance changes | Uses pre/post lamports, loaded addresses and fee-payer fee adjustment; integer precision preserved | PARTIAL | Reject mismatched account-key/pre/post-balance lengths instead of silently truncating; cover lookup-table addresses, rent/account lifecycle, fee payer/non-fee payer, failed tx and incomplete arrays. |
+| Native SOL balance changes | Uses pre/post lamports, loaded addresses and fee-payer fee adjustment; now rejects account-key/pre/post-balance length mismatch and malformed account/balance entries rather than silently truncating | PARTIAL — CI PENDING | Cover lookup-table addresses, rent/account lifecycle, fee payer/non-fee payer, failed tx and incomplete arrays with shared fixtures. |
 | SPL token balance changes | Uses pre/post token balances, raw integer amount strings, decimals, owner conflict handling and per-account/mint deltas | PARTIAL | Cover missing token accounts, owner changes, duplicate/malformed rows, account-index mismatch, decimals mismatch, token-2022 and all Python parity cases. |
 | Instruction evidence | Normalized outer/inner instruction context in analysis; raw transaction JSON is stored in transaction_records | PARTIAL | Prove exact evidence survives every success/failure/retry/restart path; test size limits and evidence immutability/retention. |
 | Failed / ambiguous / incomplete transactions | Failed chain metadata is excluded from BUY/SELL; missing metadata remains retryable; ambiguous signer/confirmation/owner cases stay UNKNOWN; raw payload may be retained | PARTIAL | Preserve failed/incomplete status end-to-end; add explicit failed/incomplete/finality/fault matrix and no-candidate assertions. |
@@ -48,7 +48,7 @@ This is a correctness fix, not proof that the whole Phase 2 pipeline is complete
 
 ## 4. Current Rust test evidence
 
-Current module-level Rust test inventory from the audited modules:
+Previous audited module-level Rust test inventory (new transaction-type and alignment regression tests have since been added; rerun CI to establish the current count):
 
 | Module | Tests |
 |---|---:|
@@ -127,7 +127,7 @@ SignatureStore (SQLite, disposable fixtures in tests)
 - Parser/instruction evidence: **PARTIAL**
 - BUY/SELL: **PARTIAL**
 - Explicit TRANSFER output: **NOT IMPLEMENTED**
-- Native SOL/SPL balance analysis: **PARTIAL**
+- Native SOL/SPL balance analysis: **PARTIAL** (native account/balance alignment hardening added; broader fixtures pending)
 - Failed/ambiguous/incomplete handling: **PARTIAL** (failed-status overwrite regression fixed; CI pending)
 - Processor: **PARTIAL**
 - Monitor: **PARTIAL**

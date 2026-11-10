@@ -14,6 +14,9 @@ pub const PUMP_FUN_PROGRAM_ID: &str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF
 pub const NATIVE_SOL_SOURCE: &str = "native_sol";
 pub const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 pub const USDT_MINT: &str = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+pub const SYSTEM_PROGRAM_ID: &str = "11111111111111111111111111111111";
+pub const SPL_TOKEN_PROGRAM_ID: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+pub const TOKEN_2022_PROGRAM_ID: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 
 #[derive(Debug, Clone)]
 struct TokenBalance {
@@ -72,6 +75,22 @@ fn resolve_program_id(instruction: &Value, account_keys: &[Value]) -> Option<Str
         .get("programIdIndex")
         .and_then(as_non_negative_usize)?;
     account_keys.get(index).and_then(normalize_pubkey)
+}
+
+fn is_supported_transfer_program(instruction: &Value, account_keys: &[Value]) -> bool {
+    let program_name = instruction
+        .get("program")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let program_id = resolve_program_id(instruction, account_keys).unwrap_or_default();
+    matches!(
+        program_name.as_str(),
+        "system" | "spl-token" | "spl-token-2022"
+    ) || matches!(
+        program_id.as_str(),
+        SYSTEM_PROGRAM_ID | SPL_TOKEN_PROGRAM_ID | TOKEN_2022_PROGRAM_ID
+    )
 }
 
 /// Return a normalized summary while preserving instruction-level evidence.
@@ -627,6 +646,11 @@ pub fn classify_transaction(
     let mut recognized_other_instruction = false;
     let fee = meta.and_then(|value| value.get("fee")).cloned().unwrap_or(Value::Null);
     if let Some(message) = transaction.get("transaction").and_then(|value| value.get("message")) {
+        let account_keys = message
+            .get("accountKeys")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         if let Some(outer) = message.get("instructions").and_then(Value::as_array) {
             for (index, instruction) in outer.iter().enumerate() {
                 if !instruction.is_object() {
@@ -638,9 +662,13 @@ pub fn classify_transaction(
                     .cloned()
                     .unwrap_or(Value::Null);
                 let parsed_name = parsed_type.as_str().unwrap_or_default().to_ascii_lowercase();
-                if matches!(parsed_name.as_str(), "transfer" | "transferchecked" | "transfer_checked") {
+                if matches!(parsed_name.as_str(), "transfer" | "transferchecked" | "transfer_checked")
+                    && is_supported_transfer_program(instruction, &account_keys)
+                {
                     direct_transfer_instruction = true;
-                } else if !parsed_name.is_empty() {
+                } else if !parsed_name.is_empty()
+                    && !matches!(parsed_name.as_str(), "transfer" | "transferchecked" | "transfer_checked")
+                {
                     recognized_non_transfer_instruction = true;
                     if matches!(
                         parsed_name.as_str(),
@@ -992,6 +1020,36 @@ mod tests {
         assert_eq!(result["transaction_type"],"TRANSFER");
         assert_eq!(result["trade_signal"],"NOT_COPYABLE");
         assert_eq!(result["classification"],"UNKNOWN");
+    }
+
+    #[test]
+    fn spl_token_2022_direct_transfer_is_classified_as_transfer_only() {
+        let transaction = json!({
+            "transaction":{"message":{"accountKeys":[WALLET, TOKEN_2022_PROGRAM_ID],"instructions":[{
+                "program":"spl-token-2022",
+                "programId":TOKEN_2022_PROGRAM_ID,
+                "parsed":{"type":"transferChecked"}
+            }]}},
+            "meta":{"err":null,"fee":5000}
+        });
+        let result = classify_transaction(&transaction, WALLET, None);
+        assert_eq!(result["transaction_type"], "TRANSFER");
+        assert_eq!(result["trade_signal"], "NOT_COPYABLE");
+    }
+
+    #[test]
+    fn unknown_program_cannot_claim_a_verified_transfer_type() {
+        let transaction = json!({
+            "transaction":{"message":{"accountKeys":[WALLET, "UnknownProgram"],"instructions":[{
+                "program":"unknown",
+                "programId":"UnknownProgram",
+                "parsed":{"type":"transfer"}
+            }]}},
+            "meta":{"err":null,"fee":5000}
+        });
+        let result = classify_transaction(&transaction, WALLET, None);
+        assert_eq!(result["transaction_type"], "UNKNOWN");
+        assert_eq!(result["trade_signal"], "NOT_COPYABLE");
     }
 
     #[test]

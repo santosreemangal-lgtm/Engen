@@ -29,7 +29,17 @@ jobs:
           components: rustfmt, clippy
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
-      - name: Unit tests
+      - name: Rust unit and integration tests
         run: cargo test --all-targets
+      - name: Python Phase 2 behavioral-reference tests
+        working-directory: Engen-main/Engen-main
+        env:
+          PYTHONPATH: .
+        run: |
+          python -m unittest discover -s engine/engine/engine/tests -p 'test_transaction_*.py'
+          python -m unittest discover -s engine/engine/engine/tests -p 'test_solana_validation.py'
+          python -m unittest discover -s engine/engine/engine/tests -p 'test_rpc_policy.py'
+          python -m unittest discover -s engine/engine/engine/tests -p 'test_signature_store.py'
+          python -m unittest discover -s engine/engine/engine/tests -p 'test_wallet_monitor.py'
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings

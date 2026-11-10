@@ -158,7 +158,7 @@ impl SolanaRpcClient {
                     let retryable_provider_error = provider_error_is_retryable(&body);
                     match validate_response(body, request_id) {
                         Ok(value) => return Ok(value),
-                        Err(SolanaRpcError::Provider(code))
+                        Err(SolanaRpcError::Provider(_code))
                             if retryable_provider_error && attempt < self.config.retries =>
                         {
                             self.wait_before_retry(attempt, None);

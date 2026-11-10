@@ -79,7 +79,6 @@ fn shared_phase2_golden_corpus_matches_transaction_type_contract() {
     }
 }
 
-
 #[test]
 fn unsupported_transaction_version_is_retained_for_manual_review_after_restart() {
     let (endpoint, server) = spawn_mock_rpc(vec![
@@ -119,7 +118,8 @@ fn unsupported_transaction_version_is_retained_for_manual_review_after_restart()
         retries: 0,
         backoff: Duration::ZERO,
         min_interval: Duration::ZERO,
-    }).expect("create loopback-only unsupported-version RPC client");
+    })
+    .expect("create loopback-only unsupported-version RPC client");
 
     let directory = tempfile::tempdir().expect("create disposable DB directory");
     let database_path = directory.path().join("signatures.db");
@@ -132,7 +132,10 @@ fn unsupported_transaction_version_is_retained_for_manual_review_after_restart()
         let results = monitor_wallet(&client, &store, WALLET, 10, false, None)
             .expect("scan unsupported transaction version");
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0]["metadata_status"], "unsupported_transaction_version");
+        assert_eq!(
+            results[0]["metadata_status"],
+            "unsupported_transaction_version"
+        );
         assert_eq!(results[0]["processing_status"], "needs_review");
         assert_eq!(results[0]["retryable"], false);
         assert_eq!(
@@ -149,7 +152,10 @@ fn unsupported_transaction_version_is_retained_for_manual_review_after_restart()
 
     let reopened = SignatureStore::open(&database_path).expect("reopen disposable store");
     assert_eq!(
-        reopened.get_status(WALLET, NEW_SIGNATURE).unwrap().as_deref(),
+        reopened
+            .get_status(WALLET, NEW_SIGNATURE)
+            .unwrap()
+            .as_deref(),
         Some("needs_review")
     );
     let record = reopened
@@ -158,7 +164,9 @@ fn unsupported_transaction_version_is_retained_for_manual_review_after_restart()
         .expect("review evidence survives process restart");
     assert_eq!(record.status, "needs_review");
     assert_eq!(record.raw_transaction, None);
-    server.join().expect("mock RPC server completed expected calls");
+    server
+        .join()
+        .expect("mock RPC server completed expected calls");
 }
 
 #[test]

@@ -80,19 +80,24 @@ mod tests {
 
     #[test]
     fn shared_validation_corpus_matches_python_reference() {
-        let corpus: serde_json::Value = serde_json::from_str(include_str!(
-            "../tests/fixtures/solana_validation.json"
-        ))
-        .expect("parse shared Solana validation corpus");
+        let corpus: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/solana_validation.json"))
+                .expect("parse shared Solana validation corpus");
 
         for value in corpus["valid_addresses"].as_array().unwrap() {
             let address = value.as_str().expect("fixture address is a string");
-            assert!(is_valid_solana_address(address), "address should be valid: {address}");
+            assert!(
+                is_valid_solana_address(address),
+                "address should be valid: {address}"
+            );
             assert!(require_solana_address(address).is_ok());
         }
         for value in corpus["invalid_addresses"].as_array().unwrap() {
             let address = value.as_str().expect("fixture address is a string");
-            assert!(!is_valid_solana_address(address), "address should be invalid: {address}");
+            assert!(
+                !is_valid_solana_address(address),
+                "address should be invalid: {address}"
+            );
             assert!(require_solana_address(address).is_err());
         }
         for value in corpus["valid_signatures"].as_array().unwrap() {
@@ -112,5 +117,4 @@ mod tests {
             assert!(require_transaction_signature(signature).is_err());
         }
     }
-
 }

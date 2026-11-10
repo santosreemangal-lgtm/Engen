@@ -655,7 +655,11 @@ mod tests {
                 let mut request = [0_u8; 4096];
                 let _ = stream.read(&mut request);
                 let payload = serde_json::to_vec(&body).unwrap();
-                let reason = if status == 503 { "Service Unavailable" } else { "OK" };
+                let reason = if status == 503 {
+                    "Service Unavailable"
+                } else {
+                    "OK"
+                };
                 let header = format!(
                     "HTTP/1.1 {status} {reason}\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n",
                     payload.len()
@@ -675,7 +679,9 @@ mod tests {
         })
         .unwrap();
         assert_eq!(
-            client.request(ReadOnlyMethod::GetSlot, json!([]), 7).unwrap(),
+            client
+                .request(ReadOnlyMethod::GetSlot, json!([]), 7)
+                .unwrap(),
             json!(43)
         );
         server.join().unwrap();
@@ -702,6 +708,4 @@ mod tests {
             Err(SolanaRpcError::Transport)
         ));
     }
-
-
 }

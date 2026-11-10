@@ -1,5 +1,9 @@
 name: Rust Engine Checks
 
+concurrency:
+  group: rust-engine-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     paths:

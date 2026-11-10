@@ -576,7 +576,7 @@ mod tests {
         assert!(!store.mark_processed(WALLET, SIGNATURE).unwrap());
         assert_eq!(store.get_status(WALLET, SIGNATURE).unwrap().as_deref(), Some("stale"));
         let record = store.get_transaction_record(WALLET, SIGNATURE).unwrap().unwrap();
-        assert_eq!(record.processing_status, "stale");
+        assert_eq!(record.status, "stale");
     }
 
     #[test]

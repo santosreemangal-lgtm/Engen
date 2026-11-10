@@ -477,6 +477,12 @@ mod tests {
     fn parses_retry_after_seconds_and_dates() {
         assert_eq!(parse_retry_after("12"), Some(Duration::from_secs(12)));
         assert_eq!(parse_retry_after("9999"), Some(Duration::from_secs(600)));
+
+        let target = SystemTime::now() + Duration::from_secs(60);
+        let date = httpdate::fmt_http_date(target);
+        let parsed = parse_retry_after(&date).expect("valid HTTP date should parse");
+        assert!(parsed >= Duration::from_secs(55));
+        assert!(parsed <= Duration::from_secs(60));
         assert!(parse_retry_after("not-a-date").is_none());
     }
 

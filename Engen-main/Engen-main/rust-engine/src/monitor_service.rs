@@ -139,13 +139,14 @@ impl MonitorService {
         let mut worker = self.worker.lock().map_err(|_| MonitorServiceError::StateUnavailable)?;
         if worker.as_ref().is_some_and(|handle| !handle.is_finished()) {
             let mut state = self.state.lock().map_err(|_| MonitorServiceError::StateUnavailable)?;
-            state.wallets = cleaned
+            let next_wallets = cleaned
                 .into_iter()
                 .map(|address| {
                     let existing = state.wallets.get(&address).cloned().unwrap_or_else(WalletState::waiting);
                     (address, existing)
                 })
                 .collect();
+            state.wallets = next_wallets;
             state.enabled = true;
             return self.status_value();
         }
@@ -300,11 +301,9 @@ impl MonitorService {
 
 impl Drop for MonitorService {
     fn drop(&mut self) {
-        if let Ok((stop, wake)) = self.stop_signal.0.lock().map(|mut value| {
-            *value = true;
-            (&self.stop_signal.0, &self.stop_signal.1)
-        }) {
-            let _ = stop;
+        let (stop, wake) = &*self.stop_signal;
+        if let Ok(mut should_stop) = stop.lock() {
+            *should_stop = true;
             wake.notify_all();
         }
         if let Ok(worker) = self.worker.get_mut() {

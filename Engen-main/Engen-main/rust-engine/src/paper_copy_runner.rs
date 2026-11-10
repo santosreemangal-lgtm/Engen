@@ -15,6 +15,7 @@ use crate::paper_simulator::{
     CreateOrderRequest, ExecutionPolicy, PaperSimulator, PaperSimulatorError,
 };
 use crate::pnl::MarketPrice;
+use crate::source_freshness::source_block_time_ok;
 use crate::transaction_analysis::WRAPPED_SOL_MINT;
 
 const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -296,6 +297,27 @@ pub fn queue_paper_orders(
     settings: &CopySettings,
     latency_recorder: Option<&LatencyRecorder>,
 ) -> Result<Vec<Value>, PaperCopyError> {
+    queue_paper_orders_at(
+        wallet_address,
+        results,
+        simulator,
+        allowed_sides,
+        settings,
+        latency_recorder,
+        Utc::now().timestamp(),
+    )
+}
+
+/// Deterministic clock-injected queue entrypoint used by tests and controlled replay.
+pub fn queue_paper_orders_at(
+    wallet_address: &str,
+    results: &[Value],
+    simulator: &mut PaperSimulator,
+    allowed_sides: AllowedSides,
+    settings: &CopySettings,
+    latency_recorder: Option<&LatencyRecorder>,
+    now_ts: i64,
+) -> Result<Vec<Value>, PaperCopyError> {
     if wallet_address.trim().is_empty() {
         return Err(PaperCopyError::InvalidInput(
             "A monitored public wallet address is required.".to_string(),
@@ -313,6 +335,12 @@ pub fn queue_paper_orders(
             continue;
         };
         let observation = result.get("signature_observation");
+        let block_time = observation
+            .and_then(|value| value.get("block_time"))
+            .and_then(Value::as_i64);
+        if !source_block_time_ok(block_time, now_ts) {
+            continue;
+        }
         let signal = result.get("trade_signal");
         if observation
             .and_then(|value| value.get("confirmation_status"))
@@ -677,6 +705,27 @@ mod tests {
     const ASSET: &str = "So11111111111111111111111111111111111111113";
     const USDC: &str = USDC_MINT;
 
+    // Existing fixtures use a fixed timestamp; inject the matching clock rather than
+    // weakening the production 60-second source-freshness guard.
+    fn queue_paper_orders(
+        wallet_address: &str,
+        results: &[Value],
+        simulator: &mut PaperSimulator,
+        allowed_sides: AllowedSides,
+        settings: &CopySettings,
+        latency_recorder: Option<&LatencyRecorder>,
+    ) -> Result<Vec<Value>, PaperCopyError> {
+        super::queue_paper_orders_at(
+            wallet_address,
+            results,
+            simulator,
+            allowed_sides,
+            settings,
+            latency_recorder,
+            1_760_000_001,
+        )
+    }
+
     fn simulator() -> PaperSimulator {
         let mut balances = BTreeMap::new();
         balances.insert("USD".to_string(), "100".to_string());
@@ -712,6 +761,25 @@ mod tests {
                 {"owner":WALLET,"mint":USDC,"decimals":6,"delta_amount":"1000000","pre_amount":"8000000","post_amount":"9000000"}
             ]
         })
+    }
+
+    #[test]
+    fn stale_source_transactions_are_never_queued_for_paper_execution() {
+        let mut simulator = simulator();
+        let mut stale = buy_signal(&"3".repeat(64));
+        stale["signature_observation"]["block_time"] = json!(1_759_999_900);
+        let queued = super::queue_paper_orders_at(
+            WALLET,
+            &[stale],
+            &mut simulator,
+            AllowedSides::Both,
+            &CopySettings::default(),
+            None,
+            1_760_000_001,
+        )
+        .unwrap();
+        assert!(queued.is_empty());
+        assert!(simulator.orders().is_empty());
     }
 
     #[test]

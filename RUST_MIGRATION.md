@@ -1,21 +1,24 @@
 # Python → Rust Migration
 
 **Branch:** `feature/rust-engine-core`  
-**Goal:** Ultimately run the copy engine in Rust. Python stays until parity.
+**Goal:** Run the copy engine in Rust. Python stays until full swap-classification parity.
 
 ## Progress
 
 | Python module | Rust module | Status |
 |---------------|-------------|--------|
-| `paper_simulator.py` | `paper_simulator.rs` | **R2 advanced** — create/fill BUY·SELL, fees, slippage, optional SQLite |
-| `paper_copy_runner.py` | `paper_copy.rs` | Queue + stale gate + execute_pending |
-| `source_freshness` | `source_freshness.rs` | Done + unit tests |
-| `transaction_monitor.py` | `transaction_monitor.rs` | Stub (R3: RPC/gRPC) |
-| `monitor_service` / bridge | `monitor_service.rs` | Stub tick loop |
-| `profile_store.py` | `profile_store.rs` | Stub |
-| `dashboard/server.py` | — | Keep Python UI for now |
+| `paper_simulator.py` | `paper_simulator.rs` | Fill BUY/SELL, fees, slippage, SQLite restart |
+| `paper_copy_runner.py` | `paper_copy.rs` | Queue, stale gate, execute pending |
+| source freshness | `source_freshness.rs` | Done |
+| `profile_store.py` | `profile_store.rs` | SQLite profiles |
+| `transaction_monitor.py` | `transaction_monitor.rs` | Read-only `getSignaturesForAddress` + classified ingest. Does **not** invent trades from signatures |
+| `monitor_service` / bridge | `monitor_service.rs` | Tick queue + fill |
+| dashboard API | `paper_http.rs` | Paper JSON: `/health`, `/api/paper`, `/api/candidates`, `/api/fill` |
+| swap classification | still Python | Not ported — needs token-balance parser |
+| Yellowstone gRPC | not started | Needs a provider token; polling RPC is the read-only path for now |
+| `dashboard/server.py` UI | Python | Keep until classification moves |
 
-## Run (when Rust toolchain available)
+## Verify
 
 ```bash
 cd rust/engen_core
@@ -23,16 +26,15 @@ cargo test
 cargo run --bin engen_paper
 ```
 
-## Phases
+`cargo test` covers ledger restart, profile reopen, stale gate, monitor tick fill, and paper-only health.
 
-- [x] R1 scaffold
-- [x] R2 paper ledger fill path (in progress → solid)
-- [ ] R2b SQLite restart tests parity with Python
-- [ ] R3 transaction monitor (RPC then Yellowstone gRPC)
-- [ ] R3 monitor service production loop
-- [ ] R4 profile store + optional Rust HTTP API
-- [ ] Cut over: Python dashboard talks to Rust core (JSON/HTTP)
+## Still later
+
+1. Port Python swap classification (token deltas → BUY/SELL) into Rust
+2. Optional Yellowstone gRPC subscribe behind the same candidate ingest
+3. Point the Python dashboard at the Rust paper API
+4. Only then retire the Python ledger
 
 ## Safety
 
-No private keys, no signing, no broadcast in this crate.
+No private keys, no signing, no broadcast. Signature polling is read-only. Unparsed signatures never become paper orders.

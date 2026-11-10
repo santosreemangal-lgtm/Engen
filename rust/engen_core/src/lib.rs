@@ -12,6 +12,7 @@
 pub mod error;
 pub mod paper_simulator;
 pub mod paper_copy;
+pub mod paper_http;
 pub mod source_freshness;
 pub mod transaction_monitor;
 pub mod monitor_service;

@@ -595,6 +595,8 @@ pub fn classify_transaction(
         if !error.is_null() {
             return json!({
                 "classification": "FAILED_TRANSACTION",
+                "transaction_type": "FAILED",
+                "trade_signal": "NOT_COPYABLE",
                 "confidence": "high",
                 "reason": "The chain metadata reports a failed transaction; no swap candidate is emitted.",
                 "asset_mints": [],

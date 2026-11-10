@@ -47,6 +47,7 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Commit canonical rustfmt normalization and dispatch verification
         if: github.event_name == 'push' && github.ref == 'refs/heads/rewrite/rust-backend-20261109'
+        working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

@@ -77,6 +77,50 @@ fn resolve_program_id(instruction: &Value, account_keys: &[Value]) -> Option<Str
     account_keys.get(index).and_then(normalize_pubkey)
 }
 
+/// Resolve lookup-table program-index keys without duplicating keys already
+/// expanded into parsed RPC accountKeys.
+fn instruction_account_keys(transaction: &Value) -> Vec<Value> {
+    let Some(message) = transaction
+        .get("transaction")
+        .and_then(|value| value.get("message"))
+        .filter(|value| value.is_object())
+    else {
+        return Vec::new();
+    };
+    let mut keys = message
+        .get("accountKeys")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let Some(meta) = transaction.get("meta").filter(|value| value.is_object()) else {
+        return keys;
+    };
+    let Some(loaded) = meta.get("loadedAddresses").filter(|value| value.is_object()) else {
+        return keys;
+    };
+    let mut lookup_keys = Vec::new();
+    for group in ["writable", "readonly"] {
+        if let Some(rows) = loaded.get(group).and_then(Value::as_array) {
+            lookup_keys.extend(rows.iter().cloned());
+        }
+    }
+    if lookup_keys.is_empty() {
+        return keys;
+    }
+    let balances_already_expanded = meta
+        .get("preBalances")
+        .and_then(Value::as_array)
+        .zip(meta.get("postBalances").and_then(Value::as_array))
+        .is_some_and(|(pre, post)| pre.len() == post.len() && pre.len() == keys.len());
+    let parsed_keys_already_expanded = keys.iter().any(|item| {
+        item.get("source").and_then(Value::as_str) == Some("lookupTable")
+    });
+    if !balances_already_expanded && !parsed_keys_already_expanded {
+        keys.extend(lookup_keys);
+    }
+    keys
+}
+
 fn is_supported_transfer_program(instruction: &Value, account_keys: &[Value]) -> bool {
     let program_name = instruction
         .get("program")
@@ -111,11 +155,7 @@ pub fn analyze_transaction(transaction: &Value) -> Result<Value, &'static str> {
         .get("transaction")
         .and_then(|value| value.get("message"))
         .filter(|value| value.is_object());
-    let account_keys = message
-        .and_then(|value| value.get("accountKeys"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    let account_keys = instruction_account_keys(transaction);
 
     let mut signers = Vec::new();
     if let Some(required) = message
@@ -646,11 +686,7 @@ pub fn classify_transaction(
     let mut recognized_other_instruction = false;
     let fee = meta.and_then(|value| value.get("fee")).cloned().unwrap_or(Value::Null);
     if let Some(message) = transaction.get("transaction").and_then(|value| value.get("message")) {
-        let account_keys = message
-            .get("accountKeys")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let account_keys = instruction_account_keys(transaction);
         if let Some(outer) = message.get("instructions").and_then(Value::as_array) {
             for (index, instruction) in outer.iter().enumerate() {
                 if !instruction.is_object() {
@@ -995,6 +1031,71 @@ mod tests {
         assert_eq!(result["program_ids"], json!(["TOKEN_PROGRAM"]));
         assert_eq!(result["instructions"][1]["source"], "inner");
         assert_eq!(result["instructions"][1]["parsed_type"], "checked_transfer");
+    }
+
+    #[test]
+    fn versioned_lookup_table_program_indices_resolve_for_outer_and_inner_instructions() {
+        let transaction = json!({
+            "slot": 101,
+            "transaction": {"message": {
+                "header": {"numRequiredSignatures": 1},
+                "accountKeys": [
+                    {"pubkey": WALLET, "signer": true},
+                    {"pubkey": "Other"}
+                ],
+                "instructions": [{
+                    "programIdIndex": 2,
+                    "parsed": {"type": "transfer"}
+                }]
+            }},
+            "meta": {
+                "err": null,
+                "fee": 5000,
+                "preBalances": [10000, 20000, 30000],
+                "postBalances": [9000, 21000, 30000],
+                "loadedAddresses": {
+                    "writable": [SYSTEM_PROGRAM_ID],
+                    "readonly": []
+                },
+                "innerInstructions": [{
+                    "index": 0,
+                    "instructions": [{
+                        "programIdIndex": 2,
+                        "parsed": {"type": "transferChecked"}
+                    }]
+                }]
+            }
+        });
+        let summary = analyze_transaction(&transaction).unwrap();
+        assert_eq!(summary["instructions"][0]["program_id"], SYSTEM_PROGRAM_ID);
+        assert_eq!(summary["instructions"][1]["program_id"], SYSTEM_PROGRAM_ID);
+        assert_eq!(summary["account_count"], 3);
+        let classification = classify_transaction(&transaction, WALLET, None);
+        assert_eq!(classification["transaction_type"], "TRANSFER");
+        assert_eq!(classification["trade_signal"], "NOT_COPYABLE");
+    }
+
+    #[test]
+    fn parsed_lookup_keys_are_not_duplicated_when_metadata_is_expanded() {
+        let transaction = json!({
+            "transaction": {"message": {
+                "accountKeys": [
+                    {"pubkey": WALLET, "source": "transaction"},
+                    {"pubkey": SYSTEM_PROGRAM_ID, "source": "lookupTable"}
+                ],
+                "instructions": [{"programIdIndex": 1, "parsed":{"type":"transfer"}}]
+            }},
+            "meta": {
+                "err": null,
+                "fee": 5000,
+                "preBalances": [10000, 20000],
+                "postBalances": [9000, 21000],
+                "loadedAddresses": {"writable":[SYSTEM_PROGRAM_ID],"readonly":[]}
+            }
+        });
+        let summary = analyze_transaction(&transaction).unwrap();
+        assert_eq!(summary["account_count"], 2);
+        assert_eq!(summary["instructions"][0]["program_id"], SYSTEM_PROGRAM_ID);
     }
 
     #[test]

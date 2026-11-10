@@ -688,6 +688,47 @@ mod tests {
     }
 
     #[test]
+    fn request_timeout_returns_typed_transport_error() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request);
+            thread::sleep(Duration::from_millis(250));
+
+            let payload = br#"{"jsonrpc":"2.0","id":7,"result":44}"#;
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                payload.len()
+            );
+            // The client should have timed out and closed its side already.
+            let _ = stream.write_all(header.as_bytes());
+            let _ = stream.write_all(payload);
+        });
+
+        let client = SolanaRpcClient::new(RpcConfig {
+            endpoint: format!("http://{address}"),
+            timeout: Duration::from_millis(75),
+            retries: 0,
+            backoff: Duration::ZERO,
+            min_interval: Duration::ZERO,
+        })
+        .unwrap();
+        assert!(matches!(
+            client.request(ReadOnlyMethod::GetSlot, json!([]), 7),
+            Err(SolanaRpcError::Transport)
+        ));
+        server.join().unwrap();
+    }
+
+    #[test]
     fn connection_failure_returns_typed_transport_error() {
         use std::net::TcpListener;
 

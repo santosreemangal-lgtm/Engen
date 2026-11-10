@@ -634,6 +634,12 @@ class TransactionAnalysisTests(unittest.TestCase):
             summary["instructions"][0]["program_id"],
             "11111111111111111111111111111111",
         )
+        native_changes = analyze_native_sol_balance_changes(transaction)
+        self.assertEqual(len(native_changes), 2)
+        self.assertEqual(
+            native_changes[1]["owner"],
+            "11111111111111111111111111111111",
+        )
 
     def test_native_sol_analysis_rejects_account_key_balance_length_mismatch(self):
         transaction = {

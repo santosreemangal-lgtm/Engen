@@ -152,6 +152,20 @@ class SignatureStoreTests(unittest.TestCase):
         self.assertEqual(record["raw_transaction"], payload)
         self.assertEqual(record["status"], "incomplete")
 
+    def test_mark_processed_preserves_failed_transaction_evidence_status(self):
+        wallet = "wallet_failed"
+        signature = "sig_failed"
+        payload = {"meta": {"err": {"InstructionError": [0, "Custom"]}}}
+        self.store.save(wallet, signature, slot=10)
+        self.store.save_transaction_record(
+            wallet, signature, payload, processing_status="failed"
+        )
+
+        self.assertTrue(self.store.mark_processed(wallet, signature))
+        record = self.store.get_transaction_record(wallet, signature)
+        self.assertEqual(record["status"], "failed")
+        self.assertEqual(record["raw_transaction"], payload)
+
     def test_processed_slot_updates_wallet_position_monotonically(self):
         self.store.save("wallet_A", "sig_newer", slot=200)
         self.store.mark_processed("wallet_A", "sig_newer")

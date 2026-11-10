@@ -606,6 +606,27 @@ impl PaperSimulator {
         Ok(serde_json::to_value(order)?)
     }
 
+    /// Update an unexecuted paper order quantity and persist it atomically.
+    pub fn set_order_quantity(
+        &mut self,
+        order_id: &str,
+        quantity: &str,
+    ) -> Result<bool, PaperSimulatorError> {
+        let mut order = self
+            .orders
+            .get(order_id)
+            .cloned()
+            .ok_or(PaperSimulatorError::OrderNotFound)?;
+        if order.status != "CREATED" {
+            return Ok(false);
+        }
+        let parsed = decimal_value(quantity, "Order quantity", false)?;
+        order.quantity = parsed.to_string();
+        self.persist(&order, None, None)?;
+        self.orders.insert(order_id.to_string(), order);
+        Ok(true)
+    }
+
     pub fn execute_order(
         &mut self,
         order_id: &str,

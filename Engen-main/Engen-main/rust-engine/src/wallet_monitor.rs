@@ -325,7 +325,7 @@ mod tests {
             serde_json::json!({"signature":NEW_B,"slot":101}),
         ];
         let mut calls = 0;
-        let _ = scan_existing_wallet_pages(&store, WALLET, first, 2, |_wallet, _limit, before| {
+        let _ = scan_existing_wallet_pages(&store, WALLET, first, 2, |_wallet, _limit, _before| {
             calls += 1;
             let next = if calls % 2 == 0 { NEW_A } else { NEW_B };
             Ok(vec![

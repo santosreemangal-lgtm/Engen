@@ -241,7 +241,8 @@ fn failed_transaction_is_persisted_as_non_copyable_evidence_after_restart() {
         retries: 0,
         backoff: Duration::ZERO,
         min_interval: Duration::ZERO,
-    }).expect("create loopback-only failed-transaction RPC client");
+    })
+    .expect("create loopback-only failed-transaction RPC client");
 
     let directory = tempfile::tempdir().expect("create disposable DB directory");
     let database_path = directory.path().join("signatures.db");
@@ -284,7 +285,9 @@ fn failed_transaction_is_persisted_as_non_copyable_evidence_after_restart() {
         recovered.classification.unwrap()["trade_signal"],
         "NOT_COPYABLE"
     );
-    server.join().expect("mock RPC server completed expected calls");
+    server
+        .join()
+        .expect("mock RPC server completed expected calls");
 }
 
 #[test]

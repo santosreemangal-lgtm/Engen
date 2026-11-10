@@ -1173,6 +1173,9 @@ mod tests {
         let summary = analyze_transaction(&transaction).unwrap();
         assert_eq!(summary["account_count"], 2);
         assert_eq!(summary["instructions"][0]["program_id"], SYSTEM_PROGRAM_ID);
+        let native_changes = analyze_native_sol_balance_changes(&transaction);
+        assert_eq!(native_changes.len(), 2);
+        assert_eq!(native_changes[1]["owner"], SYSTEM_PROGRAM_ID);
     }
 
     #[test]

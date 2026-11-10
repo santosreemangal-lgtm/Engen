@@ -567,6 +567,19 @@ mod tests {
     const SIGNATURE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 
     #[test]
+    fn stale_signatures_are_auditable_and_cannot_be_overwritten_as_processed() {
+        let dir = tempdir().unwrap();
+        let store = SignatureStore::open(dir.path().join("signatures.db")).unwrap();
+        store.save(WALLET, SIGNATURE, Some(10)).unwrap();
+        assert!(store.mark_stale(WALLET, SIGNATURE).unwrap());
+        assert_eq!(store.get_status(WALLET, SIGNATURE).unwrap().as_deref(), Some("stale"));
+        assert!(!store.mark_processed(WALLET, SIGNATURE).unwrap());
+        assert_eq!(store.get_status(WALLET, SIGNATURE).unwrap().as_deref(), Some("stale"));
+        let record = store.get_transaction_record(WALLET, SIGNATURE).unwrap().unwrap();
+        assert_eq!(record.processing_status, "stale");
+    }
+
+    #[test]
     fn persists_and_deduplicates_signatures() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("signatures.db");

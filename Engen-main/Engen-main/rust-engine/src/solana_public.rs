@@ -661,7 +661,7 @@ mod tests {
                     "OK"
                 };
                 let header = format!(
-                    "HTTP/1.1 {status} {reason}\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n",
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     payload.len()
                 );
                 stream.write_all(header.as_bytes()).unwrap();

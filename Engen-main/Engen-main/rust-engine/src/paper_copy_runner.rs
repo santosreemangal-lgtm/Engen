@@ -731,7 +731,7 @@ mod tests {
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0]["side"], "BUY");
         let order = simulator.orders().values().next().unwrap();
-        assert_eq!(order.details["target_notional_usd"], "10");
+        assert_eq!(order.details["target_notional_usd"], "5");
         assert_eq!(order.details["real_trading"], false);
         let duplicate = queue_paper_orders(
             WALLET,

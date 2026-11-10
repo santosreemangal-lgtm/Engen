@@ -46,6 +46,40 @@ fn rpc_response(id: u64, result: Value) -> Value {
 }
 
 #[test]
+fn shared_phase2_golden_corpus_matches_transaction_type_contract() {
+    use engen_engine::transaction_analysis::{analyze_transaction, classify_transaction};
+
+    let cases: Vec<Value> = serde_json::from_str(include_str!("fixtures/phase2_transactions.json"))
+        .expect("parse shared Phase 2 golden corpus");
+    assert!(cases.len() >= 6);
+    for case in cases {
+        let name = case["name"].as_str().expect("fixture name");
+        let wallet = case["wallet"].as_str().expect("fixture wallet");
+        let transaction = &case["transaction"];
+        let changes = &case["balance_changes"];
+        let result = classify_transaction(transaction, wallet, Some(changes));
+        assert_eq!(
+            result["transaction_type"],
+            case["expected_type"],
+            "transaction type mismatch for fixture {name}"
+        );
+        assert_eq!(
+            result["trade_signal"],
+            case["expected_signal"],
+            "trade signal mismatch for fixture {name}"
+        );
+        if let Some(program_id) = case.get("expected_outer_program_id").and_then(Value::as_str) {
+            let summary = analyze_transaction(transaction).expect("analyze versioned fixture");
+            assert_eq!(
+                summary["instructions"][0]["program_id"],
+                program_id,
+                "lookup-table program id mismatch for fixture {name}"
+            );
+        }
+    }
+}
+
+#[test]
 fn wallet_discovery_to_transfer_classification_and_restart_evidence_is_offline() {
     let transaction = json!({
         "slot": 101,

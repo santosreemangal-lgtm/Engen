@@ -1,0 +1,226 @@
+[
+  {
+    "name": "versioned_lookup_table_system_transfer",
+    "wallet": "So11111111111111111111111111111111111111112",
+    "transaction": {
+      "slot": 101,
+      "transaction": {
+        "message": {
+          "header": {
+            "numRequiredSignatures": 1
+          },
+          "accountKeys": [
+            {
+              "pubkey": "So11111111111111111111111111111111111111112",
+              "signer": true
+            },
+            "Other"
+          ],
+          "instructions": [
+            {
+              "programIdIndex": 2,
+              "parsed": {
+                "type": "transfer"
+              }
+            }
+          ]
+        }
+      },
+      "meta": {
+        "err": null,
+        "fee": 5000,
+        "preBalances": [
+          10000,
+          20000,
+          30000
+        ],
+        "postBalances": [
+          9000,
+          21000,
+          30000
+        ],
+        "loadedAddresses": {
+          "writable": [
+            "11111111111111111111111111111111"
+          ],
+          "readonly": []
+        },
+        "innerInstructions": [
+          {
+            "index": 0,
+            "instructions": [
+              {
+                "programIdIndex": 2,
+                "parsed": {
+                  "type": "transferChecked"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "balance_changes": [],
+    "expected_type": "TRANSFER",
+    "expected_signal": "NOT_COPYABLE",
+    "expected_outer_program_id": "11111111111111111111111111111111"
+  },
+  {
+    "name": "token_2022_transfer",
+    "wallet": "So11111111111111111111111111111111111111112",
+    "transaction": {
+      "transaction": {
+        "message": {
+          "accountKeys": [
+            "So11111111111111111111111111111111111111112",
+            "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          ],
+          "instructions": [
+            {
+              "program": "spl-token-2022",
+              "programId": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+              "parsed": {
+                "type": "transferChecked"
+              }
+            }
+          ]
+        }
+      },
+      "meta": {
+        "err": null,
+        "fee": 5000
+      }
+    },
+    "balance_changes": [],
+    "expected_type": "TRANSFER",
+    "expected_signal": "NOT_COPYABLE"
+  },
+  {
+    "name": "failed_transaction",
+    "wallet": "So11111111111111111111111111111111111111112",
+    "transaction": {
+      "transaction": {
+        "message": {
+          "accountKeys": [
+            "So11111111111111111111111111111111111111112"
+          ]
+        }
+      },
+      "meta": {
+        "err": {
+          "InstructionError": [
+            0,
+            "Custom"
+          ]
+        },
+        "fee": 5000
+      }
+    },
+    "balance_changes": [],
+    "expected_type": "FAILED",
+    "expected_signal": "NOT_COPYABLE"
+  },
+  {
+    "name": "explicit_swap_context_buy",
+    "wallet": "So11111111111111111111111111111111111111112",
+    "transaction": {
+      "transaction": {
+        "message": {
+          "accountKeys": [
+            "So11111111111111111111111111111111111111112",
+            "JUPITER_PROGRAM"
+          ],
+          "instructions": [
+            {
+              "program": "jupiter",
+              "programId": "JUPITER_PROGRAM",
+              "parsed": {
+                "type": "swap"
+              }
+            }
+          ]
+        }
+      },
+      "meta": {
+        "err": null,
+        "fee": 5000
+      }
+    },
+    "balance_changes": [
+      {
+        "owner": "So11111111111111111111111111111111111111112",
+        "mint": "MINT_A",
+        "delta_amount": "100",
+        "decimals": 6
+      },
+      {
+        "owner": "So11111111111111111111111111111111111111112",
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "delta_amount": "-2500000",
+        "decimals": 6
+      }
+    ],
+    "expected_type": "BUY",
+    "expected_signal": "BUY_CANDIDATE"
+  },
+  {
+    "name": "system_account_lifecycle",
+    "wallet": "So11111111111111111111111111111111111111112",
+    "transaction": {
+      "transaction": {
+        "message": {
+          "accountKeys": [
+            "So11111111111111111111111111111111111111112",
+            "11111111111111111111111111111111"
+          ],
+          "instructions": [
+            {
+              "program": "system",
+              "programId": "11111111111111111111111111111111",
+              "parsed": {
+                "type": "createAccount"
+              }
+            }
+          ]
+        }
+      },
+      "meta": {
+        "err": null,
+        "fee": 5000
+      }
+    },
+    "balance_changes": [],
+    "expected_type": "OTHER",
+    "expected_signal": "NOT_COPYABLE"
+  },
+  {
+    "name": "unknown_program_transfer_label",
+    "wallet": "So11111111111111111111111111111111111111112",
+    "transaction": {
+      "transaction": {
+        "message": {
+          "accountKeys": [
+            "So11111111111111111111111111111111111111112",
+            "UNKNOWN_PROGRAM"
+          ],
+          "instructions": [
+            {
+              "program": "unknown",
+              "programId": "UNKNOWN_PROGRAM",
+              "parsed": {
+                "type": "transfer"
+              }
+            }
+          ]
+        }
+      },
+      "meta": {
+        "err": null,
+        "fee": 5000
+      }
+    },
+    "balance_changes": [],
+    "expected_type": "UNKNOWN",
+    "expected_signal": "NOT_COPYABLE"
+  }
+]

@@ -386,19 +386,12 @@ def analyze_native_sol_balance_changes(transaction):
 
         return None
 
-    # Preserve positions: account indexes must align with pre/post balances.
-    account_keys = [normalize_key(item) for item in raw_keys]
-
-    # For versioned transactions, loaded addresses follow static keys:
-    # writable addresses first, then read-only addresses.
-    loaded_addresses = meta.get("loadedAddresses")
-
-    if isinstance(loaded_addresses, Mapping):
-        for group in ("writable", "readonly"):
-            values = loaded_addresses.get(group, [])
-
-            if isinstance(values, list):
-                account_keys.extend(normalize_key(item) for item in values)
+    # Preserve positions and share versioned key de-duplication with the
+    # instruction parser. Parsed RPC responses may already expand lookup keys.
+    account_keys = [
+        normalize_key(item)
+        for item in _instruction_account_keys(transaction, message)
+    ]
 
     fee = meta.get("fee")
     valid_fee = (

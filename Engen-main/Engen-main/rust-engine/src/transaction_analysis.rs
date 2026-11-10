@@ -624,6 +624,7 @@ pub fn classify_transaction(
     let mut instructions = Vec::new();
     let mut direct_transfer_instruction = false;
     let mut recognized_non_transfer_instruction = false;
+    let mut recognized_other_instruction = false;
     let fee = meta.and_then(|value| value.get("fee")).cloned().unwrap_or(Value::Null);
     if let Some(message) = transaction.get("transaction").and_then(|value| value.get("message")) {
         if let Some(outer) = message.get("instructions").and_then(Value::as_array) {
@@ -641,6 +642,16 @@ pub fn classify_transaction(
                     direct_transfer_instruction = true;
                 } else if !parsed_name.is_empty() {
                     recognized_non_transfer_instruction = true;
+                    if matches!(
+                        parsed_name.as_str(),
+                        "createaccount" | "create_account" | "initializeaccount" |
+                        "initialize_account" | "closeaccount" | "close_account" |
+                        "syncnative" | "sync_native" | "approve" | "revoke" |
+                        "setauthority" | "set_authority" | "mintto" | "mint_to" |
+                        "burn" | "burnchecked" | "burn_checked"
+                    ) {
+                        recognized_other_instruction = true;
+                    }
                 }
                 instructions.push(json!({
                     "index": index,
@@ -879,6 +890,8 @@ pub fn classify_transaction(
         "SELL"
     } else if direct_transfer_instruction && !recognized_non_transfer_instruction {
         "TRANSFER"
+    } else if recognized_other_instruction {
+        "OTHER"
     } else {
         "UNKNOWN"
     };
@@ -979,6 +992,20 @@ mod tests {
         assert_eq!(result["transaction_type"],"TRANSFER");
         assert_eq!(result["trade_signal"],"NOT_COPYABLE");
         assert_eq!(result["classification"],"UNKNOWN");
+    }
+
+    #[test]
+    fn recognized_account_lifecycle_instruction_is_other_and_not_copyable() {
+        let transaction = json!({
+            "transaction":{"message":{"accountKeys":[WALLET],"instructions":[{
+                "program":"system",
+                "parsed":{"type":"createAccount"}
+            }]}},
+            "meta":{"err":null,"fee":5000}
+        });
+        let result = classify_transaction(&transaction,WALLET,None);
+        assert_eq!(result["transaction_type"],"OTHER");
+        assert_eq!(result["trade_signal"],"NOT_COPYABLE");
     }
 
     #[test]

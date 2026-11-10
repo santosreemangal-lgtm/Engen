@@ -122,16 +122,8 @@ fn instruction_account_keys(transaction: &Value) -> Vec<Value> {
 }
 
 fn is_supported_transfer_program(instruction: &Value, account_keys: &[Value]) -> bool {
-    let program_name = instruction
-        .get("program")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
     let program_id = resolve_program_id(instruction, account_keys).unwrap_or_default();
     matches!(
-        program_name.as_str(),
-        "system" | "spl-token" | "spl-token-2022"
-    ) || matches!(
         program_id.as_str(),
         SYSTEM_PROGRAM_ID | SPL_TOKEN_PROGRAM_ID | TOKEN_2022_PROGRAM_ID
     )

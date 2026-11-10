@@ -142,12 +142,12 @@ impl SignatureStore {
             ",
         )?;
 
-        let mut transaction_record_columns =
+        let mut transaction_record_statement =
             transaction.prepare("PRAGMA table_info(transaction_records)")?;
-        let transaction_record_columns = transaction_record_columns
+        let transaction_record_columns = transaction_record_statement
             .query_map([], |row| row.get::<_, String>(1))?
             .collect::<Result<std::collections::HashSet<_>, _>>()?;
-        drop(transaction_record_columns);
+        drop(transaction_record_statement);
 
         for (column, definition) in [
             ("parsed_evidence_json", "TEXT"),

@@ -53,6 +53,8 @@ pub enum SolanaRpcError {
     InvalidResponse,
     #[error("Public Solana RPC response exceeded the configured size limit.")]
     ResponseTooLarge,
+    #[error("Solana RPC provider does not support this transaction version.")]
+    UnsupportedTransactionVersion,
     #[error("Solana RPC provider returned an error (code {0:?}).")]
     Provider(Option<i64>),
     #[error("The supplied value is invalid: {0}")]
@@ -402,6 +404,17 @@ fn validate_response(value: Value, expected_id: u64) -> Result<Value, SolanaRpcE
             return Err(SolanaRpcError::InvalidResponse);
         };
         let code = error_object.get("code").and_then(Value::as_i64);
+        let message = error_object
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if code == Some(-32015)
+            || (message.contains("transaction version")
+                && (message.contains("not supported") || message.contains("unsupported")))
+        {
+            return Err(SolanaRpcError::UnsupportedTransactionVersion);
+        }
         return Err(SolanaRpcError::Provider(code));
     }
 
@@ -523,6 +536,16 @@ mod tests {
         assert!(!provider_error_is_retryable(&json!({
             "error":{"code":-32015,"message":"Transaction version not supported"}
         })));
+        assert!(matches!(
+            validate_response(
+                json!({"jsonrpc":"2.0","id":5,"error":{
+                    "code":-32015,
+                    "message":"Transaction version (1) is not supported"
+                }}),
+                5
+            ),
+            Err(SolanaRpcError::UnsupportedTransactionVersion)
+        ));
         assert!(!provider_error_is_retryable(&json!({"result":null})));
     }
 

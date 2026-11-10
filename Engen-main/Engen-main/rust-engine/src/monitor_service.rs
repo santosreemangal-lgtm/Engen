@@ -384,6 +384,51 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_start_requests_share_one_worker_and_never_overlap_scans() {
+        use std::sync::Barrier;
+
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum_active = Arc::new(AtomicUsize::new(0));
+        let scan_active = Arc::clone(&active);
+        let scan_maximum = Arc::clone(&maximum_active);
+        let service = Arc::new(
+            MonitorService::new(30, move |_wallet| {
+                let current = scan_active.fetch_add(1, Ordering::SeqCst) + 1;
+                scan_maximum.fetch_max(current, Ordering::SeqCst);
+                thread::sleep(Duration::from_millis(25));
+                scan_active.fetch_sub(1, Ordering::SeqCst);
+                Ok(Vec::new())
+            })
+            .unwrap(),
+        );
+
+        let barrier = Arc::new(Barrier::new(5));
+        let mut starters = Vec::new();
+        for _ in 0..4 {
+            let service = Arc::clone(&service);
+            let barrier = Arc::clone(&barrier);
+            starters.push(thread::spawn(move || {
+                barrier.wait();
+                service.start(&[WALLET.to_string()]).unwrap()
+            }));
+        }
+        barrier.wait();
+
+        for starter in starters {
+            assert_eq!(starter.join().unwrap()["enabled"], true);
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while active.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!(maximum_active.load(Ordering::SeqCst) >= 1);
+        let stopped = service.stop_and_wait(Duration::from_secs(2)).unwrap();
+        assert_eq!(stopped["worker_stopped"], true);
+        assert_eq!(maximum_active.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn updating_wallets_does_not_create_overlapping_workers() {
         let scans = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&scans);

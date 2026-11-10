@@ -309,11 +309,7 @@ impl Drop for MonitorService {
         }
         if let Ok(worker) = self.worker.get_mut() {
             if let Some(handle) = worker.take() {
-                if !handle.is_finished() {
-                    let _ = handle.join();
-                } else {
-                    let _ = handle.join();
-                }
+                let _ = handle.join();
             }
         }
     }

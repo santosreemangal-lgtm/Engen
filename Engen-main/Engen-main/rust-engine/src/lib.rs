@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod latency;
+pub mod market_data;
 pub mod pnl;
 pub mod paper_simulator;
 pub mod profile_store;

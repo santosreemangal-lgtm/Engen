@@ -8,7 +8,7 @@ use engen_engine::solana_public::{RpcConfig, SolanaRpcClient};
 use engen_engine::transaction_monitor::monitor_wallet;
 use serde_json::{json, Value};
 
-const WALLET: &str = "11111111111111111111111111111111";
+const WALLET: &str = "So11111111111111111111111111111111111111112";
 const OTHER: &str = "11111111111111111111111111111112";
 const OLD_SIGNATURE: &str =
     "1111111111111111111111111111111111111111111111111111111111111111";
@@ -30,7 +30,7 @@ fn spawn_mock_rpc(responses: Vec<Value>) -> (String, thread::JoinHandle<()>) {
             let _ = stream.read(&mut request);
             let payload = serde_json::to_vec(&body).expect("serialize mock JSON-RPC result");
             let headers = format!(
-                "HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n",
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 payload.len()
             );
             stream.write_all(headers.as_bytes()).expect("write mock headers");
@@ -54,7 +54,8 @@ fn wallet_discovery_to_transfer_classification_and_restart_evidence_is_offline()
                 "header": {"numRequiredSignatures": 1},
                 "accountKeys": [
                     {"pubkey": WALLET, "signer": true, "writable": true},
-                    {"pubkey": OTHER, "signer": false, "writable": true}
+                    {"pubkey": OTHER, "signer": false, "writable": true},
+                    {"pubkey": SYSTEM_PROGRAM, "signer": false, "writable": false}
                 ],
                 "instructions": [{
                     "program": "system",
@@ -73,8 +74,8 @@ fn wallet_discovery_to_transfer_classification_and_restart_evidence_is_offline()
         "meta": {
             "err": null,
             "fee": 5000,
-            "preBalances": [10000000, 0],
-            "postBalances": [8995000, 1000000],
+            "preBalances": [10000000, 0, 1],
+            "postBalances": [8995000, 1000000, 1],
             "preTokenBalances": [],
             "postTokenBalances": [],
             "innerInstructions": [{

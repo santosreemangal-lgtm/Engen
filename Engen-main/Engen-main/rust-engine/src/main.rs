@@ -12,9 +12,7 @@ use std::time::Duration;
 use engen_engine::config::Config;
 use engen_engine::signature_store::SignatureStore;
 use engen_engine::solana_public::{RpcConfig, SolanaRpcClient};
-use engen_engine::solana_validation::{
-    is_valid_solana_address, is_valid_transaction_signature,
-};
+use engen_engine::solana_validation::{is_valid_solana_address, is_valid_transaction_signature};
 use engen_engine::transaction_analysis::classify_transaction;
 use engen_engine::transaction_monitor::monitor_wallet;
 use serde_json::{json, Value};
@@ -77,7 +75,9 @@ fn parse_scan_options(args: &[String]) -> Result<ScanOptions, Box<dyn Error>> {
             "--signature-db" => {
                 let path = PathBuf::from(value);
                 if path.as_os_str().is_empty() {
-                    return Err(invalid_input("The explicit signature database path is required."));
+                    return Err(invalid_input(
+                        "The explicit signature database path is required.",
+                    ));
                 }
                 signature_db = Some(path);
             }
@@ -100,8 +100,9 @@ fn parse_scan_options(args: &[String]) -> Result<ScanOptions, Box<dyn Error>> {
     if !is_valid_solana_address(&wallet) {
         return Err(invalid_input("Invalid Solana public wallet address."));
     }
-    let signature_db =
-        signature_db.ok_or_else(|| invalid_input("--signature-db is required; no default data path is used."))?;
+    let signature_db = signature_db.ok_or_else(|| {
+        invalid_input("--signature-db is required; no default data path is used.")
+    })?;
 
     Ok(ScanOptions {
         wallet,
@@ -126,14 +127,7 @@ fn run_scan(options: ScanOptions) -> Result<(), Box<dyn Error>> {
     })?;
 
     let store = SignatureStore::open(&options.signature_db)?;
-    let results = monitor_wallet(
-        &client,
-        &store,
-        &options.wallet,
-        options.limit,
-        false,
-        None,
-    )?;
+    let results = monitor_wallet(&client, &store, &options.wallet, options.limit, false, None)?;
 
     let transaction_count = results.len();
     let output = json!({
@@ -201,7 +195,9 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         }
         "validate-wallet" => {
             if args.len() != 2 {
-                return Err(invalid_input("validate-wallet requires one public address."));
+                return Err(invalid_input(
+                    "validate-wallet requires one public address.",
+                ));
             }
             if !is_valid_solana_address(&args[1]) {
                 return Err(invalid_input("Invalid Solana public wallet address."));
@@ -211,12 +207,17 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         }
         "validate-signature" => {
             if args.len() != 2 {
-                return Err(invalid_input("validate-signature requires one transaction signature."));
+                return Err(invalid_input(
+                    "validate-signature requires one transaction signature.",
+                ));
             }
             if !is_valid_transaction_signature(&args[1]) {
                 return Err(invalid_input("Invalid Solana transaction signature."));
             }
-            println!("{}", json!({"valid":true,"kind":"solana_transaction_signature"}));
+            println!(
+                "{}",
+                json!({"valid":true,"kind":"solana_transaction_signature"})
+            );
             Ok(())
         }
         "classify-transaction" => run_classification(&args[1..]),

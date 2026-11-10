@@ -35,13 +35,13 @@ fn help_text() -> &'static str {
     "Engen Rust CLI — read-only / paper-only\n\
 \n\
 USAGE:\n\
-  engen --help\n\
-  engen version\n\
-  engen check-config\n\
-  engen validate-wallet <PUBLIC_ADDRESS>\n\
-  engen validate-signature <TRANSACTION_SIGNATURE>\n\
-  engen classify-transaction <PUBLIC_WALLET> <TRANSACTION_JSON_FILE>\n\
-  engen scan-wallet-once --wallet <PUBLIC_ADDRESS> --signature-db <EXPLICIT_DB_PATH> [--limit <1..1000>]\n\
+  engen-engine --help\n\
+  engen-engine version\n\
+  engen-engine check-config\n\
+  engen-engine validate-wallet <PUBLIC_ADDRESS>\n\
+  engen-engine validate-signature <TRANSACTION_SIGNATURE>\n\
+  engen-engine classify-transaction <PUBLIC_WALLET> <TRANSACTION_JSON_FILE>\n\
+  engen-engine scan-wallet-once --wallet <PUBLIC_ADDRESS> --signature-db <EXPLICIT_DB_PATH> [--limit <1..1000>]\n\
 \n\
 ENVIRONMENT:\n\
   ENGEN_RPC_URL                       Optional read-only HTTPS Solana RPC endpoint\n\
@@ -283,7 +283,8 @@ mod tests {
 
     #[test]
     fn config_status_does_not_expose_rpc_endpoint_or_enable_live_capabilities() {
-        let config = Config::from_map(&Default::default()).unwrap();
+        let environment = std::collections::BTreeMap::<String, String>::new();
+        let config = Config::from_map(&environment).unwrap();
         assert_eq!(config.engine_mode, "read_only");
         assert!(!config.live_trading_enabled);
     }

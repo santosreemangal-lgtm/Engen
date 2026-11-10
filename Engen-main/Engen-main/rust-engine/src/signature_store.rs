@@ -32,6 +32,8 @@ pub struct FailureState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TransactionRecord {
     pub raw_transaction: Option<Value>,
+    pub parsed_evidence: Option<Value>,
+    pub classification: Option<Value>,
     pub status: String,
     pub updated_at: String,
 }
@@ -131,12 +133,32 @@ impl SignatureStore {
                 wallet_address TEXT NOT NULL,
                 signature TEXT NOT NULL,
                 raw_transaction_json TEXT,
+                parsed_evidence_json TEXT,
+                classification_json TEXT,
                 processing_status TEXT NOT NULL,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (wallet_address, signature)
             );
             ",
         )?;
+
+        let mut transaction_record_columns = transaction
+            .prepare("PRAGMA table_info(transaction_records)")?;
+        let transaction_record_columns = transaction_record_columns
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<std::collections::HashSet<_>, _>>()?;
+        drop(transaction_record_columns);
+
+        for (column, definition) in [
+            ("parsed_evidence_json", "TEXT"),
+            ("classification_json", "TEXT"),
+        ] {
+            if !transaction_record_columns.contains(column) {
+                transaction.execute_batch(&format!(
+                    "ALTER TABLE transaction_records ADD COLUMN {column} {definition};"
+                ))?;
+            }
+        }
 
         let mut statement = transaction.prepare("PRAGMA table_info(seen_signatures)")?;
         let columns = statement
@@ -428,16 +450,69 @@ impl SignatureStore {
                 "Invalid transaction processing status.".to_string(),
             ));
         }
+        self.save_transaction_evidence(
+            wallet,
+            signature,
+            raw_transaction,
+            None,
+            None,
+            processing_status,
+        )
+    }
+
+    /// Persist raw payload and normalized parsed/classification evidence atomically.
+    pub fn save_transaction_evidence(
+        &self,
+        wallet: &str,
+        signature: &str,
+        raw_transaction: Option<&Value>,
+        parsed_evidence: Option<&Value>,
+        classification: Option<&Value>,
+        processing_status: &str,
+    ) -> Result<(), SignatureStoreError> {
+        Self::validate_wallet(wallet)?;
+        Self::validate_signature(signature)?;
+        const ALLOWED: &[&str] = &[
+            "observed",
+            "incomplete",
+            "failed",
+            "processed",
+            "needs_review",
+            "stale",
+        ];
+        if !ALLOWED.contains(&processing_status) {
+            return Err(SignatureStoreError::InvalidInput(
+                "Invalid transaction processing status.".to_string(),
+            ));
+        }
         let raw_json = raw_transaction.map(serde_json::to_string).transpose()?;
+        let parsed_json = parsed_evidence.map(serde_json::to_string).transpose()?;
+        let classification_json = classification.map(serde_json::to_string).transpose()?;
 
         let connection = self.connect()?;
         connection.execute(
-            "INSERT INTO transaction_records(wallet_address,signature,raw_transaction_json,processing_status)
-             VALUES(?1,?2,?3,?4)
+            "INSERT INTO transaction_records(
+                wallet_address,signature,raw_transaction_json,parsed_evidence_json,
+                classification_json,processing_status
+             ) VALUES(?1,?2,?3,?4,?5,?6)
              ON CONFLICT(wallet_address,signature) DO UPDATE SET
                raw_transaction_json=COALESCE(excluded.raw_transaction_json,transaction_records.raw_transaction_json),
-               processing_status=excluded.processing_status,updated_at=CURRENT_TIMESTAMP",
-            params![wallet, signature, raw_json, processing_status],
+               parsed_evidence_json=COALESCE(excluded.parsed_evidence_json,transaction_records.parsed_evidence_json),
+               classification_json=COALESCE(excluded.classification_json,transaction_records.classification_json),
+               processing_status=CASE
+                 WHEN transaction_records.processing_status IN ('stale','failed','incomplete','needs_review')
+                 THEN transaction_records.processing_status
+                 ELSE excluded.processing_status
+               END,
+               updated_at=CURRENT_TIMESTAMP",
+            params![
+                wallet,
+                signature,
+                raw_json,
+                parsed_json,
+                classification_json,
+                processing_status
+            ],
         )?;
         Ok(())
     }
@@ -451,19 +526,25 @@ impl SignatureStore {
         Self::validate_signature(signature)?;
         let connection = self.connect()?;
         let row = connection.query_row(
-            "SELECT raw_transaction_json,processing_status,updated_at FROM transaction_records WHERE wallet_address=?1 AND signature=?2",
+            "SELECT raw_transaction_json,parsed_evidence_json,classification_json,processing_status,updated_at FROM transaction_records WHERE wallet_address=?1 AND signature=?2",
             params![wallet, signature],
             |row| {
                 Ok((
                     row.get::<_, Option<String>>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
                 ))
             },
         ).optional()?;
-        row.map(|(raw, status, updated)| {
+        row.map(|(raw, parsed, classification, status, updated)| {
             Ok(TransactionRecord {
                 raw_transaction: raw.map(|value| serde_json::from_str(&value)).transpose()?,
+                parsed_evidence: parsed.map(|value| serde_json::from_str(&value)).transpose()?,
+                classification: classification
+                    .map(|value| serde_json::from_str(&value))
+                    .transpose()?,
                 status,
                 updated_at: updated,
             })

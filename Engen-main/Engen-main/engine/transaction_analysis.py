@@ -710,6 +710,8 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
     if isinstance(meta, Mapping) and meta.get("err") is not None:
         return {
             "classification": "FAILED_TRANSACTION",
+            "transaction_type": "FAILED",
+            "trade_signal": "NOT_COPYABLE",
             "confidence": "high",
             "reason": "The chain metadata reports a failed transaction; no swap candidate is emitted.",
             "asset_mints": [],
@@ -729,6 +731,9 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
 
     signal = classify_token_balance_changes(base_changes, wallet_address)
     instructions = []
+    direct_transfer_instruction = False
+    recognized_non_transfer_instruction = False
+    recognized_other_instruction = False
     fee = None
     if isinstance(meta, Mapping):
         fee = meta.get("fee")
@@ -738,15 +743,51 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
         if isinstance(message, Mapping):
             outer = message.get("instructions", [])
             if isinstance(outer, list):
+                account_keys = message.get("accountKeys", [])
+                if not isinstance(account_keys, list):
+                    account_keys = []
                 for index, instruction in enumerate(outer):
                     if not isinstance(instruction, Mapping):
                         continue
                     parsed = instruction.get("parsed")
+                    parsed_type = parsed.get("type") if isinstance(parsed, Mapping) else None
+                    parsed_name = parsed_type.lower() if isinstance(parsed_type, str) else ""
+                    program_name = instruction.get("program")
+                    program_name = program_name.lower() if isinstance(program_name, str) else ""
+                    program_id = instruction.get("programId")
+                    if not isinstance(program_id, str):
+                        program_index = instruction.get("programIdIndex")
+                        if isinstance(program_index, int) and not isinstance(program_index, bool) and 0 <= program_index < len(account_keys):
+                            key = account_keys[program_index]
+                            program_id = key if isinstance(key, str) else (
+                                key.get("pubkey") if isinstance(key, Mapping) else None
+                            )
+                    is_transfer_type = parsed_name in ("transfer", "transferchecked", "transfer_checked")
+                    is_supported_transfer_program = (
+                        program_name in ("system", "spl-token", "spl-token-2022")
+                        or program_id in (
+                            "11111111111111111111111111111111",
+                            "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                            "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+                        )
+                    )
+                    if is_transfer_type and is_supported_transfer_program:
+                        direct_transfer_instruction = True
+                    elif parsed_name and not is_transfer_type:
+                        recognized_non_transfer_instruction = True
+                        if parsed_name in (
+                            "createaccount", "create_account", "initializeaccount",
+                            "initialize_account", "closeaccount", "close_account",
+                            "syncnative", "sync_native", "approve", "revoke",
+                            "setauthority", "set_authority", "mintto", "mint_to",
+                            "burn", "burnchecked", "burn_checked",
+                        ):
+                            recognized_other_instruction = True
                     instructions.append({
                         "index": index,
                         "program": instruction.get("program"),
                         "program_id": instruction.get("programId"),
-                        "parsed_type": parsed.get("type") if isinstance(parsed, Mapping) else None,
+                        "parsed_type": parsed_type,
                         "source": "message",
                     })
         if isinstance(meta, Mapping):
@@ -932,7 +973,20 @@ def classify_transaction(transaction, wallet_address, balance_changes=None):
             }
             candidate = False
 
+    classification = signal.get("classification", "UNKNOWN")
+    if candidate and classification == "BUY_CANDIDATE":
+        transaction_type = "BUY"
+    elif candidate and classification == "SELL_CANDIDATE":
+        transaction_type = "SELL"
+    elif direct_transfer_instruction and not recognized_non_transfer_instruction:
+        transaction_type = "TRANSFER"
+    elif recognized_other_instruction:
+        transaction_type = "OTHER"
+    else:
+        transaction_type = "UNKNOWN"
     signal.update({
+        "transaction_type": transaction_type,
+        "trade_signal": classification if candidate else "NOT_COPYABLE",
         "confidence": "medium" if candidate else "low",
         "evidence": {
             "wallet_address": wallet_address,

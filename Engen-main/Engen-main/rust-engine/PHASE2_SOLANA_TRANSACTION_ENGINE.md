@@ -135,3 +135,32 @@ SignatureStore (SQLite, disposable fixtures in tests)
 - Full Phase 2 acceptance: **NOT PASSED**
 
 Do not mark Phase 2 complete until all mandatory acceptance tests pass on the latest PR #48 head.
+
+
+## 9. 2026-11-10 implementation update — latest work, not yet accepted
+
+The following additional changes have been committed on the canonical branch after the earlier gap table above. Their implementation exists in the branch, but the full new CI and acceptance matrix must pass before Phase 2 can be accepted.
+
+| Gap previously recorded | New implementation | Verification still required |
+|---|---|---|
+| Unbounded RPC response bodies | Read-only response bodies are capped at 8 MiB, including unknown/chunked content-length streams. Oversized bodies return a typed `ResponseTooLarge` error. | Run bounded-body tests and verify monitor persistence/review behavior. |
+| Provider-level rate limits | JSON-RPC provider errors with rate-limit codes/messages are retried within bounded exponential backoff; Retry-After continues to be honoured for HTTP responses. | Confirm mock-server retry and terminal-error cases in latest CI. |
+| Unsupported transaction versions | Provider unsupported-version errors are typed and moved directly to `needs_review`, rather than repeated blindly on each scan. The client explicitly requests support through transaction version 0. | Test unsupported-version mapping against multiple provider error envelopes. Version 1+ decoding is not claimed. |
+| Transfer classification | Explicit `transaction_type` is now separate from `trade_signal`: BUY, SELL, TRANSFER, FAILED, OTHER, UNKNOWN. Direct transfer type requires a trusted System/SPL Token/SPL Token-2022 program ID; transfer and failed/other/unknown types stay `NOT_COPYABLE`. | Confirm differential golden corpus and E2E test. |
+| Token-2022 | Direct Token-2022 `transferChecked` evidence is covered as a non-copyable TRANSFER. | Broader Token-2022 account/balance extension fixtures remain required. |
+| Versioned lookup-table instructions | Outer and inner compiled-instruction program indices are resolved using static plus loaded writable/readonly addresses, without duplicating keys already expanded by parsed RPC responses. | Confirm the shared v0 lookup-table fixture in both languages. This is not support for future message versions beyond 0. |
+| Native SOL alignment | Python now follows Rust's strict key/pre/post balance length and value checks; malformed or partial account-index arrays yield no inferred deltas. | Run Python reference tests and Rust tests. |
+| Duplicate work | Monitor skips duplicate signatures in the same in-memory batch and terminal persisted statuses; SQLite tests cover repeated batch inserts, concurrent duplicate inserts, cross-wallet independence, and restart evidence. | The current worker model still needs a full race/fault test for concurrent monitor execution, not just storage insert contention. |
+| Evidence persistence | A disposable-fixture offline end-to-end test walks baseline → signature discovery → transaction RPC mock → parser/classifier → SQLite raw outer/inner evidence → close/reopen → evidence recovery. | Run the new Rust integration test. Additional retry/failure mutation tests remain. |
+| Python/Rust differential | A common JSON golden corpus is now consumed by Rust integration tests and Python behavioral-reference tests for lookup-table transfer, Token-2022 transfer, failed transaction, explicit-swap BUY, account lifecycle OTHER and unknown-program TRANSFER spoofing. | Latest CI must prove both runners execute and pass against the same file. Expand corpus across native SOL/SPL edge cases. |
+| CI correctness | CI now uses non-mutating `cargo fmt --all -- --check`, Rust all-target tests, Python Phase 2 reference tests, and Clippy. Python source/test changes are in the workflow path filter. | Initial strict-format run #169 failed because numerous existing Rust files are not rustfmt-clean; its test steps were skipped. The exact formatted workspace output is being generated as a temporary artifact so formatting can be normalized in a follow-up commit; a green check is not yet available. |
+
+### New offline test assets
+
+- `rust-engine/tests/transaction_pipeline.rs`: local loopback mock-RPC end-to-end and shared golden-corpus Rust tests.
+- `rust-engine/tests/fixtures/phase2_transactions.json`: one source of truth used by both Rust and Python tests.
+- `engine/engine/engine/tests/test_transaction_analysis.py`: Python shared-corpus, versioned lookup-table and strict balance-alignment regressions.
+
+### Updated Phase 2 exit status
+
+**IN PROGRESS — NOT ACCEPTED.** The new tests and implementations do not yet have a green latest-head CI result. A formatter-only failure is not a test failure, but it blocks acceptance because downstream jobs were skipped. Do not mark any item accepted solely because the older Run #127 was green.

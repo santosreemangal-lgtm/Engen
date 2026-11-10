@@ -101,3 +101,15 @@ Rules: (1) domain modules do not depend on HTTP/runtime globals; (2) persistence
 
 ## 8. Phase 1 conclusion
 Canonical PR/branch: DECIDED — PR #48 only. Architecture: DECIDED — Rust production backend/runtime, existing browser UI retained. Current foundation CI: PASS. Rust modules present: 19. Production parity-complete modules proven by this audit: NONE. Production HTTP/API entrypoint: NOT IMPLEMENTED. Overall migration: IN PROGRESS; PR #48 remains Draft. No user database, Python runtime, running branch or deployment was modified.
+
+## 9. Owner's language and replacement requirement (authoritative)
+
+The target is a **Rust-first, effectively all-Rust production system**: aim for approximately 99% of application/backend/runtime functionality to be implemented in Rust. This is a complete replacement mandate, not a request to keep Python as a permanent parallel backend or to stop after the current 19 Rust modules.
+
+- Replace every production Python backend, engine, monitoring, persistence, paper-execution, API/server, runtime/bootstrap, operational CLI and service component with a functionally equivalent Rust implementation.
+- Python is migration/reference code only during parity development. It must not remain a required production runtime dependency after accepted cutover. Do not delete the Python implementation until Rust parity, regression, operational and rollback gates have passed.
+- Use another language only where it is the technically appropriate platform-native choice for a narrow peripheral layer. In particular, retain the existing browser UI and its JavaScript/HTML/CSS where appropriate; do not rewrite browser code in Rust merely to satisfy a percentage. Build scripts, workflow YAML, SQL/schema definitions and deployment configuration are likewise not application-runtime language choices.
+- Rust owns all core business logic, transaction ingestion/analysis, monitoring orchestration, storage access, paper-copy decisions and accounting, API/backend services, operational commands, health/metrics and production process lifecycle.
+- No Python service, hidden Python fallback, or split-brain dual runtime may be required for production. Any temporary compatibility bridge must be explicitly documented, time-bounded, tested and removed before final acceptance.
+- “99% Rust” is an architectural target, not a substitute for a component-by-component inventory. Track every remaining non-Rust production source file with its purpose, reason for retention, owner and acceptance status. Final acceptance requires that all backend/runtime components are Rust and every non-Rust exception is narrow and justified.
+- Preserve paper-only/read-only safety boundaries: no live trading, signing, private-key/seed handling or transaction broadcasting may be introduced by this migration.

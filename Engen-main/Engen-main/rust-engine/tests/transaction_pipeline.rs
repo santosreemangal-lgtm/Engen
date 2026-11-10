@@ -186,6 +186,18 @@ fn wallet_discovery_to_transfer_classification_and_restart_evidence_is_offline()
             ["programId"],
         TOKEN_2022_PROGRAM
     );
+    let parsed = record
+        .parsed_evidence
+        .as_ref()
+        .expect("normalized parsed evidence is persisted");
+    assert_eq!(parsed["instructions"][0]["source"], "message");
+    assert_eq!(parsed["instructions"][1]["source"], "inner");
+    let classification = record
+        .classification
+        .as_ref()
+        .expect("classification evidence is persisted");
+    assert_eq!(classification["transaction_type"], "TRANSFER");
+    assert_eq!(classification["trade_signal"], "NOT_COPYABLE");
     assert_eq!(record.status, "processed");
 
     drop(store);
@@ -195,6 +207,16 @@ fn wallet_discovery_to_transfer_classification_and_restart_evidence_is_offline()
         .expect("read evidence after restart")
         .expect("evidence must survive restart");
     assert_eq!(recovered.raw_transaction, Some(transaction));
+    let parsed = recovered
+        .parsed_evidence
+        .expect("normalized parsed evidence survives restart");
+    assert_eq!(parsed["instructions"][0]["source"], "message");
+    assert_eq!(parsed["instructions"][1]["source"], "inner");
+    let classification = recovered
+        .classification
+        .expect("classification evidence survives restart");
+    assert_eq!(classification["transaction_type"], "TRANSFER");
+    assert_eq!(classification["trade_signal"], "NOT_COPYABLE");
     assert_eq!(
         reopened
             .get_status(WALLET, NEW_SIGNATURE)

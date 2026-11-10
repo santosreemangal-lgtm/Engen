@@ -287,6 +287,39 @@ impl SignatureStore {
         Ok(inserted)
     }
 
+    /// Retain a stale source signature as an auditable, non-retryable paper-copy skip.
+    pub fn mark_stale(
+        &self,
+        wallet: &str,
+        signature: &str,
+    ) -> Result<bool, SignatureStoreError> {
+        Self::validate_wallet(wallet)?;
+        Self::validate_signature(signature)?;
+        let mut connection = self.connect()?;
+        let transaction = Self::transaction(&mut connection)?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO seen_signatures(wallet_address,signature,status) VALUES(?1,?2,'stale')",
+            params![wallet, signature],
+        )?;
+        let changed = transaction.execute(
+            "UPDATE seen_signatures
+             SET status='stale',last_checked_at=CURRENT_TIMESTAMP,
+                 error_stage='freshness',error_code='source_stale',
+                 error_message='Source transaction is outside the 60-second paper-copy freshness window.'
+             WHERE wallet_address=?1 AND signature=?2",
+            params![wallet, signature],
+        )?;
+        transaction.execute(
+            "INSERT INTO transaction_records(wallet_address,signature,raw_transaction_json,processing_status,updated_at)
+             VALUES(?1,?2,NULL,'stale',CURRENT_TIMESTAMP)
+             ON CONFLICT(wallet_address,signature) DO UPDATE SET
+                 processing_status='stale',updated_at=CURRENT_TIMESTAMP",
+            params![wallet, signature],
+        )?;
+        transaction.commit()?;
+        Ok(changed == 1)
+    }
+
     pub fn mark_processed(
         &self,
         wallet: &str,
@@ -297,11 +330,11 @@ impl SignatureStore {
         let mut connection = self.connect()?;
         let transaction = Self::transaction(&mut connection)?;
         let changed = transaction.execute(
-            "UPDATE seen_signatures SET status='processed', last_checked_at=CURRENT_TIMESTAMP, error_stage=NULL, error_code=NULL, error_message=NULL WHERE wallet_address=?1 AND signature=?2",
+            "UPDATE seen_signatures SET status='processed', last_checked_at=CURRENT_TIMESTAMP, error_stage=NULL, error_code=NULL, error_message=NULL WHERE wallet_address=?1 AND signature=?2 AND status!='stale'",
             params![wallet, signature],
         )?;
         transaction.execute(
-            "UPDATE transaction_records SET processing_status='processed', updated_at=CURRENT_TIMESTAMP WHERE wallet_address=?1 AND signature=?2",
+            "UPDATE transaction_records SET processing_status='processed', updated_at=CURRENT_TIMESTAMP WHERE wallet_address=?1 AND signature=?2 AND processing_status!='stale'",
             params![wallet, signature],
         )?;
         let slot: Option<i64> = transaction

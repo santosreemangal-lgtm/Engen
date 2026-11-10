@@ -617,4 +617,91 @@ mod tests {
         );
         server.join().unwrap();
     }
+
+    #[test]
+    fn malformed_json_and_wrong_jsonrpc_version_are_rejected() {
+        use std::io::Cursor;
+
+        assert!(matches!(
+            read_limited_body(Cursor::new(b"{not-json".to_vec()), None),
+            Err(SolanaRpcError::InvalidResponse)
+        ));
+        assert!(matches!(
+            validate_response(json!({"jsonrpc":"1.0","id":7,"result":42}), 7),
+            Err(SolanaRpcError::InvalidResponse)
+        ));
+        assert!(matches!(
+            validate_response(json!({"jsonrpc":"2.0","id":7}), 7),
+            Err(SolanaRpcError::InvalidResponse)
+        ));
+    }
+
+    #[test]
+    fn retries_server_error_using_offline_mock_server() {
+        use std::io::Write;
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            for (status, body) in [
+                (503, json!({"message":"temporary provider outage"})),
+                (200, json!({"jsonrpc":"2.0","id":7,"result":43})),
+            ] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = [0_u8; 4096];
+                let _ = stream.read(&mut request);
+                let payload = serde_json::to_vec(&body).unwrap();
+                let reason = if status == 503 { "Service Unavailable" } else { "OK" };
+                let header = format!(
+                    "HTTP/1.1 {status} {reason}\\r\\nContent-Type: application/json\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n",
+                    payload.len()
+                );
+                stream.write_all(header.as_bytes()).unwrap();
+                stream.write_all(&payload).unwrap();
+                stream.flush().unwrap();
+            }
+        });
+
+        let client = SolanaRpcClient::new(RpcConfig {
+            endpoint: format!("http://{address}"),
+            timeout: Duration::from_secs(2),
+            retries: 1,
+            backoff: Duration::ZERO,
+            min_interval: Duration::ZERO,
+        })
+        .unwrap();
+        assert_eq!(
+            client.request(ReadOnlyMethod::GetSlot, json!([]), 7).unwrap(),
+            json!(43)
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn connection_failure_returns_typed_transport_error() {
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+
+        let client = SolanaRpcClient::new(RpcConfig {
+            endpoint: format!("http://{address}"),
+            timeout: Duration::from_secs(1),
+            retries: 0,
+            backoff: Duration::ZERO,
+            min_interval: Duration::ZERO,
+        })
+        .unwrap();
+        assert!(matches!(
+            client.request(ReadOnlyMethod::GetSlot, json!([]), 7),
+            Err(SolanaRpcError::Transport)
+        ));
+    }
+
+
 }

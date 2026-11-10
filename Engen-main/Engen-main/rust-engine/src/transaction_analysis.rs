@@ -380,20 +380,15 @@ pub fn analyze_native_sol_balance_changes(transaction: &Value) -> Vec<Value> {
     else {
         return Vec::new();
     };
-    let Some(raw_keys) = message.get("accountKeys").and_then(Value::as_array) else {
+    let Some(_) = message.get("accountKeys").and_then(Value::as_array) else {
         return Vec::new();
     };
-    let mut account_keys: Vec<Option<String>> = raw_keys.iter().map(normalize_pubkey).collect();
-    if let Some(loaded) = meta
-        .get("loadedAddresses")
-        .filter(|value| value.is_object())
-    {
-        for group in ["writable", "readonly"] {
-            if let Some(rows) = loaded.get(group).and_then(Value::as_array) {
-                account_keys.extend(rows.iter().map(normalize_pubkey));
-            }
-        }
-    }
+    // Use the same static + lookup-table resolver as instruction parsing so
+    // parsed RPC responses do not double-count already-expanded loaded keys.
+    let account_keys: Vec<Option<String>> = instruction_account_keys(transaction)
+        .iter()
+        .map(normalize_pubkey)
+        .collect();
     // Solana pre/post balance arrays are indexed against the complete account-key
     // list (static keys plus loaded addresses). Never silently truncate mismatched
     // arrays: doing so can attribute a partial transaction as a complete movement.

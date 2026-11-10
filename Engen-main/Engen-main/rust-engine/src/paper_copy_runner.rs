@@ -531,8 +531,28 @@ pub fn queue_paper_orders_at(
 pub fn execute_pending_paper_orders_with<F>(
     simulator: &mut PaperSimulator,
     wallet_address: Option<&str>,
+    price_provider: F,
+    latency_recorder: Option<&LatencyRecorder>,
+) -> Vec<Value>
+where
+    F: FnMut(&str) -> Option<MarketPrice>,
+{
+    execute_pending_paper_orders_with_at(
+        simulator,
+        wallet_address,
+        price_provider,
+        latency_recorder,
+        Utc::now().timestamp(),
+    )
+}
+
+/// Deterministic clock-injected execution entrypoint for source-age boundary tests.
+pub fn execute_pending_paper_orders_with_at<F>(
+    simulator: &mut PaperSimulator,
+    wallet_address: Option<&str>,
     mut price_provider: F,
     latency_recorder: Option<&LatencyRecorder>,
+    now_ts: i64,
 ) -> Vec<Value>
 where
     F: FnMut(&str) -> Option<MarketPrice>,
@@ -551,6 +571,21 @@ where
         }
         let started = Instant::now();
         let signal_id = Some(order.signal_id.as_str());
+        let source_block_time = details
+            .get("source_block_time")
+            .and_then(Value::as_i64);
+        if !source_block_time_ok(source_block_time, now_ts) {
+            let reason = "Source transaction became stale before paper-fill commit.";
+            let _ = simulator.cancel_order_with_reason(&order.order_id, reason);
+            outcomes.push(outcome(
+                Some(&order.order_id),
+                signal_id,
+                "SOURCE_STALE",
+                Some(reason),
+                started.elapsed().as_secs_f64() * 1_000.0,
+            ));
+            continue;
+        }
         if order.side == "SELL" {
             let fraction = details
                 .get("source_sell_fraction")
@@ -726,6 +761,24 @@ mod tests {
         )
     }
 
+    fn execute_pending_paper_orders_with<F>(
+        simulator: &mut PaperSimulator,
+        wallet_address: Option<&str>,
+        price_provider: F,
+        latency_recorder: Option<&LatencyRecorder>,
+    ) -> Vec<Value>
+    where
+        F: FnMut(&str) -> Option<MarketPrice>,
+    {
+        super::execute_pending_paper_orders_with_at(
+            simulator,
+            wallet_address,
+            price_provider,
+            latency_recorder,
+            1_760_000_001,
+        )
+    }
+
     fn simulator() -> PaperSimulator {
         let mut balances = BTreeMap::new();
         balances.insert("USD".to_string(), "100".to_string());
@@ -780,6 +833,33 @@ mod tests {
         .unwrap();
         assert!(queued.is_empty());
         assert!(simulator.orders().is_empty());
+    }
+
+    #[test]
+    fn source_age_is_rechecked_before_fill_commit_and_stale_order_is_retained_cancelled() {
+        let mut simulator = simulator();
+        let result = vec![buy_signal(&"4".repeat(64))];
+        let queued = queue_paper_orders(
+            WALLET,
+            &result,
+            &mut simulator,
+            AllowedSides::Both,
+            &CopySettings::default(),
+            None,
+        ).unwrap();
+        let order_id = queued[0]["order_id"].as_str().unwrap().to_string();
+        let outcomes = super::execute_pending_paper_orders_with_at(
+            &mut simulator,
+            Some(WALLET),
+            |_mint| panic!("stale source must be rejected before market-data lookup"),
+            None,
+            1_760_000_061,
+        );
+        assert_eq!(outcomes[0]["status"], "SOURCE_STALE");
+        let order = simulator.orders().get(&order_id).unwrap();
+        assert_eq!(order.status, "CANCELLED");
+        assert!(order.reason.as_deref().unwrap().contains("stale"));
+        assert_eq!(simulator.fills().len(), 0);
     }
 
     #[test]

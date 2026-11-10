@@ -586,7 +586,11 @@ mod tests {
                 let mut request = [0_u8; 4096];
                 let _ = stream.read(&mut request);
                 let payload = serde_json::to_vec(&body).unwrap();
-                let reason = if status == 429 { "Too Many Requests" } else { "OK" };
+                let reason = if status == 429 {
+                    "Too Many Requests"
+                } else {
+                    "OK"
+                };
                 let header = format!(
                     "HTTP/1.1 {status} {reason}\r\n{extra_headers}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     payload.len()

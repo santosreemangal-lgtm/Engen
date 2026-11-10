@@ -212,7 +212,9 @@ class SignatureStore:
                     """UPDATE transaction_records
                        SET processing_status = 'processed',
                            updated_at = CURRENT_TIMESTAMP
-                       WHERE wallet_address = ? AND signature = ?""",
+                       WHERE wallet_address = ? AND signature = ?
+                         AND processing_status NOT IN
+                             ('stale', 'failed', 'incomplete', 'needs_review')""",
                     (wallet_address, signature),
                 )
                 position = connection.execute(

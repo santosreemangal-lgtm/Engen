@@ -60,7 +60,9 @@ fn decimal_string(value: &BigDecimal) -> String {
 }
 
 fn as_non_negative_usize(value: &Value) -> Option<usize> {
-    value.as_u64().and_then(|number| usize::try_from(number).ok())
+    value
+        .as_u64()
+        .and_then(|number| usize::try_from(number).ok())
 }
 
 fn resolve_program_id(instruction: &Value, account_keys: &[Value]) -> Option<String> {
@@ -95,7 +97,10 @@ fn instruction_account_keys(transaction: &Value) -> Vec<Value> {
     let Some(meta) = transaction.get("meta").filter(|value| value.is_object()) else {
         return keys;
     };
-    let Some(loaded) = meta.get("loadedAddresses").filter(|value| value.is_object()) else {
+    let Some(loaded) = meta
+        .get("loadedAddresses")
+        .filter(|value| value.is_object())
+    else {
         return keys;
     };
     let mut lookup_keys = Vec::new();
@@ -112,9 +117,9 @@ fn instruction_account_keys(transaction: &Value) -> Vec<Value> {
         .and_then(Value::as_array)
         .zip(meta.get("postBalances").and_then(Value::as_array))
         .is_some_and(|(pre, post)| pre.len() == post.len() && pre.len() == keys.len());
-    let parsed_keys_already_expanded = keys.iter().any(|item| {
-        item.get("source").and_then(Value::as_str) == Some("lookupTable")
-    });
+    let parsed_keys_already_expanded = keys
+        .iter()
+        .any(|item| item.get("source").and_then(Value::as_str) == Some("lookupTable"));
     if !balances_already_expanded && !parsed_keys_already_expanded {
         keys.extend(lookup_keys);
     }
@@ -259,10 +264,15 @@ pub fn analyze_token_balance_changes(meta: &Value) -> Vec<Value> {
             if !item.is_object() {
                 continue;
             }
-            let Some(mint) = item.get("mint").and_then(Value::as_str).filter(|v| !v.is_empty()) else {
+            let Some(mint) = item
+                .get("mint")
+                .and_then(Value::as_str)
+                .filter(|v| !v.is_empty())
+            else {
                 continue;
             };
-            let Some(account_index) = item.get("accountIndex").and_then(as_non_negative_usize) else {
+            let Some(account_index) = item.get("accountIndex").and_then(as_non_negative_usize)
+            else {
                 continue;
             };
             let Some(amount_data) = item.get("uiTokenAmount").filter(|v| v.is_object()) else {
@@ -326,8 +336,12 @@ pub fn analyze_token_balance_changes(meta: &Value) -> Vec<Value> {
         }
         let owner = new_owner.or(old_owner).cloned();
         let decimals = new.or(old).map(|value| value.decimals).unwrap_or(0);
-        let old_amount = old.map(|value| value.amount.clone()).unwrap_or_else(|| BigDecimal::from(0));
-        let new_amount = new.map(|value| value.amount.clone()).unwrap_or_else(|| BigDecimal::from(0));
+        let old_amount = old
+            .map(|value| value.amount.clone())
+            .unwrap_or_else(|| BigDecimal::from(0));
+        let new_amount = new
+            .map(|value| value.amount.clone())
+            .unwrap_or_else(|| BigDecimal::from(0));
         let delta = &new_amount - &old_amount;
         if delta == 0 {
             continue;
@@ -370,7 +384,10 @@ pub fn analyze_native_sol_balance_changes(transaction: &Value) -> Vec<Value> {
         return Vec::new();
     };
     let mut account_keys: Vec<Option<String>> = raw_keys.iter().map(normalize_pubkey).collect();
-    if let Some(loaded) = meta.get("loadedAddresses").filter(|value| value.is_object()) {
+    if let Some(loaded) = meta
+        .get("loadedAddresses")
+        .filter(|value| value.is_object())
+    {
         for group in ["writable", "readonly"] {
             if let Some(rows) = loaded.get(group).and_then(Value::as_array) {
                 account_keys.extend(rows.iter().map(normalize_pubkey));
@@ -453,10 +470,16 @@ pub fn classify_token_balance_changes(changes: &Value, wallet_address: &str) -> 
     let mut native_sol_delta = BigDecimal::from(0);
     let mut native_sol_seen = false;
     for change in changes {
-        if !change.is_object() || change.get("owner").and_then(Value::as_str) != Some(wallet_address) {
+        if !change.is_object()
+            || change.get("owner").and_then(Value::as_str) != Some(wallet_address)
+        {
             continue;
         }
-        let Some(mint) = change.get("mint").and_then(Value::as_str).filter(|v| !v.is_empty()) else {
+        let Some(mint) = change
+            .get("mint")
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+        else {
             continue;
         };
         let Some(raw_delta) = change.get("delta_amount").and_then(Value::as_str) else {
@@ -469,7 +492,8 @@ pub fn classify_token_balance_changes(changes: &Value, wallet_address: &str) -> 
             continue;
         }
         if change.get("source").and_then(Value::as_str) == Some(NATIVE_SOL_SOURCE) {
-            if mint != WRAPPED_SOL_MINT || change.get("decimals").and_then(Value::as_u64) != Some(9) {
+            if mint != WRAPPED_SOL_MINT || change.get("decimals").and_then(Value::as_u64) != Some(9)
+            {
                 return unknown("Native SOL balance change is invalid.");
             }
             native_sol_seen = true;
@@ -514,8 +538,7 @@ pub fn classify_token_balance_changes(changes: &Value, wallet_address: &str) -> 
 
     let asset_mints: Vec<_> = asset_deltas.keys().cloned().collect();
     let quote_mints: Vec<_> = quote_deltas.keys().cloned().collect();
-    if asset_deltas.values().all(|delta| delta > 0)
-        && quote_deltas.values().all(|delta| delta < 0)
+    if asset_deltas.values().all(|delta| delta > 0) && quote_deltas.values().all(|delta| delta < 0)
     {
         return json!({
             "classification": "BUY_CANDIDATE",
@@ -524,8 +547,7 @@ pub fn classify_token_balance_changes(changes: &Value, wallet_address: &str) -> 
             "quote_mints": quote_mints
         });
     }
-    if asset_deltas.values().all(|delta| delta < 0)
-        && quote_deltas.values().all(|delta| delta > 0)
+    if asset_deltas.values().all(|delta| delta < 0) && quote_deltas.values().all(|delta| delta > 0)
     {
         return json!({
             "classification": "SELL_CANDIDATE",
@@ -550,12 +572,15 @@ fn pumpfun_instruction_context(transaction: &Value) -> Option<Value> {
     let mut pumpfun_instructions = Vec::new();
     if let Some(outer) = message.get("instructions").and_then(Value::as_array) {
         for instruction in outer {
-            if resolve_program_id(instruction, &account_keys).as_deref() != Some(PUMP_FUN_PROGRAM_ID) {
+            if resolve_program_id(instruction, &account_keys).as_deref()
+                != Some(PUMP_FUN_PROGRAM_ID)
+            {
                 continue;
             }
             if let Some(accounts) = instruction.get("accounts").and_then(Value::as_array) {
                 if accounts.len() >= 3 {
-                    if let (Some(base), Some(quote)) = (accounts[1].as_str(), accounts[2].as_str()) {
+                    if let (Some(base), Some(quote)) = (accounts[1].as_str(), accounts[2].as_str())
+                    {
                         if !base.is_empty() && !quote.is_empty() {
                             pumpfun_instructions.push((base.to_string(), quote.to_string()));
                         }
@@ -568,14 +593,19 @@ fn pumpfun_instruction_context(transaction: &Value) -> Option<Value> {
         for group in groups {
             if let Some(inner) = group.get("instructions").and_then(Value::as_array) {
                 for instruction in inner {
-                    if resolve_program_id(instruction, &account_keys).as_deref() != Some(PUMP_FUN_PROGRAM_ID) {
+                    if resolve_program_id(instruction, &account_keys).as_deref()
+                        != Some(PUMP_FUN_PROGRAM_ID)
+                    {
                         continue;
                     }
                     if let Some(accounts) = instruction.get("accounts").and_then(Value::as_array) {
                         if accounts.len() >= 3 {
-                            if let (Some(base), Some(quote)) = (accounts[1].as_str(), accounts[2].as_str()) {
+                            if let (Some(base), Some(quote)) =
+                                (accounts[1].as_str(), accounts[2].as_str())
+                            {
                                 if !base.is_empty() && !quote.is_empty() {
-                                    pumpfun_instructions.push((base.to_string(), quote.to_string()));
+                                    pumpfun_instructions
+                                        .push((base.to_string(), quote.to_string()));
                                 }
                             }
                         }
@@ -590,7 +620,10 @@ fn pumpfun_instruction_context(transaction: &Value) -> Option<Value> {
     for log in logs.iter().filter_map(Value::as_str) {
         if let Some(rest) = log.strip_prefix("Program ") {
             if let Some((program, depth)) = rest.split_once(" invoke [") {
-                if let Some(depth) = depth.strip_suffix(']').and_then(|v| v.parse::<usize>().ok()) {
+                if let Some(depth) = depth
+                    .strip_suffix(']')
+                    .and_then(|v| v.parse::<usize>().ok())
+                {
                     if !program.is_empty() && depth >= 1 {
                         invocation_stack.truncate(depth - 1);
                         invocation_stack.push(program.to_string());
@@ -676,8 +709,14 @@ pub fn classify_transaction(
     let mut direct_transfer_instruction = false;
     let mut recognized_non_transfer_instruction = false;
     let mut recognized_other_instruction = false;
-    let fee = meta.and_then(|value| value.get("fee")).cloned().unwrap_or(Value::Null);
-    if let Some(message) = transaction.get("transaction").and_then(|value| value.get("message")) {
+    let fee = meta
+        .and_then(|value| value.get("fee"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    if let Some(message) = transaction
+        .get("transaction")
+        .and_then(|value| value.get("message"))
+    {
         let account_keys = instruction_account_keys(transaction);
         if let Some(outer) = message.get("instructions").and_then(Value::as_array) {
             for (index, instruction) in outer.iter().enumerate() {
@@ -689,22 +728,42 @@ pub fn classify_transaction(
                     .and_then(|value| value.get("type"))
                     .cloned()
                     .unwrap_or(Value::Null);
-                let parsed_name = parsed_type.as_str().unwrap_or_default().to_ascii_lowercase();
-                if matches!(parsed_name.as_str(), "transfer" | "transferchecked" | "transfer_checked")
-                    && is_supported_transfer_program(instruction, &account_keys)
+                let parsed_name = parsed_type
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                if matches!(
+                    parsed_name.as_str(),
+                    "transfer" | "transferchecked" | "transfer_checked"
+                ) && is_supported_transfer_program(instruction, &account_keys)
                 {
                     direct_transfer_instruction = true;
                 } else if !parsed_name.is_empty()
-                    && !matches!(parsed_name.as_str(), "transfer" | "transferchecked" | "transfer_checked")
+                    && !matches!(
+                        parsed_name.as_str(),
+                        "transfer" | "transferchecked" | "transfer_checked"
+                    )
                 {
                     recognized_non_transfer_instruction = true;
                     if matches!(
                         parsed_name.as_str(),
-                        "createaccount" | "create_account" | "initializeaccount" |
-                        "initialize_account" | "closeaccount" | "close_account" |
-                        "syncnative" | "sync_native" | "approve" | "revoke" |
-                        "setauthority" | "set_authority" | "mintto" | "mint_to" |
-                        "burn" | "burnchecked" | "burn_checked"
+                        "createaccount"
+                            | "create_account"
+                            | "initializeaccount"
+                            | "initialize_account"
+                            | "closeaccount"
+                            | "close_account"
+                            | "syncnative"
+                            | "sync_native"
+                            | "approve"
+                            | "revoke"
+                            | "setauthority"
+                            | "set_authority"
+                            | "mintto"
+                            | "mint_to"
+                            | "burn"
+                            | "burnchecked"
+                            | "burn_checked"
                     ) {
                         recognized_other_instruction = true;
                     }
@@ -750,7 +809,9 @@ pub fn classify_transaction(
         .as_array()
         .into_iter()
         .flatten()
-        .filter(|item| item.is_object() && item.get("owner").and_then(Value::as_str) == Some(wallet_address))
+        .filter(|item| {
+            item.is_object() && item.get("owner").and_then(Value::as_str) == Some(wallet_address)
+        })
         .map(|item| {
             json!({
                 "owner": item.get("owner").cloned().unwrap_or(Value::Null),
@@ -776,12 +837,20 @@ pub fn classify_transaction(
     );
 
     if matches!(pumpfun_action, Some("BUY" | "SELL")) {
-        let base_mint = pumpfun_context.as_ref().and_then(|value| value.get("base_mint")).and_then(Value::as_str);
-        let quote_mint = pumpfun_context.as_ref().and_then(|value| value.get("quote_mint")).and_then(Value::as_str);
+        let base_mint = pumpfun_context
+            .as_ref()
+            .and_then(|value| value.get("base_mint"))
+            .and_then(Value::as_str);
+        let quote_mint = pumpfun_context
+            .as_ref()
+            .and_then(|value| value.get("quote_mint"))
+            .and_then(Value::as_str);
         let mut pumpfun_token_deltas: BTreeMap<String, BigDecimal> = BTreeMap::new();
         let mut pumpfun_native_sol_delta = BigDecimal::from(0);
         for item in base_changes.as_array().into_iter().flatten() {
-            if !item.is_object() || item.get("owner").and_then(Value::as_str) != Some(wallet_address) {
+            if !item.is_object()
+                || item.get("owner").and_then(Value::as_str) != Some(wallet_address)
+            {
                 continue;
             }
             let Some(mint) = item.get("mint").and_then(Value::as_str) else {
@@ -797,7 +866,9 @@ pub fn classify_transaction(
                 continue;
             }
             if item.get("source").and_then(Value::as_str) == Some(NATIVE_SOL_SOURCE) {
-                if mint == WRAPPED_SOL_MINT && item.get("decimals").and_then(Value::as_u64) == Some(9) {
+                if mint == WRAPPED_SOL_MINT
+                    && item.get("decimals").and_then(Value::as_u64) == Some(9)
+                {
                     pumpfun_native_sol_delta += delta;
                 }
                 continue;
@@ -818,7 +889,8 @@ pub fn classify_transaction(
                     .get(quote_mint)
                     .cloned()
                     .unwrap_or_else(|| BigDecimal::from(0));
-                let (base_matches, quote_matches, classification) = if pumpfun_action == Some("BUY") {
+                let (base_matches, quote_matches, classification) = if pumpfun_action == Some("BUY")
+                {
                     (
                         base_delta > 0,
                         if quote_mint != WRAPPED_SOL_MINT {
@@ -826,7 +898,7 @@ pub fn classify_transaction(
                         } else {
                             quote_delta < 0 || pumpfun_native_sol_delta < 0
                         },
-                        "BUY_CANDIDATE"
+                        "BUY_CANDIDATE",
                     )
                 } else {
                     (
@@ -836,7 +908,7 @@ pub fn classify_transaction(
                         } else {
                             quote_delta > 0 || pumpfun_native_sol_delta > 0
                         },
-                        "SELL_CANDIDATE"
+                        "SELL_CANDIDATE",
                     )
                 };
                 if base_matches && quote_matches {
@@ -895,12 +967,20 @@ pub fn classify_transaction(
             }
         }
         let explicit_swap_context = matches!(pumpfun_action, Some("BUY" | "SELL"))
-            || ["swap", "jupiter", "raydium", "orca", "lifinity", "meteora", "phoenix", "openbook"]
-                .iter()
-                .any(|marker| instruction_text.contains(marker));
-        let lifecycle_context = ["transfer", "createaccount", "initializeaccount", "closeaccount", "syncnative"]
+            || [
+                "swap", "jupiter", "raydium", "orca", "lifinity", "meteora", "phoenix", "openbook",
+            ]
             .iter()
             .any(|marker| instruction_text.contains(marker));
+        let lifecycle_context = [
+            "transfer",
+            "createaccount",
+            "initializeaccount",
+            "closeaccount",
+            "syncnative",
+        ]
+        .iter()
+        .any(|marker| instruction_text.contains(marker));
         let has_native_sol_delta = base_changes.as_array().into_iter().flatten().any(|change| {
             if !change.is_object()
                 || change.get("owner").and_then(Value::as_str) != Some(wallet_address)
@@ -952,8 +1032,18 @@ pub fn classify_transaction(
         "UNKNOWN"
     };
     result.insert("transaction_type".to_string(), json!(transaction_type));
-    result.insert("trade_signal".to_string(), json!(if candidate { classification.as_str() } else { "NOT_COPYABLE" }));
-    result.insert("confidence".to_string(), json!(if candidate { "medium" } else { "low" }));
+    result.insert(
+        "trade_signal".to_string(),
+        json!(if candidate {
+            classification.as_str()
+        } else {
+            "NOT_COPYABLE"
+        }),
+    );
+    result.insert(
+        "confidence".to_string(),
+        json!(if candidate { "medium" } else { "low" }),
+    );
     result.insert("evidence".to_string(), json!({
         "wallet_address": wallet_address,
         "wallet_balance_changes": owned_changes,
@@ -1109,10 +1199,10 @@ mod tests {
             }]}},
             "meta":{"err":null,"fee":5000,"preBalances":[100000],"postBalances":[90000]}
         });
-        let result = classify_transaction(&transaction,WALLET,None);
-        assert_eq!(result["transaction_type"],"TRANSFER");
-        assert_eq!(result["trade_signal"],"NOT_COPYABLE");
-        assert_eq!(result["classification"],"UNKNOWN");
+        let result = classify_transaction(&transaction, WALLET, None);
+        assert_eq!(result["transaction_type"], "TRANSFER");
+        assert_eq!(result["trade_signal"], "NOT_COPYABLE");
+        assert_eq!(result["classification"], "UNKNOWN");
     }
 
     #[test]
@@ -1154,9 +1244,9 @@ mod tests {
             }]}},
             "meta":{"err":null,"fee":5000}
         });
-        let result = classify_transaction(&transaction,WALLET,None);
-        assert_eq!(result["transaction_type"],"OTHER");
-        assert_eq!(result["trade_signal"],"NOT_COPYABLE");
+        let result = classify_transaction(&transaction, WALLET, None);
+        assert_eq!(result["transaction_type"], "OTHER");
+        assert_eq!(result["trade_signal"], "NOT_COPYABLE");
     }
 
     #[test]
@@ -1172,8 +1262,8 @@ mod tests {
             }]
         });
         let changes = analyze_token_balance_changes(&meta);
-        assert_eq!(changes.len(),1);
-        assert_eq!(changes[0]["delta_amount"],"75");
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0]["delta_amount"], "75");
     }
 
     #[test]
@@ -1200,9 +1290,9 @@ mod tests {
             }
         });
         let changes = analyze_native_sol_balance_changes(&transaction);
-        assert_eq!(changes.len(),1);
-        assert_eq!(changes[0]["account_index"],1);
-        assert_eq!(changes[0]["delta_amount"],"-50000");
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0]["account_index"], 1);
+        assert_eq!(changes[0]["delta_amount"], "-50000");
     }
 
     #[test]
@@ -1211,12 +1301,18 @@ mod tests {
             {"owner":WALLET,"mint":ASSET,"delta_amount":"100","decimals":2},
             {"owner":WALLET,"mint":USDC_MINT,"delta_amount":"-2500000","decimals":6}
         ]);
-        assert_eq!(classify_token_balance_changes(&buy,WALLET)["classification"],"BUY_CANDIDATE");
+        assert_eq!(
+            classify_token_balance_changes(&buy, WALLET)["classification"],
+            "BUY_CANDIDATE"
+        );
         let sell = json!([
             {"owner":WALLET,"mint":ASSET,"delta_amount":"-100","decimals":2},
             {"owner":WALLET,"mint":USDC_MINT,"delta_amount":"2500000","decimals":6}
         ]);
-        assert_eq!(classify_token_balance_changes(&sell,WALLET)["classification"],"SELL_CANDIDATE");
+        assert_eq!(
+            classify_token_balance_changes(&sell, WALLET)["classification"],
+            "SELL_CANDIDATE"
+        );
     }
 
     #[test]
@@ -1226,7 +1322,10 @@ mod tests {
             {"owner":WALLET,"mint":USDC_MINT,"delta_amount":"-50","decimals":6},
             {"owner":WALLET,"mint":WRAPPED_SOL_MINT,"delta_amount":"-10","decimals":9,"source":"native_sol"}
         ]);
-        assert_eq!(classify_token_balance_changes(&mixed,WALLET)["classification"],"UNKNOWN");
+        assert_eq!(
+            classify_token_balance_changes(&mixed, WALLET)["classification"],
+            "UNKNOWN"
+        );
 
         let transfer_tx = json!({
             "transaction":{"message":{"accountKeys":[WALLET],"instructions":[{
@@ -1240,7 +1339,10 @@ mod tests {
             {"owner":WALLET,"mint":WRAPPED_SOL_MINT,"delta_amount":"-200000000","decimals":9,
              "source":"native_sol","fee_adjusted":true}
         ]);
-        assert_eq!(classify_transaction(&transfer_tx,WALLET,Some(&native_only))["classification"],"UNKNOWN");
+        assert_eq!(
+            classify_transaction(&transfer_tx, WALLET, Some(&native_only))["classification"],
+            "UNKNOWN"
+        );
     }
 
     #[test]
@@ -1250,9 +1352,9 @@ mod tests {
             {"owner":WALLET,"mint":ASSET,"delta_amount":"100","decimals":2},
             {"owner":WALLET,"mint":USDC_MINT,"delta_amount":"-2500000","decimals":6}
         ]);
-        let signal = classify_transaction(&transaction,WALLET,Some(&changes));
-        assert_eq!(signal["classification"],"FAILED_TRANSACTION");
-        assert_eq!(signal["confidence"],"high");
+        let signal = classify_transaction(&transaction, WALLET, Some(&changes));
+        assert_eq!(signal["classification"], "FAILED_TRANSACTION");
+        assert_eq!(signal["confidence"], "high");
     }
 
     #[test]
@@ -1278,15 +1380,15 @@ mod tests {
             {"owner":WALLET,"mint":"BASE_MINT","delta_amount":"100","decimals":6},
             {"owner":WALLET,"mint":"QUOTE_MINT","delta_amount":"-200","decimals":9}
         ]);
-        let result = classify_transaction(&transaction,WALLET,Some(&changes));
-        assert_eq!(result["classification"],"BUY_CANDIDATE");
-        assert_eq!(result["evidence"]["pumpfun_base_mint"],"BASE_MINT");
+        let result = classify_transaction(&transaction, WALLET, Some(&changes));
+        assert_eq!(result["classification"], "BUY_CANDIDATE");
+        assert_eq!(result["evidence"]["pumpfun_base_mint"], "BASE_MINT");
     }
 
     #[test]
     fn missing_transaction_metadata_is_not_fabricated() {
         let result = analyze_transaction(&json!({"slot":1})).unwrap();
-        assert_eq!(result["available"],false);
+        assert_eq!(result["available"], false);
         assert!(result.get("status").is_none());
     }
 }

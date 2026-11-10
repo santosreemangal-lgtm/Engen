@@ -14,8 +14,7 @@ use thiserror::Error;
 use crate::pnl::MarketPrice;
 use crate::solana_validation::is_valid_solana_address;
 
-pub const DEXSCREENER_TOKEN_PAIRS_URL: &str =
-    "https://api.dexscreener.com/token-pairs/v1/solana/";
+pub const DEXSCREENER_TOKEN_PAIRS_URL: &str = "https://api.dexscreener.com/token-pairs/v1/solana/";
 const USER_AGENT_VALUE: &str = "SolanaCopyTradingEngine-PaperSimulation/1.0";
 const MAX_RESPONSE_BYTES: u64 = 1_000_000;
 const MAX_TIMEOUT: Duration = Duration::from_secs(60);
@@ -36,11 +35,7 @@ fn parse_decimal(value: &Value) -> Option<BigDecimal> {
     BigDecimal::from_str(raw.trim()).ok()
 }
 
-fn snapshot_from_payload(
-    payload: &Value,
-    mint: &str,
-    observed_at: &str,
-) -> Option<MarketPrice> {
+fn snapshot_from_payload(payload: &Value, mint: &str, observed_at: &str) -> Option<MarketPrice> {
     let pairs = payload.as_array()?;
     let mut best: Option<(BigDecimal, BigDecimal)> = None;
 

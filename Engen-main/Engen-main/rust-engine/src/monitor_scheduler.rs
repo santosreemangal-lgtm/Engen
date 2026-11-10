@@ -137,10 +137,7 @@ mod tests {
             plan.next_stage(55, 100),
             Some(ScanStage::Fresh { limit: 50 })
         );
-        assert_eq!(
-            plan.next_stage(5, 100),
-            Some(ScanStage::Fresh { limit: 5 })
-        );
+        assert_eq!(plan.next_stage(5, 100), Some(ScanStage::Fresh { limit: 5 }));
         assert_eq!(
             plan.next_stage(0, 100),
             Some(ScanStage::History {

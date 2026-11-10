@@ -10,10 +10,8 @@ use serde_json::{json, Value};
 
 const WALLET: &str = "So11111111111111111111111111111111111111112";
 const OTHER: &str = "11111111111111111111111111111112";
-const OLD_SIGNATURE: &str =
-    "1111111111111111111111111111111111111111111111111111111111111111";
-const NEW_SIGNATURE: &str =
-    "1111111111111111111111111111111111111111111111111111111111111112";
+const OLD_SIGNATURE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+const NEW_SIGNATURE: &str = "1111111111111111111111111111111111111111111111111111111111111112";
 const SYSTEM_PROGRAM: &str = "11111111111111111111111111111111";
 const TOKEN_2022_PROGRAM: &str = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 
@@ -33,7 +31,9 @@ fn spawn_mock_rpc(responses: Vec<Value>) -> (String, thread::JoinHandle<()>) {
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 payload.len()
             );
-            stream.write_all(headers.as_bytes()).expect("write mock headers");
+            stream
+                .write_all(headers.as_bytes())
+                .expect("write mock headers");
             stream.write_all(&payload).expect("write mock JSON body");
             stream.flush().expect("flush mock JSON response");
         }
@@ -59,20 +59,20 @@ fn shared_phase2_golden_corpus_matches_transaction_type_contract() {
         let changes = &case["balance_changes"];
         let result = classify_transaction(transaction, wallet, Some(changes));
         assert_eq!(
-            result["transaction_type"],
-            case["expected_type"],
+            result["transaction_type"], case["expected_type"],
             "transaction type mismatch for fixture {name}"
         );
         assert_eq!(
-            result["trade_signal"],
-            case["expected_signal"],
+            result["trade_signal"], case["expected_signal"],
             "trade signal mismatch for fixture {name}"
         );
-        if let Some(program_id) = case.get("expected_outer_program_id").and_then(Value::as_str) {
+        if let Some(program_id) = case
+            .get("expected_outer_program_id")
+            .and_then(Value::as_str)
+        {
             let summary = analyze_transaction(transaction).expect("analyze versioned fixture");
             assert_eq!(
-                summary["instructions"][0]["program_id"],
-                program_id,
+                summary["instructions"][0]["program_id"], program_id,
                 "lookup-table program id mismatch for fixture {name}"
             );
         }
@@ -127,20 +127,26 @@ fn wallet_discovery_to_transfer_classification_and_restart_evidence_is_offline()
     });
 
     let (endpoint, server) = spawn_mock_rpc(vec![
-        rpc_response(6, json!([{
-            "signature": OLD_SIGNATURE,
-            "slot": 100,
-            "err": null,
-            "confirmationStatus": "finalized",
-            "blockTime": 1760000000
-        }])),
-        rpc_response(6, json!([{
-            "signature": NEW_SIGNATURE,
-            "slot": 101,
-            "err": null,
-            "confirmationStatus": "confirmed",
-            "blockTime": 1760000001
-        }])),
+        rpc_response(
+            6,
+            json!([{
+                "signature": OLD_SIGNATURE,
+                "slot": 100,
+                "err": null,
+                "confirmationStatus": "finalized",
+                "blockTime": 1760000000
+            }]),
+        ),
+        rpc_response(
+            6,
+            json!([{
+                "signature": NEW_SIGNATURE,
+                "slot": 101,
+                "err": null,
+                "confirmationStatus": "confirmed",
+                "blockTime": 1760000001
+            }]),
+        ),
         rpc_response(4, transaction.clone()),
     ]);
 
@@ -175,7 +181,11 @@ fn wallet_discovery_to_transfer_classification_and_restart_evidence_is_offline()
         .get_transaction_record(WALLET, NEW_SIGNATURE)
         .expect("read persisted transaction record")
         .expect("record must exist");
-    assert_eq!(record.raw_transaction.as_ref().unwrap()["meta"]["innerInstructions"][0]["instructions"][0]["programId"], TOKEN_2022_PROGRAM);
+    assert_eq!(
+        record.raw_transaction.as_ref().unwrap()["meta"]["innerInstructions"][0]["instructions"][0]
+            ["programId"],
+        TOKEN_2022_PROGRAM
+    );
     assert_eq!(record.status, "processed");
 
     drop(store);
@@ -186,9 +196,14 @@ fn wallet_discovery_to_transfer_classification_and_restart_evidence_is_offline()
         .expect("evidence must survive restart");
     assert_eq!(recovered.raw_transaction, Some(transaction));
     assert_eq!(
-        reopened.get_status(WALLET, NEW_SIGNATURE).unwrap().as_deref(),
+        reopened
+            .get_status(WALLET, NEW_SIGNATURE)
+            .unwrap()
+            .as_deref(),
         Some("processed")
     );
 
-    server.join().expect("mock RPC server completed all expected requests");
+    server
+        .join()
+        .expect("mock RPC server completed all expected requests");
 }

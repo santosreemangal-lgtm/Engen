@@ -288,11 +288,7 @@ impl SignatureStore {
     }
 
     /// Retain a stale source signature as an auditable, non-retryable paper-copy skip.
-    pub fn mark_stale(
-        &self,
-        wallet: &str,
-        signature: &str,
-    ) -> Result<bool, SignatureStoreError> {
+    pub fn mark_stale(&self, wallet: &str, signature: &str) -> Result<bool, SignatureStoreError> {
         Self::validate_wallet(wallet)?;
         Self::validate_signature(signature)?;
         let mut connection = self.connect()?;
@@ -574,10 +570,19 @@ mod tests {
         let store = SignatureStore::open(dir.path().join("signatures.db")).unwrap();
         store.save(WALLET, SIGNATURE, Some(10)).unwrap();
         assert!(store.mark_stale(WALLET, SIGNATURE).unwrap());
-        assert_eq!(store.get_status(WALLET, SIGNATURE).unwrap().as_deref(), Some("stale"));
+        assert_eq!(
+            store.get_status(WALLET, SIGNATURE).unwrap().as_deref(),
+            Some("stale")
+        );
         assert!(!store.mark_processed(WALLET, SIGNATURE).unwrap());
-        assert_eq!(store.get_status(WALLET, SIGNATURE).unwrap().as_deref(), Some("stale"));
-        let record = store.get_transaction_record(WALLET, SIGNATURE).unwrap().unwrap();
+        assert_eq!(
+            store.get_status(WALLET, SIGNATURE).unwrap().as_deref(),
+            Some("stale")
+        );
+        let record = store
+            .get_transaction_record(WALLET, SIGNATURE)
+            .unwrap()
+            .unwrap();
         assert_eq!(record.status, "stale");
     }
 
@@ -587,9 +592,14 @@ mod tests {
         let store = SignatureStore::open(dir.path().join("signatures.db")).unwrap();
         store.save(WALLET, SIGNATURE, Some(10)).unwrap();
         let raw = serde_json::json!({"meta":{"err":{"InstructionError":[0,"Custom"]}}});
-        store.save_transaction_record(WALLET, SIGNATURE, Some(&raw), "failed").unwrap();
+        store
+            .save_transaction_record(WALLET, SIGNATURE, Some(&raw), "failed")
+            .unwrap();
         assert!(store.mark_processed(WALLET, SIGNATURE).unwrap());
-        let record = store.get_transaction_record(WALLET, SIGNATURE).unwrap().unwrap();
+        let record = store
+            .get_transaction_record(WALLET, SIGNATURE)
+            .unwrap()
+            .unwrap();
         assert_eq!(record.status, "failed");
         assert_eq!(record.raw_transaction, Some(raw));
     }
@@ -613,10 +623,15 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = SignatureStore::open(dir.path().join("signatures.db")).unwrap();
         assert_eq!(
-            store.save_many(WALLET, [SIGNATURE, SIGNATURE, SIGNATURE]).unwrap(),
+            store
+                .save_many(WALLET, [SIGNATURE, SIGNATURE, SIGNATURE])
+                .unwrap(),
             1
         );
-        assert_eq!(store.pending_signatures(WALLET, 10).unwrap(), vec![SIGNATURE]);
+        assert_eq!(
+            store.pending_signatures(WALLET, 10).unwrap(),
+            vec![SIGNATURE]
+        );
     }
 
     #[test]
@@ -635,15 +650,18 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = Arc::new(SignatureStore::open(dir.path().join("signatures.db")).unwrap());
         let barrier = Arc::new(Barrier::new(8));
-        let handles = (0..8).map(|_| {
-            let store = Arc::clone(&store);
-            let barrier = Arc::clone(&barrier);
-            thread::spawn(move || {
-                barrier.wait();
-                store.save(WALLET, SIGNATURE, Some(10)).unwrap()
+        let handles = (0..8)
+            .map(|_| {
+                let store = Arc::clone(&store);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    store.save(WALLET, SIGNATURE, Some(10)).unwrap()
+                })
             })
-        }).collect::<Vec<_>>();
-        let inserted = handles.into_iter()
+            .collect::<Vec<_>>();
+        let inserted = handles
+            .into_iter()
             .map(|handle| usize::from(handle.join().unwrap()))
             .sum::<usize>();
         assert_eq!(inserted, 1);
@@ -716,7 +734,9 @@ mod tests {
         {
             let store = SignatureStore::open(&path).unwrap();
             store.save(WALLET, SIGNATURE, Some(42)).unwrap();
-            store.save_transaction_record(WALLET, SIGNATURE, Some(&evidence), "observed").unwrap();
+            store
+                .save_transaction_record(WALLET, SIGNATURE, Some(&evidence), "observed")
+                .unwrap();
             assert!(store.mark_processed(WALLET, SIGNATURE).unwrap());
         }
         let store = SignatureStore::open(&path).unwrap();
@@ -725,7 +745,10 @@ mod tests {
             Some("processed")
         );
         assert_eq!(store.get_position(WALLET).unwrap().unwrap().slot, Some(42));
-        let record = store.get_transaction_record(WALLET, SIGNATURE).unwrap().unwrap();
+        let record = store
+            .get_transaction_record(WALLET, SIGNATURE)
+            .unwrap()
+            .unwrap();
         assert_eq!(record.raw_transaction, Some(evidence));
         assert_eq!(record.status, "processed");
     }

@@ -11,7 +11,9 @@ use serde_json::{json, Value};
 use thiserror::Error;
 
 use crate::rpc_policy::{validate_rpc_timeout, validate_rpc_url, MAX_RPC_RETRIES};
-use crate::solana_validation::{is_valid_transaction_signature, require_solana_address, require_transaction_signature};
+use crate::solana_validation::{
+    is_valid_transaction_signature, require_solana_address, require_transaction_signature,
+};
 
 pub const DEFAULT_RPC_URL: &str = "https://api.mainnet-beta.solana.com";
 const MAX_BACKOFF_SECONDS: u64 = 600;
@@ -513,7 +515,10 @@ mod tests {
             Err(SolanaRpcError::ResponseTooLarge)
         ));
         assert!(matches!(
-            read_limited_body(Cursor::new(b"{}".to_vec()), Some((MAX_RPC_RESPONSE_BYTES + 1) as u64)),
+            read_limited_body(
+                Cursor::new(b"{}".to_vec()),
+                Some((MAX_RPC_RESPONSE_BYTES + 1) as u64)
+            ),
             Err(SolanaRpcError::ResponseTooLarge)
         ));
         assert_eq!(
@@ -580,9 +585,12 @@ mod tests {
             retries: 1,
             backoff: Duration::ZERO,
             min_interval: Duration::ZERO,
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(
-            client.request(ReadOnlyMethod::GetSlot, json!([]), 7).unwrap(),
+            client
+                .request(ReadOnlyMethod::GetSlot, json!([]), 7)
+                .unwrap(),
             json!(42)
         );
         server.join().unwrap();

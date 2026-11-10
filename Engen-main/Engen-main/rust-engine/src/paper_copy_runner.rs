@@ -54,9 +54,7 @@ impl AllowedSides {
     fn allows(self, side: &str) -> bool {
         matches!(
             (self, side),
-            (Self::Both, "BUY" | "SELL")
-                | (Self::Buy, "BUY")
-                | (Self::Sell, "SELL")
+            (Self::Both, "BUY" | "SELL") | (Self::Buy, "BUY") | (Self::Sell, "SELL")
         )
     }
 }
@@ -377,7 +375,10 @@ pub fn queue_paper_orders_at(
         let Some(quote_mints) = signal.get("quote_mints").and_then(Value::as_array) else {
             continue;
         };
-        let Some(changes) = result.get("token_balance_changes").and_then(Value::as_array) else {
+        let Some(changes) = result
+            .get("token_balance_changes")
+            .and_then(Value::as_array)
+        else {
             continue;
         };
         if asset_mints.len() != 1 || quote_mints.len() != 1 {
@@ -395,10 +396,9 @@ pub fn queue_paper_orders_at(
             continue;
         };
         let quote_change = if quote_mint == WRAPPED_SOL_MINT {
-            aggregate_wallet_mint_changes(changes, wallet_address, quote_mint, true)
-                .or_else(|| {
-                    aggregate_wallet_mint_changes(changes, wallet_address, quote_mint, false)
-                })
+            aggregate_wallet_mint_changes(changes, wallet_address, quote_mint, true).or_else(|| {
+                aggregate_wallet_mint_changes(changes, wallet_address, quote_mint, false)
+            })
         } else {
             aggregate_wallet_mint_changes(changes, wallet_address, quote_mint, false)
         };
@@ -467,7 +467,9 @@ pub fn queue_paper_orders_at(
         let signal_id = format!("wallet-copy:{wallet_address}:{signature}");
         let created_at = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
         let sell_fraction = if side == "SELL" {
-            source_before.as_ref().map(|pre| raw_to_string(&(&source_quantity / pre)))
+            source_before
+                .as_ref()
+                .map(|pre| raw_to_string(&(&source_quantity / pre)))
         } else {
             None
         };
@@ -571,9 +573,7 @@ where
         }
         let started = Instant::now();
         let signal_id = Some(order.signal_id.as_str());
-        let source_block_time = details
-            .get("source_block_time")
-            .and_then(Value::as_i64);
+        let source_block_time = details.get("source_block_time").and_then(Value::as_i64);
         if !source_block_time_ok(source_block_time, now_ts) {
             let reason = "Source transaction became stale before paper-fill commit.";
             let _ = simulator.cancel_order_with_reason(&order.order_id, reason);
@@ -694,10 +694,7 @@ pub fn execute_pending_paper_orders(
     )
 }
 
-pub fn get_pending_copy_status(
-    simulator: &PaperSimulator,
-    wallet_address: Option<&str>,
-) -> Value {
+pub fn get_pending_copy_status(simulator: &PaperSimulator, wallet_address: Option<&str>) -> Value {
     let pending: Vec<Value> = simulator
         .orders()
         .values()
@@ -846,7 +843,8 @@ mod tests {
             AllowedSides::Both,
             &CopySettings::default(),
             None,
-        ).unwrap();
+        )
+        .unwrap();
         let order_id = queued[0]["order_id"].as_str().unwrap().to_string();
         let outcomes = super::execute_pending_paper_orders_with_at(
             &mut simulator,
@@ -957,7 +955,8 @@ mod tests {
             Some("25000"),
             Some("test-fixture".to_string()),
             Some(now),
-        ).unwrap();
+        )
+        .unwrap();
         let outcomes = execute_pending_paper_orders_with(
             &mut simulator,
             Some(WALLET),
@@ -980,7 +979,8 @@ mod tests {
             AllowedSides::Both,
             &CopySettings::default(),
             None,
-        ).unwrap();
+        )
+        .unwrap();
         let status = get_pending_copy_status(&simulator, Some(WALLET));
         assert_eq!(status["pending_count"], 1);
         assert_eq!(status["real_trading"], false);
@@ -992,9 +992,11 @@ mod tests {
         assert!(AllowedSides::parse("UNKNOWN").is_err());
         assert!(CopySettings::from_json(Some(&json!({
             "sizing_mode":"SOURCE_PERCENT","sizing_value":"100"
-        }))).is_err());
+        })))
+        .is_err());
         assert!(CopySettings::from_json(Some(&json!({
             "sizing_mode":"FIXED_USD","sizing_value":"10","max_buy_usd":"-1"
-        }))).is_err());
+        })))
+        .is_err());
     }
 }

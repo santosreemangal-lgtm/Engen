@@ -102,7 +102,10 @@ impl MonitorService {
     }
 
     fn status_value(&self) -> Result<Value, MonitorServiceError> {
-        let state = self.state.lock().map_err(|_| MonitorServiceError::StateUnavailable)?;
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| MonitorServiceError::StateUnavailable)?;
         let wallets: Vec<Value> = state
             .wallets
             .iter()
@@ -136,13 +139,23 @@ impl MonitorService {
             }
         }
 
-        let mut worker = self.worker.lock().map_err(|_| MonitorServiceError::StateUnavailable)?;
+        let mut worker = self
+            .worker
+            .lock()
+            .map_err(|_| MonitorServiceError::StateUnavailable)?;
         if worker.as_ref().is_some_and(|handle| !handle.is_finished()) {
-            let mut state = self.state.lock().map_err(|_| MonitorServiceError::StateUnavailable)?;
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| MonitorServiceError::StateUnavailable)?;
             let next_wallets = cleaned
                 .into_iter()
                 .map(|address| {
-                    let existing = state.wallets.get(&address).cloned().unwrap_or_else(WalletState::waiting);
+                    let existing = state
+                        .wallets
+                        .get(&address)
+                        .cloned()
+                        .unwrap_or_else(WalletState::waiting);
                     (address, existing)
                 })
                 .collect();
@@ -157,7 +170,10 @@ impl MonitorService {
         }
 
         {
-            let mut state = self.state.lock().map_err(|_| MonitorServiceError::StateUnavailable)?;
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| MonitorServiceError::StateUnavailable)?;
             state.wallets = cleaned
                 .into_iter()
                 .map(|address| (address, WalletState::waiting()))
@@ -166,7 +182,9 @@ impl MonitorService {
         }
         {
             let (stop, _) = &*self.stop_signal;
-            *stop.lock().map_err(|_| MonitorServiceError::StateUnavailable)? = false;
+            *stop
+                .lock()
+                .map_err(|_| MonitorServiceError::StateUnavailable)? = false;
         }
 
         let interval = self.interval;
@@ -259,11 +277,16 @@ impl MonitorService {
     pub fn stop(&self) -> Result<Value, MonitorServiceError> {
         {
             let (stop, wake) = &*self.stop_signal;
-            *stop.lock().map_err(|_| MonitorServiceError::StateUnavailable)? = true;
+            *stop
+                .lock()
+                .map_err(|_| MonitorServiceError::StateUnavailable)? = true;
             wake.notify_all();
         }
         {
-            let mut state = self.state.lock().map_err(|_| MonitorServiceError::StateUnavailable)?;
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| MonitorServiceError::StateUnavailable)?;
             state.enabled = false;
             for wallet in state.wallets.values_mut() {
                 if !matches!(wallet.state.as_str(), "error" | "stale") {
@@ -280,7 +303,10 @@ impl MonitorService {
         }
         self.stop()?;
         let started = Instant::now();
-        let mut worker = self.worker.lock().map_err(|_| MonitorServiceError::StateUnavailable)?;
+        let mut worker = self
+            .worker
+            .lock()
+            .map_err(|_| MonitorServiceError::StateUnavailable)?;
         let stopped = if let Some(handle) = worker.as_ref() {
             while !handle.is_finished() && started.elapsed() < timeout {
                 thread::sleep(Duration::from_millis(10));
@@ -368,7 +394,13 @@ mod tests {
         .unwrap();
         service.start(&[WALLET.to_string()]).unwrap();
         service.start(&[WALLET.to_string()]).unwrap();
-        assert_eq!(service.status().unwrap()["wallets"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            service.status().unwrap()["wallets"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
         service.stop_and_wait(Duration::from_secs(2)).unwrap();
     }
 }

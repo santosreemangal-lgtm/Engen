@@ -196,8 +196,7 @@ impl ProfileStore {
 
     fn initialize(connection: &mut Connection) -> Result<(), ProfileStoreError> {
         connection.execute_batch("PRAGMA journal_mode=WAL;")?;
-        let version: i64 =
-            connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if version > 1 {
             return Err(ProfileStoreError::InvalidInput(
                 "Database schema is newer than this application.".to_string(),
@@ -294,10 +293,7 @@ impl ProfileStore {
         Ok(profile_id)
     }
 
-    pub fn get_profile(
-        &self,
-        profile_id: &str,
-    ) -> Result<Option<Profile>, ProfileStoreError> {
+    pub fn get_profile(&self, profile_id: &str) -> Result<Option<Profile>, ProfileStoreError> {
         let connection = self.connect()?;
         let row = connection
             .query_row(
@@ -317,7 +313,16 @@ impl ProfileStore {
                 },
             )
             .optional()?;
-        let Some((profile_id, name, destination_public_address, status, created_at, updated_at, deleted_at)) = row else {
+        let Some((
+            profile_id,
+            name,
+            destination_public_address,
+            status,
+            created_at,
+            updated_at,
+            deleted_at,
+        )) = row
+        else {
             return Ok(None);
         };
         let settings_json: Option<String> = connection
@@ -350,10 +355,7 @@ impl ProfileStore {
         }))
     }
 
-    pub fn list_profiles(
-        &self,
-        include_archived: bool,
-    ) -> Result<Vec<Profile>, ProfileStoreError> {
+    pub fn list_profiles(&self, include_archived: bool) -> Result<Vec<Profile>, ProfileStoreError> {
         let connection = self.connect()?;
         let sql = if include_archived {
             "SELECT profile_id FROM profiles WHERE deleted_at IS NULL ORDER BY created_at,profile_id"
@@ -402,7 +404,13 @@ impl ProfileStore {
                 destination_public_address=COALESCE(?2,destination_public_address),
                 status=COALESCE(?3,status),updated_at=?4
              WHERE profile_id=?5 AND deleted_at IS NULL",
-            params![name, destination_public_address, status, utc_now(), profile_id],
+            params![
+                name,
+                destination_public_address,
+                status,
+                utc_now(),
+                profile_id
+            ],
         )?;
         if changed != 1 {
             return Err(ProfileStoreError::InvalidInput(
@@ -516,16 +524,15 @@ impl ProfileStore {
         }
         if input.slot.is_some_and(|value| value < 0)
             || input.block_time.is_some_and(|value| value < 0)
-            || input.token_decimals.is_some_and(|value| !(0..=30).contains(&value))
+            || input
+                .token_decimals
+                .is_some_and(|value| !(0..=30).contains(&value))
         {
             return Err(ProfileStoreError::InvalidInput(
                 "Invalid slot, block time, or token decimals.".to_string(),
             ));
         }
-        let raw_amount = input
-            .raw_amount
-            .map(exact_amount)
-            .transpose()?;
+        let raw_amount = input.raw_amount.map(exact_amount).transpose()?;
         if let Some(mint) = input.token_mint {
             validate_address(mint, "token mint")?;
         }
@@ -599,16 +606,17 @@ impl ProfileStore {
             )
         })?;
         let incoming_evidence = evidence.as_object().ok_or_else(|| {
-            ProfileStoreError::InvalidInput(
-                "Transaction evidence must be an object.".to_string(),
-            )
+            ProfileStoreError::InvalidInput("Transaction evidence must be an object.".to_string())
         })?;
         for (key, value) in incoming_evidence {
             merged_evidence.insert(key.clone(), value.clone());
         }
         let merged_evidence_json = serde_json::to_string(&Value::Object(merged_evidence))?;
         let token_changed = input.token_mint.is_some()
-            && stored.token_mint.as_deref().is_some_and(|old| old != input.token_mint.unwrap());
+            && stored
+                .token_mint
+                .as_deref()
+                .is_some_and(|old| old != input.token_mint.unwrap());
         let effective_amount = if raw_amount.is_some() || token_changed {
             raw_amount
         } else {
@@ -891,7 +899,10 @@ impl ProfileStore {
             .collect()
     }
 
-    pub fn backup_to(&self, destination_path: impl AsRef<Path>) -> Result<String, ProfileStoreError> {
+    pub fn backup_to(
+        &self,
+        destination_path: impl AsRef<Path>,
+    ) -> Result<String, ProfileStoreError> {
         let destination = destination_path.as_ref();
         if let Some(parent) = destination.parent() {
             if !parent.as_os_str().is_empty() {
@@ -952,9 +963,8 @@ fn validate_profile_name(value: &str) -> Result<String, ProfileStoreError> {
 }
 
 fn validate_address(value: &str, field: &str) -> Result<(), ProfileStoreError> {
-    require_solana_address(value).map_err(|_| {
-        ProfileStoreError::InvalidInput(format!("Invalid Solana {field}."))
-    })?;
+    require_solana_address(value)
+        .map_err(|_| ProfileStoreError::InvalidInput(format!("Invalid Solana {field}.")))?;
     Ok(())
 }
 
@@ -1056,8 +1066,14 @@ mod tests {
         store
             .set_settings(&a, &serde_json::json!({"risk":"high"}))
             .expect("update settings");
-        assert_eq!(store.get_profile(&a).unwrap().unwrap().settings["risk"], "high");
-        assert_eq!(store.get_profile(&b).unwrap().unwrap().settings["risk"], "medium");
+        assert_eq!(
+            store.get_profile(&a).unwrap().unwrap().settings["risk"],
+            "high"
+        );
+        assert_eq!(
+            store.get_profile(&b).unwrap().unwrap().settings["risk"],
+            "medium"
+        );
         assert_eq!(store.get_profile(&a).unwrap().unwrap().status, "disabled");
         store.create_profile("Three", None, None).unwrap();
         assert!(store.create_profile("Four", None, None).is_err());
@@ -1086,26 +1102,44 @@ mod tests {
         store.associate_source_wallet(&a, WALLET_A).unwrap();
         store.associate_source_wallet(&b, WALLET_A).unwrap();
         store.disassociate_source_wallet(&a, WALLET_A).unwrap();
-        assert!(store.get_profile(&a).unwrap().unwrap().source_wallets.is_empty());
-        assert_eq!(store.get_profile(&b).unwrap().unwrap().source_wallets, vec![WALLET_A]);
+        assert!(store
+            .get_profile(&a)
+            .unwrap()
+            .unwrap()
+            .source_wallets
+            .is_empty());
+        assert_eq!(
+            store.get_profile(&b).unwrap().unwrap().source_wallets,
+            vec![WALLET_A]
+        );
         store.associate_source_wallet(&a, WALLET_A).unwrap();
-        store.save_transaction(SaveTransaction {
-            signature: "example-signature",
-            source_wallet_address: WALLET_A,
-            classification: "BUY_CANDIDATE",
-            status: "confirmed",
-            evidence: Some(serde_json::json!({"source":"unit-test"})),
-            slot: Some(12),
-            block_time: Some(1_700_000_000),
-            raw_amount: Some("000123"),
-            token_mint: Some(WALLET_A),
-            token_decimals: Some(6),
-            profile_ids: std::slice::from_ref(&a),
-            observed_at: Some("2026-01-02T03:04:05Z"),
-        }).unwrap();
+        store
+            .save_transaction(SaveTransaction {
+                signature: "example-signature",
+                source_wallet_address: WALLET_A,
+                classification: "BUY_CANDIDATE",
+                status: "confirmed",
+                evidence: Some(serde_json::json!({"source":"unit-test"})),
+                slot: Some(12),
+                block_time: Some(1_700_000_000),
+                raw_amount: Some("000123"),
+                token_mint: Some(WALLET_A),
+                token_decimals: Some(6),
+                profile_ids: std::slice::from_ref(&a),
+                observed_at: Some("2026-01-02T03:04:05Z"),
+            })
+            .unwrap();
         store.delete_profile(&a).unwrap();
         assert!(store.get_profile(&a).unwrap().is_none());
-        assert_eq!(store.get_transaction("example-signature", None).unwrap().unwrap().raw_amount.as_deref(), Some("000123"));
+        assert_eq!(
+            store
+                .get_transaction("example-signature", None)
+                .unwrap()
+                .unwrap()
+                .raw_amount
+                .as_deref(),
+            Some("000123")
+        );
         assert_eq!(store.list_transactions(&a).unwrap().len(), 1);
     }
 
@@ -1134,7 +1168,10 @@ mod tests {
         later.classification = "UNKNOWN";
         later.evidence = Some(serde_json::json!({"second":true}));
         store.save_transaction(later).unwrap();
-        let record = store.get_transaction("stable-signature", Some(&profile)).unwrap().unwrap();
+        let record = store
+            .get_transaction("stable-signature", Some(&profile))
+            .unwrap()
+            .unwrap();
         assert_eq!(record.status, "confirmed");
         assert_eq!(record.classification, "BUY_CANDIDATE");
         assert_eq!(record.raw_amount.as_deref(), Some("000123"));
@@ -1149,28 +1186,32 @@ mod tests {
         let profile = store.create_profile("Portfolio", None, None).unwrap();
         store.associate_source_wallet(&profile, WALLET_A).unwrap();
         store.associate_source_wallet(&profile, WALLET_B).unwrap();
-        store.save_balance_snapshot(SaveBalanceSnapshot {
-            profile_id: &profile,
-            wallet_address: WALLET_A,
-            token_mint: WALLET_A,
-            raw_amount: "1000000",
-            token_decimals: 6,
-            source: "rpc-a",
-            observed_at: Some("2026-10-25T00:00:00Z"),
-            freshness_seconds: None,
-            is_current: true,
-        }).unwrap();
-        store.save_balance_snapshot(SaveBalanceSnapshot {
-            profile_id: &profile,
-            wallet_address: WALLET_B,
-            token_mint: WALLET_A,
-            raw_amount: "250000",
-            token_decimals: 6,
-            source: "rpc-b",
-            observed_at: Some("2026-10-25T00:01:00Z"),
-            freshness_seconds: Some(5),
-            is_current: true,
-        }).unwrap();
+        store
+            .save_balance_snapshot(SaveBalanceSnapshot {
+                profile_id: &profile,
+                wallet_address: WALLET_A,
+                token_mint: WALLET_A,
+                raw_amount: "1000000",
+                token_decimals: 6,
+                source: "rpc-a",
+                observed_at: Some("2026-10-25T00:00:00Z"),
+                freshness_seconds: None,
+                is_current: true,
+            })
+            .unwrap();
+        store
+            .save_balance_snapshot(SaveBalanceSnapshot {
+                profile_id: &profile,
+                wallet_address: WALLET_B,
+                token_mint: WALLET_A,
+                raw_amount: "250000",
+                token_decimals: 6,
+                source: "rpc-b",
+                observed_at: Some("2026-10-25T00:01:00Z"),
+                freshness_seconds: Some(5),
+                is_current: true,
+            })
+            .unwrap();
         let holdings = store.portfolio_holdings(&profile, None).unwrap();
         assert_eq!(holdings[0].raw_amount, "1250000");
         assert_eq!(holdings[0].amount, "1.25");
@@ -1184,17 +1225,23 @@ mod tests {
         let profile = store.create_profile("Balances", None, None).unwrap();
         store.associate_source_wallet(&profile, WALLET_A).unwrap();
         for amount in ["10", "0"] {
-            store.save_balance_snapshot(SaveBalanceSnapshot {
-                profile_id: &profile,
-                wallet_address: WALLET_A,
-                token_mint: WALLET_A,
-                raw_amount: amount,
-                token_decimals: 0,
-                source: "rpc",
-                observed_at: Some(if amount == "10" { "2026-01-01T00:00:00Z" } else { "2026-01-02T00:00:00Z" }),
-                freshness_seconds: None,
-                is_current: true,
-            }).unwrap();
+            store
+                .save_balance_snapshot(SaveBalanceSnapshot {
+                    profile_id: &profile,
+                    wallet_address: WALLET_A,
+                    token_mint: WALLET_A,
+                    raw_amount: amount,
+                    token_decimals: 0,
+                    source: "rpc",
+                    observed_at: Some(if amount == "10" {
+                        "2026-01-01T00:00:00Z"
+                    } else {
+                        "2026-01-02T00:00:00Z"
+                    }),
+                    freshness_seconds: None,
+                    is_current: true,
+                })
+                .unwrap();
         }
         let rows = store.current_balances(&profile).unwrap();
         assert_eq!(rows.len(), 1);
@@ -1206,21 +1253,29 @@ mod tests {
         let (directory, store) = store();
         let profile = store.create_profile("Backup", None, None).unwrap();
         store.associate_source_wallet(&profile, WALLET_A).unwrap();
-        store.save_balance_snapshot(SaveBalanceSnapshot {
-            profile_id: &profile,
-            wallet_address: WALLET_A,
-            token_mint: WALLET_A,
-            raw_amount: "0",
-            token_decimals: 6,
-            source: "rpc",
-            observed_at: Some("2026-01-02T03:04:05Z"),
-            freshness_seconds: None,
-            is_current: true,
-        }).unwrap();
+        store
+            .save_balance_snapshot(SaveBalanceSnapshot {
+                profile_id: &profile,
+                wallet_address: WALLET_A,
+                token_mint: WALLET_A,
+                raw_amount: "0",
+                token_decimals: 6,
+                source: "rpc",
+                observed_at: Some("2026-01-02T03:04:05Z"),
+                freshness_seconds: None,
+                is_current: true,
+            })
+            .unwrap();
         let backup = directory.path().join("backup.db");
         store.backup_to(&backup).unwrap();
         let restored = ProfileStore::open(backup).unwrap();
-        assert_eq!(restored.get_profile(&profile).unwrap().unwrap().name, "Backup");
-        assert_eq!(restored.current_balances(&profile).unwrap()[0].raw_amount, "0");
+        assert_eq!(
+            restored.get_profile(&profile).unwrap().unwrap().name,
+            "Backup"
+        );
+        assert_eq!(
+            restored.current_balances(&profile).unwrap()[0].raw_amount,
+            "0"
+        );
     }
 }

@@ -149,7 +149,10 @@ impl PaperSimulator {
                     "Balance token mint is required.".to_string(),
                 ));
             }
-            balances.insert(mint.clone(), decimal_value(amount, "Initial balance", true)?);
+            balances.insert(
+                mint.clone(),
+                decimal_value(amount, "Initial balance", true)?,
+            );
         }
 
         let mut simulator = Self {
@@ -311,13 +314,35 @@ impl PaperSimulator {
                 ))
             })?;
             for row in rows {
-                let (order_id, signal_id, side, asset_mint, quantity, quote_mint, status, reason, created_at, details_json) = row?;
+                let (
+                    order_id,
+                    signal_id,
+                    side,
+                    asset_mint,
+                    quantity,
+                    quote_mint,
+                    status,
+                    reason,
+                    created_at,
+                    details_json,
+                ) = row?;
                 let details = serde_json::from_str(&details_json)?;
                 self.processed_signals.insert(signal_id.clone());
-                self.orders.insert(order_id.clone(), PaperOrder {
-                    order_id, signal_id, side, asset_mint, quantity, quote_mint, status,
-                    reason, created_at, details,
-                });
+                self.orders.insert(
+                    order_id.clone(),
+                    PaperOrder {
+                        order_id,
+                        signal_id,
+                        side,
+                        asset_mint,
+                        quantity,
+                        quote_mint,
+                        status,
+                        reason,
+                        created_at,
+                        details,
+                    },
+                );
             }
         }
 
@@ -352,20 +377,26 @@ impl PaperSimulator {
                     created_at: row.get(17)?,
                 })
             })?;
-            for row in rows { self.fills.push(row?); }
+            for row in rows {
+                self.fills.push(row?);
+            }
         }
 
         Ok(())
     }
 
     fn read_meta(&self, key: &str) -> Result<Option<String>, PaperSimulatorError> {
-        if self.db_path.is_none() { return Ok(None); }
+        if self.db_path.is_none() {
+            return Ok(None);
+        }
         let connection = self.connect()?;
-        Ok(connection.query_row(
-            "SELECT value FROM simulator_meta WHERE key=?1",
-            [key],
-            |row| row.get(0),
-        ).optional()?)
+        Ok(connection
+            .query_row(
+                "SELECT value FROM simulator_meta WHERE key=?1",
+                [key],
+                |row| row.get(0),
+            )
+            .optional()?)
     }
 
     fn persist(
@@ -374,7 +405,9 @@ impl PaperSimulator {
         balances: Option<&BTreeMap<String, BigDecimal>>,
         fill: Option<&PaperFill>,
     ) -> Result<(), PaperSimulatorError> {
-        if self.db_path.is_none() { return Ok(()); }
+        if self.db_path.is_none() {
+            return Ok(());
+        }
         let mut connection = self.connect()?;
         let transaction = connection.transaction()?;
         Self::persist_order(&transaction, order)?;
@@ -395,11 +428,22 @@ impl PaperSimulator {
                     price_age_seconds,slippage_bps,created_at
                  ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
                 params![
-                    fill.fill_id, fill.order_id, fill.asset_mint, fill.quantity,
-                    fill.reference_price, fill.execution_price, fill.gross_quote, fill.fee,
-                    fill.network_cost, fill.net_quote, fill.currency, fill.price_source,
-                    fill.price_timestamp, fill.price_age_seconds as i64,
-                    i64::from(fill.slippage_bps), fill.created_at
+                    fill.fill_id,
+                    fill.order_id,
+                    fill.asset_mint,
+                    fill.quantity,
+                    fill.reference_price,
+                    fill.execution_price,
+                    fill.gross_quote,
+                    fill.fee,
+                    fill.network_cost,
+                    fill.net_quote,
+                    fill.currency,
+                    fill.price_source,
+                    fill.price_timestamp,
+                    fill.price_age_seconds as i64,
+                    i64::from(fill.slippage_bps),
+                    fill.created_at
                 ],
             )?;
         }
@@ -427,26 +471,47 @@ impl PaperSimulator {
         Ok(())
     }
 
-    pub fn balances(&self) -> &BTreeMap<String, BigDecimal> { &self.balances }
-    pub fn orders(&self) -> &BTreeMap<String, PaperOrder> { &self.orders }
-    pub fn fills(&self) -> &[PaperFill] { &self.fills }
+    pub fn balances(&self) -> &BTreeMap<String, BigDecimal> {
+        &self.balances
+    }
+    pub fn orders(&self) -> &BTreeMap<String, PaperOrder> {
+        &self.orders
+    }
+    pub fn fills(&self) -> &[PaperFill] {
+        &self.fills
+    }
 
     pub fn create_order(
         &mut self,
         request: CreateOrderRequest<'_>,
     ) -> Result<Value, PaperSimulatorError> {
-        let CreateOrderRequest { signal_id, side, asset_mint, quantity, quote_mint, created_at, details } = request;
+        let CreateOrderRequest {
+            signal_id,
+            side,
+            asset_mint,
+            quantity,
+            quote_mint,
+            created_at,
+            details,
+        } = request;
         if signal_id.trim().is_empty() {
-            return Err(PaperSimulatorError::InvalidInput("Signal ID is required for deduplication.".to_string()));
+            return Err(PaperSimulatorError::InvalidInput(
+                "Signal ID is required for deduplication.".to_string(),
+            ));
         }
         if self.processed_signals.contains(signal_id) {
             return Ok(json!({"status":"DUPLICATE","signal_id":signal_id}));
         }
         if !matches!(side, "BUY" | "SELL") {
-            return Err(PaperSimulatorError::InvalidInput("Side must be BUY or SELL.".to_string()));
+            return Err(PaperSimulatorError::InvalidInput(
+                "Side must be BUY or SELL.".to_string(),
+            ));
         }
-        if asset_mint.trim().is_empty() || quote_mint.trim().is_empty() || asset_mint == quote_mint {
-            return Err(PaperSimulatorError::InvalidInput("Distinct asset and quote mints are required.".to_string()));
+        if asset_mint.trim().is_empty() || quote_mint.trim().is_empty() || asset_mint == quote_mint
+        {
+            return Err(PaperSimulatorError::InvalidInput(
+                "Distinct asset and quote mints are required.".to_string(),
+            ));
         }
         let qty = decimal_value(quantity, "Order quantity", false)?;
         crate::pnl::parse_timestamp(created_at)?;
@@ -455,11 +520,13 @@ impl PaperSimulator {
         // UNIQUE constraint remains the final idempotency boundary across processes.
         if self.db_path.is_some() {
             let connection = self.connect()?;
-            let existing: Option<String> = connection.query_row(
-                "SELECT order_id FROM simulated_orders WHERE signal_id=?1",
-                [signal_id],
-                |row| row.get(0),
-            ).optional()?;
+            let existing: Option<String> = connection
+                .query_row(
+                    "SELECT order_id FROM simulated_orders WHERE signal_id=?1",
+                    [signal_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
             if existing.is_some() {
                 self.processed_signals.insert(signal_id.to_string());
                 return Ok(json!({"status":"DUPLICATE","signal_id":signal_id}));
@@ -471,7 +538,9 @@ impl PaperSimulator {
         order_details.insert("real_trading".to_string(), json!(false));
         order_details.insert("transaction_broadcast".to_string(), json!(false));
         if let Some(Value::Object(extra)) = details {
-            for (key, value) in extra { order_details.insert(key, value); }
+            for (key, value) in extra {
+                order_details.insert(key, value);
+            }
         }
         let order = PaperOrder {
             order_id: Uuid::new_v4().to_string(),
@@ -487,7 +556,8 @@ impl PaperSimulator {
         };
 
         if let Err(error) = self.persist(&order, None, None) {
-            if matches!(&error, PaperSimulatorError::Database(rusqlite::Error::SqliteFailure(code, _)) if code.code == rusqlite::ErrorCode::ConstraintViolation) {
+            if matches!(&error, PaperSimulatorError::Database(rusqlite::Error::SqliteFailure(code, _)) if code.code == rusqlite::ErrorCode::ConstraintViolation)
+            {
                 return Ok(json!({"status":"DUPLICATE","signal_id":signal_id}));
             }
             return Err(error);
@@ -503,7 +573,9 @@ impl PaperSimulator {
         mint: &str,
     ) -> Result<Value, PaperSimulatorError> {
         if mint.trim().is_empty() || mint.trim().len() > 128 {
-            return Err(PaperSimulatorError::InvalidInput("A token mint or paper asset symbol (max 128 characters) is required.".to_string()));
+            return Err(PaperSimulatorError::InvalidInput(
+                "A token mint or paper asset symbol (max 128 characters) is required.".to_string(),
+            ));
         }
         let value = decimal_value(amount, "Initial virtual balance", true)?;
         let stored = match self.read_meta("initial_balance")? {
@@ -523,7 +595,9 @@ impl PaperSimulator {
                     "The stored starting balance does not match this asset balance.".to_string(),
                 ));
             }
-            return Ok(json!({"mint":mint,"initial_balance":value.to_string(),"balance":value.to_string(),"simulated":true,"real_trading":false,"transaction_broadcast":false}));
+            return Ok(
+                json!({"mint":mint,"initial_balance":value.to_string(),"balance":value.to_string(),"simulated":true,"real_trading":false,"transaction_broadcast":false}),
+            );
         }
 
         if self.orders.values().any(|order| order.status == "FILLED") {
@@ -550,32 +624,62 @@ impl PaperSimulator {
         self.balances.insert(mint.to_string(), value.clone());
         self.initial_balance = Some(value.to_string());
         self.initial_balance_mint = Some(mint.to_string());
-        Ok(json!({"mint":mint,"initial_balance":value.to_string(),"balance":value.to_string(),"simulated":true,"real_trading":false,"transaction_broadcast":false}))
+        Ok(
+            json!({"mint":mint,"initial_balance":value.to_string(),"balance":value.to_string(),"simulated":true,"real_trading":false,"transaction_broadcast":false}),
+        )
     }
 
-    pub fn set_virtual_balance(&mut self, amount: &str, mint: &str) -> Result<Value, PaperSimulatorError> {
+    pub fn set_virtual_balance(
+        &mut self,
+        amount: &str,
+        mint: &str,
+    ) -> Result<Value, PaperSimulatorError> {
         if mint.trim().is_empty() || mint.trim().len() > 128 {
-            return Err(PaperSimulatorError::InvalidInput("A virtual balance currency is required.".to_string()));
+            return Err(PaperSimulatorError::InvalidInput(
+                "A virtual balance currency is required.".to_string(),
+            ));
         }
         let value = decimal_value(amount, "Virtual balance", true)?;
         self.persist_balance(mint, &value, true)?;
         self.balances.insert(mint.to_string(), value.clone());
-        Ok(json!({"mint":mint,"balance":value.to_string(),"simulated":true,"real_trading":false,"transaction_broadcast":false}))
+        Ok(
+            json!({"mint":mint,"balance":value.to_string(),"simulated":true,"real_trading":false,"transaction_broadcast":false}),
+        )
     }
 
-    pub fn add_virtual_balance(&mut self, mint: &str, amount: &str) -> Result<Value, PaperSimulatorError> {
+    pub fn add_virtual_balance(
+        &mut self,
+        mint: &str,
+        amount: &str,
+    ) -> Result<Value, PaperSimulatorError> {
         if mint.trim().is_empty() || mint.trim().len() > 128 {
-            return Err(PaperSimulatorError::InvalidInput("A token mint or paper asset symbol (max 128 characters) is required.".to_string()));
+            return Err(PaperSimulatorError::InvalidInput(
+                "A token mint or paper asset symbol (max 128 characters) is required.".to_string(),
+            ));
         }
         let value = decimal_value(amount, "Virtual funding amount", false)?;
-        let updated = self.balances.get(mint).cloned().unwrap_or_else(BigDecimal::zero) + &value;
+        let updated = self
+            .balances
+            .get(mint)
+            .cloned()
+            .unwrap_or_else(BigDecimal::zero)
+            + &value;
         self.persist_balance(mint, &updated, false)?;
         self.balances.insert(mint.to_string(), updated.clone());
-        Ok(json!({"mint":mint,"added":value.to_string(),"balance":updated.to_string(),"simulated":true,"real_trading":false,"transaction_broadcast":false}))
+        Ok(
+            json!({"mint":mint,"added":value.to_string(),"balance":updated.to_string(),"simulated":true,"real_trading":false,"transaction_broadcast":false}),
+        )
     }
 
-    fn persist_balance(&self, mint: &str, value: &BigDecimal, set_initial_if_missing: bool) -> Result<(), PaperSimulatorError> {
-        if self.db_path.is_none() { return Ok(()); }
+    fn persist_balance(
+        &self,
+        mint: &str,
+        value: &BigDecimal,
+        set_initial_if_missing: bool,
+    ) -> Result<(), PaperSimulatorError> {
+        if self.db_path.is_none() {
+            return Ok(());
+        }
         let mut connection = self.connect()?;
         let transaction = connection.transaction()?;
         transaction.execute(
@@ -609,15 +713,27 @@ impl PaperSimulator {
                 "Cancellation reason must contain 1 to 300 characters.".to_string(),
             ));
         }
-        let mut order = self.orders.get(order_id).cloned().ok_or(PaperSimulatorError::OrderNotFound)?;
+        let mut order = self
+            .orders
+            .get(order_id)
+            .cloned()
+            .ok_or(PaperSimulatorError::OrderNotFound)?;
         if order.status != "CREATED" {
-            return Ok(json!({"status":"REJECTED","reason":"Only unexecuted orders can be cancelled."}));
+            return Ok(
+                json!({"status":"REJECTED","reason":"Only unexecuted orders can be cancelled."}),
+            );
         }
         order.status = "CANCELLED".to_string();
         order.reason = Some(safe_reason.to_string());
         if let Some(details) = order.details.as_object_mut() {
-            details.insert("execution_state".to_string(), Value::String("CANCELLED".to_string()));
-            details.insert("paper_copy_skip_reason".to_string(), Value::String(safe_reason.to_string()));
+            details.insert(
+                "execution_state".to_string(),
+                Value::String("CANCELLED".to_string()),
+            );
+            details.insert(
+                "paper_copy_skip_reason".to_string(),
+                Value::String(safe_reason.to_string()),
+            );
         }
         self.persist(&order, None, None)?;
         self.orders.insert(order_id.to_string(), order.clone());
@@ -653,20 +769,32 @@ impl PaperSimulator {
         policy: &ExecutionPolicy,
         rpc_ok: bool,
     ) -> Result<Value, PaperSimulatorError> {
-        let mut order = self.orders.get(order_id).cloned().ok_or(PaperSimulatorError::OrderNotFound)?;
+        let mut order = self
+            .orders
+            .get(order_id)
+            .cloned()
+            .ok_or(PaperSimulatorError::OrderNotFound)?;
         if order.status != "CREATED" {
             return Ok(json!({"status":"REJECTED","reason":"Order is not awaiting execution."}));
         }
         if !rpc_ok {
-            return self.wait_for_market_data(&mut order, "RPC/provider data unavailable; retrying without a fill.");
+            return self.wait_for_market_data(
+                &mut order,
+                "RPC/provider data unavailable; retrying without a fill.",
+            );
         }
 
         let Some(price) = market_price else {
             return self.wait_for_market_data(&mut order, "Market price unavailable; retrying.");
         };
         price.validate()?;
-        if price.mint != order.asset_mint || !price.is_fresh(policy.max_price_age_seconds, Some(now))? {
-            return self.wait_for_market_data(&mut order, "Market price is stale or for a different token; retrying without a fill.");
+        if price.mint != order.asset_mint
+            || !price.is_fresh(policy.max_price_age_seconds, Some(now))?
+        {
+            return self.wait_for_market_data(
+                &mut order,
+                "Market price is stale or for a different token; retrying without a fill.",
+            );
         }
 
         if let Some(liquidity) = &price.liquidity_usd {
@@ -676,14 +804,23 @@ impl PaperSimulator {
                 return self.wait_for_market_data(&mut order, "Liquidity is stale or below the configured USD minimum; retrying without a fill.");
             }
         } else if policy.require_liquidity {
-            return self.wait_for_market_data(&mut order, "Liquidity data unavailable; retrying without a fill.");
+            return self.wait_for_market_data(
+                &mut order,
+                "Liquidity data unavailable; retrying without a fill.",
+            );
         }
 
         if policy.slippage_bps > 10_000 || policy.fee_bps > 10_000 {
-            return Err(PaperSimulatorError::InvalidInput("Slippage and fee basis points must be between 0 and 10000.".to_string()));
+            return Err(PaperSimulatorError::InvalidInput(
+                "Slippage and fee basis points must be between 0 and 10000.".to_string(),
+            ));
         }
         let mut quantity = decimal_value(&order.quantity, "Order quantity", false)?;
-        if let Some(target) = order.details.get("target_notional_usd").and_then(Value::as_str) {
+        if let Some(target) = order
+            .details
+            .get("target_notional_usd")
+            .and_then(Value::as_str)
+        {
             let target_value = decimal_value(target, "Target USD paper order size", false)?;
             quantity = target_value / &price.price;
             order.quantity = quantity.to_string();
@@ -695,10 +832,13 @@ impl PaperSimulator {
         let execution_price = if order.side == "BUY" {
             &reference_price * slip_factor
         } else {
-            &reference_price * (BigDecimal::from(10_000_i64 - i64::from(policy.slippage_bps)) / BigDecimal::from(10_000_i64))
+            &reference_price
+                * (BigDecimal::from(10_000_i64 - i64::from(policy.slippage_bps))
+                    / BigDecimal::from(10_000_i64))
         };
         let gross = &quantity * &execution_price;
-        let fee = &gross * BigDecimal::from(i64::from(policy.fee_bps)) / BigDecimal::from(10_000_i64);
+        let fee =
+            &gross * BigDecimal::from(i64::from(policy.fee_bps)) / BigDecimal::from(10_000_i64);
         let network = decimal_value(&policy.network_cost, "Network cost", true)?;
         let total_cost_or_proceeds = if order.side == "BUY" {
             &gross + &fee + &network
@@ -710,20 +850,32 @@ impl PaperSimulator {
         }
 
         let mut balances = self.balances.clone();
-        let asset_balance = balances.get(&order.asset_mint).cloned().unwrap_or_else(BigDecimal::zero);
-        let quote_balance = balances.get(&order.quote_mint).cloned().unwrap_or_else(BigDecimal::zero);
+        let asset_balance = balances
+            .get(&order.asset_mint)
+            .cloned()
+            .unwrap_or_else(BigDecimal::zero);
+        let quote_balance = balances
+            .get(&order.quote_mint)
+            .cloned()
+            .unwrap_or_else(BigDecimal::zero);
         if order.side == "BUY" {
             if quote_balance < total_cost_or_proceeds {
                 return self.reject_order(&mut order, "Insufficient simulated quote balance.");
             }
-            balances.insert(order.quote_mint.clone(), quote_balance - &total_cost_or_proceeds);
+            balances.insert(
+                order.quote_mint.clone(),
+                quote_balance - &total_cost_or_proceeds,
+            );
             balances.insert(order.asset_mint.clone(), asset_balance + &quantity);
         } else {
             if asset_balance < quantity {
                 return self.reject_order(&mut order, "Insufficient simulated asset balance.");
             }
             balances.insert(order.asset_mint.clone(), asset_balance - &quantity);
-            balances.insert(order.quote_mint.clone(), quote_balance + &total_cost_or_proceeds);
+            balances.insert(
+                order.quote_mint.clone(),
+                quote_balance + &total_cost_or_proceeds,
+            );
         }
 
         let fill = PaperFill {
@@ -750,10 +902,22 @@ impl PaperSimulator {
         order.status = "FILLED".to_string();
         order.reason = None;
         set_detail(&mut order.details, "execution_state", json!("FILLED"));
-        set_detail(&mut order.details, "reference_price", json!(reference_price.to_string()));
-        set_detail(&mut order.details, "execution_price", json!(execution_price.to_string()));
+        set_detail(
+            &mut order.details,
+            "reference_price",
+            json!(reference_price.to_string()),
+        );
+        set_detail(
+            &mut order.details,
+            "execution_price",
+            json!(execution_price.to_string()),
+        );
         set_detail(&mut order.details, "fee", json!(fee.to_string()));
-        set_detail(&mut order.details, "network_cost", json!(network.to_string()));
+        set_detail(
+            &mut order.details,
+            "network_cost",
+            json!(network.to_string()),
+        );
         set_detail(&mut order.details, "fill_id", json!(fill.fill_id));
 
         // This single SQLite transaction commits the order, balances, and fill together.
@@ -770,10 +934,18 @@ impl PaperSimulator {
         }))
     }
 
-    fn wait_for_market_data(&mut self, order: &mut PaperOrder, reason: &str) -> Result<Value, PaperSimulatorError> {
+    fn wait_for_market_data(
+        &mut self,
+        order: &mut PaperOrder,
+        reason: &str,
+    ) -> Result<Value, PaperSimulatorError> {
         order.status = "CREATED".to_string();
         order.reason = Some(reason.to_string());
-        set_detail(&mut order.details, "execution_state", json!("WAITING_FOR_MARKET_DATA"));
+        set_detail(
+            &mut order.details,
+            "execution_state",
+            json!("WAITING_FOR_MARKET_DATA"),
+        );
         self.persist(order, None, None)?;
         self.orders.insert(order.order_id.clone(), order.clone());
         Ok(json!({
@@ -782,7 +954,11 @@ impl PaperSimulator {
         }))
     }
 
-    fn reject_order(&mut self, order: &mut PaperOrder, reason: &str) -> Result<Value, PaperSimulatorError> {
+    fn reject_order(
+        &mut self,
+        order: &mut PaperOrder,
+        reason: &str,
+    ) -> Result<Value, PaperSimulatorError> {
         order.status = "REJECTED".to_string();
         order.reason = Some(reason.to_string());
         set_detail(&mut order.details, "execution_state", json!("REJECTED"));
@@ -801,51 +977,89 @@ impl PaperSimulator {
             match fill.side.as_str() {
                 "BUY" => {
                     ledger.buy(
-                        &fill.asset_mint, &fill.quantity, &fill.execution_price,
-                        &fill.fee, false, &fill.network_cost, Some(&fill.created_at),
+                        &fill.asset_mint,
+                        &fill.quantity,
+                        &fill.execution_price,
+                        &fill.fee,
+                        false,
+                        &fill.network_cost,
+                        Some(&fill.created_at),
                     )?;
                 }
                 "SELL" => {
-                    let tracked = decimal_value(&ledger.snapshot(&fill.asset_mint).quantity, "Tracked quantity", true)?;
+                    let tracked = decimal_value(
+                        &ledger.snapshot(&fill.asset_mint).quantity,
+                        "Tracked quantity",
+                        true,
+                    )?;
                     let sold = decimal_value(&fill.quantity, "Quantity", false)?;
                     if sold > tracked {
                         let missing = &sold - &tracked;
-                        ledger.deposit(&fill.asset_mint, &missing.to_string(), None, Some(&fill.created_at))?;
+                        ledger.deposit(
+                            &fill.asset_mint,
+                            &missing.to_string(),
+                            None,
+                            Some(&fill.created_at),
+                        )?;
                     }
                     let event = ledger.sell(
-                        &fill.asset_mint, &fill.quantity, &fill.execution_price,
-                        &fill.fee, false, &fill.network_cost, Some(&fill.created_at),
+                        &fill.asset_mint,
+                        &fill.quantity,
+                        &fill.execution_price,
+                        &fill.fee,
+                        false,
+                        &fill.network_cost,
+                        Some(&fill.created_at),
                     )?;
-                    let entry = realized.entry(fill.asset_mint.clone())
+                    let entry = realized
+                        .entry(fill.asset_mint.clone())
                         .or_insert((BigDecimal::zero(), true));
                     match event.realized_pnl {
-                        Some(value) => entry.0 += BigDecimal::from_str(&value)
-                            .map_err(|_| PaperSimulatorError::InvalidInput("Invalid P&L result.".to_string()))?,
+                        Some(value) => {
+                            entry.0 += BigDecimal::from_str(&value).map_err(|_| {
+                                PaperSimulatorError::InvalidInput("Invalid P&L result.".to_string())
+                            })?
+                        }
                         None => entry.1 = false,
                     }
                 }
-                _ => return Err(PaperSimulatorError::InvalidInput("Persisted fill has an invalid side.".to_string())),
+                _ => {
+                    return Err(PaperSimulatorError::InvalidInput(
+                        "Persisted fill has an invalid side.".to_string(),
+                    ))
+                }
             }
         }
-        let realized_by_mint = realized.into_iter().map(|(mint,(value,complete))| {
-            (mint, json!({
-                "pnl": if complete { Some(value.to_string()) } else { None },
-                "status": if complete { "calculated" } else { "unknown_cost_basis" },
-                "currency":"USD"
-            }))
-        }).collect();
+        let realized_by_mint = realized
+            .into_iter()
+            .map(|(mint, (value, complete))| {
+                (
+                    mint,
+                    json!({
+                        "pnl": if complete { Some(value.to_string()) } else { None },
+                        "status": if complete { "calculated" } else { "unknown_cost_basis" },
+                        "currency":"USD"
+                    }),
+                )
+            })
+            .collect();
 
         Ok(PaperPnlSummary {
             cost_basis_method: "average_cost".to_string(),
             currency: "USD".to_string(),
             realized_by_mint,
             unrealized_status: "unavailable_no_verified_fresh_market_price".to_string(),
-            unrealized_note: "No verified market-price provider is connected to the simulator.".to_string(),
+            unrealized_note: "No verified market-price provider is connected to the simulator."
+                .to_string(),
         })
     }
 
     pub fn report(&self) -> Result<Value, PaperSimulatorError> {
-        let balances = self.balances.iter().map(|(mint,amount)| (mint.clone(), json!(amount.to_string()))).collect::<Map<_,_>>();
+        let balances = self
+            .balances
+            .iter()
+            .map(|(mint, amount)| (mint.clone(), json!(amount.to_string())))
+            .collect::<Map<_, _>>();
         Ok(json!({
             "mode":"PAPER_SIMULATION",
             "simulated":true,
@@ -880,104 +1094,176 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    fn now() -> &'static str { "2026-11-09T12:00:00Z" }
+    fn now() -> &'static str {
+        "2026-11-09T12:00:00Z"
+    }
 
-    fn virtual_cash() -> BTreeMap<String,String> {
-        BTreeMap::from([("USD".to_string(),"100".to_string())])
+    fn virtual_cash() -> BTreeMap<String, String> {
+        BTreeMap::from([("USD".to_string(), "100".to_string())])
     }
 
     fn price(mint: &str) -> MarketPrice {
         MarketPrice::new(
-            mint,"10","USD","test-feed",now(),Some("50000"),
-            Some("test-liquidity".to_string()),Some(now().to_string())
-        ).unwrap()
+            mint,
+            "10",
+            "USD",
+            "test-feed",
+            now(),
+            Some("50000"),
+            Some("test-liquidity".to_string()),
+            Some(now().to_string()),
+        )
+        .unwrap()
     }
 
     fn buy_order(sim: &mut PaperSimulator, signal: &str) -> String {
         sim.create_order(CreateOrderRequest {
-            signal_id: signal, side: "BUY", asset_mint: "TOKEN", quantity: "1",
-            quote_mint: "USD", created_at: now(), details: Some(json!({
+            signal_id: signal,
+            side: "BUY",
+            asset_mint: "TOKEN",
+            quantity: "1",
+            quote_mint: "USD",
+            created_at: now(),
+            details: Some(json!({
                 "target_notional_usd":"20","origin":"AUTOMATIC_WALLET_COPY"
             })),
-        }).unwrap()["order_id"].as_str().unwrap().to_string()
+        })
+        .unwrap()["order_id"]
+            .as_str()
+            .unwrap()
+            .to_string()
     }
 
     #[test]
     fn fills_a_paper_buy_with_decimal_accounting() {
-        let mut sim=PaperSimulator::in_memory(&virtual_cash()).unwrap();
-        let id=buy_order(&mut sim,"signal-1");
-        let result=sim.execute_order(&id,Some(&price("TOKEN")),now(),&ExecutionPolicy::default(),true).unwrap();
-        assert_eq!(result["status"],"FILLED");
-        assert_eq!(sim.balances()["USD"].to_string(),"79.8799");
-        assert_eq!(sim.balances()["TOKEN"].to_string(),"2");
-        assert_eq!(sim.fills().len(),1);
-        assert_eq!(result["transaction_broadcast"],false);
+        let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
+        let id = buy_order(&mut sim, "signal-1");
+        let result = sim
+            .execute_order(
+                &id,
+                Some(&price("TOKEN")),
+                now(),
+                &ExecutionPolicy::default(),
+                true,
+            )
+            .unwrap();
+        assert_eq!(result["status"], "FILLED");
+        assert_eq!(sim.balances()["USD"].to_string(), "79.8799");
+        assert_eq!(sim.balances()["TOKEN"].to_string(), "2");
+        assert_eq!(sim.fills().len(), 1);
+        assert_eq!(result["transaction_broadcast"], false);
     }
 
     #[test]
     fn duplicate_signal_cannot_create_a_second_order() {
-        let mut sim=PaperSimulator::in_memory(&virtual_cash()).unwrap();
-        let first=buy_order(&mut sim,"same-signal");
-        let second=sim.create_order(CreateOrderRequest {
-            signal_id: "same-signal", side: "BUY", asset_mint: "TOKEN", quantity: "1",
-            quote_mint: "USD", created_at: now(), details: None,
-        }).unwrap();
-        assert_eq!(second["status"],"DUPLICATE");
-        assert_eq!(sim.orders().len(),1);
+        let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
+        let first = buy_order(&mut sim, "same-signal");
+        let second = sim
+            .create_order(CreateOrderRequest {
+                signal_id: "same-signal",
+                side: "BUY",
+                asset_mint: "TOKEN",
+                quantity: "1",
+                quote_mint: "USD",
+                created_at: now(),
+                details: None,
+            })
+            .unwrap();
+        assert_eq!(second["status"], "DUPLICATE");
+        assert_eq!(sim.orders().len(), 1);
         assert!(!first.is_empty());
     }
 
     #[test]
     fn stale_price_waits_without_fabricating_a_fill() {
-        let mut sim=PaperSimulator::in_memory(&virtual_cash()).unwrap();
-        let id=buy_order(&mut sim,"stale-price");
-        let stale=MarketPrice::new(
-            "TOKEN","10","USD","test-feed","2026-11-09T11:58:00Z",Some("50000"),
-            Some("test-liquidity".to_string()),Some(now().to_string())
-        ).unwrap();
-        let outcome=sim.execute_order(&id,Some(&stale),now(),&ExecutionPolicy::default(),true).unwrap();
-        assert_eq!(outcome["status"],"WAITING_FOR_MARKET_DATA");
+        let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
+        let id = buy_order(&mut sim, "stale-price");
+        let stale = MarketPrice::new(
+            "TOKEN",
+            "10",
+            "USD",
+            "test-feed",
+            "2026-11-09T11:58:00Z",
+            Some("50000"),
+            Some("test-liquidity".to_string()),
+            Some(now().to_string()),
+        )
+        .unwrap();
+        let outcome = sim
+            .execute_order(&id, Some(&stale), now(), &ExecutionPolicy::default(), true)
+            .unwrap();
+        assert_eq!(outcome["status"], "WAITING_FOR_MARKET_DATA");
         assert!(sim.fills().is_empty());
     }
 
     #[test]
     fn sell_cannot_exceed_virtual_token_balance() {
-        let mut balances=virtual_cash();
-        balances.insert("TOKEN".to_string(),"1".to_string());
-        let mut sim=PaperSimulator::in_memory(&balances).unwrap();
-        let order=sim.create_order(CreateOrderRequest {
-            signal_id: "sell-too-much", side: "SELL", asset_mint: "TOKEN", quantity: "2",
-            quote_mint: "USD", created_at: now(), details: None,
-        }).unwrap();
-        let id=order["order_id"].as_str().unwrap();
-        let result=sim.execute_order(id,Some(&price("TOKEN")),now(),&ExecutionPolicy::default(),true).unwrap();
-        assert_eq!(result["status"],"REJECTED");
-        assert_eq!(sim.balances()["TOKEN"].to_string(),"1");
+        let mut balances = virtual_cash();
+        balances.insert("TOKEN".to_string(), "1".to_string());
+        let mut sim = PaperSimulator::in_memory(&balances).unwrap();
+        let order = sim
+            .create_order(CreateOrderRequest {
+                signal_id: "sell-too-much",
+                side: "SELL",
+                asset_mint: "TOKEN",
+                quantity: "2",
+                quote_mint: "USD",
+                created_at: now(),
+                details: None,
+            })
+            .unwrap();
+        let id = order["order_id"].as_str().unwrap();
+        let result = sim
+            .execute_order(
+                id,
+                Some(&price("TOKEN")),
+                now(),
+                &ExecutionPolicy::default(),
+                true,
+            )
+            .unwrap();
+        assert_eq!(result["status"], "REJECTED");
+        assert_eq!(sim.balances()["TOKEN"].to_string(), "1");
         assert!(sim.fills().is_empty());
     }
 
     #[test]
     fn restart_recovers_order_balances_and_fill() {
-        let dir=tempdir().unwrap();
-        let path=dir.path().join("paper.db");
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("paper.db");
         let id;
         {
-            let mut sim=PaperSimulator::open(&path,&virtual_cash()).unwrap();
-            id=buy_order(&mut sim,"restart-signal");
-            sim.execute_order(&id,Some(&price("TOKEN")),now(),&ExecutionPolicy::default(),true).unwrap();
+            let mut sim = PaperSimulator::open(&path, &virtual_cash()).unwrap();
+            id = buy_order(&mut sim, "restart-signal");
+            sim.execute_order(
+                &id,
+                Some(&price("TOKEN")),
+                now(),
+                &ExecutionPolicy::default(),
+                true,
+            )
+            .unwrap();
         }
-        let sim=PaperSimulator::open(&path,&BTreeMap::new()).unwrap();
-        assert_eq!(sim.orders()[&id].status,"FILLED");
-        assert_eq!(sim.fills().len(),1);
-        assert_eq!(sim.balances()["TOKEN"].to_string(),"2");
+        let sim = PaperSimulator::open(&path, &BTreeMap::new()).unwrap();
+        assert_eq!(sim.orders()[&id].status, "FILLED");
+        assert_eq!(sim.fills().len(), 1);
+        assert_eq!(sim.balances()["TOKEN"].to_string(), "2");
     }
 
     #[test]
     fn failed_provider_does_not_create_a_fill() {
-        let mut sim=PaperSimulator::in_memory(&virtual_cash()).unwrap();
-        let id=buy_order(&mut sim,"rpc-fail");
-        let result=sim.execute_order(&id,Some(&price("TOKEN")),now(),&ExecutionPolicy::default(),false).unwrap();
-        assert_eq!(result["status"],"WAITING_FOR_MARKET_DATA");
-        assert_eq!(sim.balances()["USD"].to_string(),"100");
+        let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
+        let id = buy_order(&mut sim, "rpc-fail");
+        let result = sim
+            .execute_order(
+                &id,
+                Some(&price("TOKEN")),
+                now(),
+                &ExecutionPolicy::default(),
+                false,
+            )
+            .unwrap();
+        assert_eq!(result["status"], "WAITING_FOR_MARKET_DATA");
+        assert_eq!(sim.balances()["USD"].to_string(), "100");
     }
 }

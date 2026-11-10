@@ -57,10 +57,7 @@ pub fn get_wallet_signatures(
 }
 
 /// Return unseen valid rows while preserving provider order and row metadata.
-pub fn filter_new_signatures(
-    signatures: &[Value],
-    seen_signatures: &[String],
-) -> Vec<Value> {
+pub fn filter_new_signatures(signatures: &[Value], seen_signatures: &[String]) -> Vec<Value> {
     let mut seen: HashSet<String> = seen_signatures.iter().cloned().collect();
     let mut new_rows = Vec::new();
     for item in signatures {
@@ -82,13 +79,7 @@ pub fn get_new_wallet_signatures(
     limit: usize,
     latency_recorder: Option<&LatencyRecorder>,
 ) -> Result<Vec<Value>, WalletMonitorError> {
-    let signatures = get_wallet_signatures(
-        client,
-        wallet_address,
-        limit,
-        None,
-        latency_recorder,
-    )?;
+    let signatures = get_wallet_signatures(client, wallet_address, limit, None, latency_recorder)?;
     Ok(filter_new_signatures(&signatures, seen_signatures))
 }
 
@@ -205,22 +196,22 @@ pub fn get_and_store_new_wallet_signatures(
         ));
     }
     validate_page_size(limit)?;
-    let first_page = get_wallet_signatures(
-        client,
-        wallet_address,
-        limit,
-        None,
-        latency_recorder,
-    )?;
+    let first_page = get_wallet_signatures(client, wallet_address, limit, None, latency_recorder)?;
 
     if !store.has_baseline(wallet_address)? {
         initialize_wallet_baseline(store, wallet_address, &first_page)?;
         return Ok(Vec::new());
     }
 
-    scan_existing_wallet_pages(store, wallet_address, first_page, limit, |wallet, page_limit, before| {
-        get_wallet_signatures(client, wallet, page_limit, before, latency_recorder)
-    })
+    scan_existing_wallet_pages(
+        store,
+        wallet_address,
+        first_page,
+        limit,
+        |wallet, page_limit, before| {
+            get_wallet_signatures(client, wallet, page_limit, before, latency_recorder)
+        },
+    )
 }
 
 #[cfg(test)]
@@ -237,7 +228,10 @@ mod tests {
     fn store() -> (tempfile::TempDir, SignatureStore) {
         let directory = tempdir().expect("temporary directory");
         let database = directory.path().join("monitor.db");
-        (directory, SignatureStore::open(database).expect("signature store"))
+        (
+            directory,
+            SignatureStore::open(database).expect("signature store"),
+        )
     }
 
     #[test]
@@ -263,9 +257,18 @@ mod tests {
         ];
         initialize_wallet_baseline(&store, WALLET, &rows).unwrap();
         assert!(store.has_baseline(WALLET).unwrap());
-        assert_eq!(store.get_status(WALLET, ANCHOR).unwrap().as_deref(), Some("processed"));
-        assert_eq!(store.get_status(WALLET, NEW_A).unwrap().as_deref(), Some("processed"));
-        assert_eq!(store.pending_signatures(WALLET, 10).unwrap(), Vec::<String>::new());
+        assert_eq!(
+            store.get_status(WALLET, ANCHOR).unwrap().as_deref(),
+            Some("processed")
+        );
+        assert_eq!(
+            store.get_status(WALLET, NEW_A).unwrap().as_deref(),
+            Some("processed")
+        );
+        assert_eq!(
+            store.pending_signatures(WALLET, 10).unwrap(),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -279,15 +282,17 @@ mod tests {
             serde_json::json!({"signature":NEW_B,"slot":101}),
         ];
         let mut calls = Vec::new();
-        let result = scan_existing_wallet_pages(&store, WALLET, first, 2, |wallet, limit, before| {
-            assert_eq!(wallet, WALLET);
-            assert_eq!(limit, 2);
-            calls.push(before.map(str::to_string));
-            Ok(vec![
-                serde_json::json!({"signature":ANCHOR,"slot":100}),
-                serde_json::json!({"signature":OLDER,"slot":99}),
-            ])
-        }).unwrap();
+        let result =
+            scan_existing_wallet_pages(&store, WALLET, first, 2, |wallet, limit, before| {
+                assert_eq!(wallet, WALLET);
+                assert_eq!(limit, 2);
+                calls.push(before.map(str::to_string));
+                Ok(vec![
+                    serde_json::json!({"signature":ANCHOR,"slot":100}),
+                    serde_json::json!({"signature":OLDER,"slot":99}),
+                ])
+            })
+            .unwrap();
         let signatures: HashSet<_> = result
             .iter()
             .filter_map(|item| item.get("signature").and_then(Value::as_str))
@@ -308,12 +313,21 @@ mod tests {
             serde_json::json!({"signature":NEW_A,"slot":102}),
             serde_json::json!({"signature":NEW_B,"slot":101}),
         ];
-        let result = scan_existing_wallet_pages(&store, WALLET, first, 2, |_wallet, _limit, _before| {
-            Err(WalletMonitorError::InvalidInput("simulated RPC failure".to_string()))
-        });
+        let result =
+            scan_existing_wallet_pages(&store, WALLET, first, 2, |_wallet, _limit, _before| {
+                Err(WalletMonitorError::InvalidInput(
+                    "simulated RPC failure".to_string(),
+                ))
+            });
         assert!(result.is_err());
-        assert_eq!(store.get_status(WALLET, NEW_A).unwrap().as_deref(), Some("pending"));
-        assert_eq!(store.get_status(WALLET, NEW_B).unwrap().as_deref(), Some("pending"));
+        assert_eq!(
+            store.get_status(WALLET, NEW_A).unwrap().as_deref(),
+            Some("pending")
+        );
+        assert_eq!(
+            store.get_status(WALLET, NEW_B).unwrap().as_deref(),
+            Some("pending")
+        );
     }
 
     #[test]
@@ -330,7 +344,7 @@ mod tests {
             let next = if calls % 2 == 0 { NEW_A } else { NEW_B };
             Ok(vec![
                 serde_json::json!({"signature":next,"slot":90-calls as u64}),
-                serde_json::json!({"signature":OLDER,"slot":89-calls as u64})
+                serde_json::json!({"signature":OLDER,"slot":89-calls as u64}),
             ])
         });
         assert!(calls <= 4);

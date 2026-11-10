@@ -11,12 +11,8 @@ use crate::solana_public::{SolanaRpcClient, SolanaRpcError};
 use crate::solana_validation::{is_valid_solana_address, is_valid_transaction_signature};
 use crate::source_freshness::source_block_time_ok;
 use crate::transaction_analysis::classify_transaction;
-use crate::transaction_processor::{
-    process_transaction_signature, TransactionProcessorError,
-};
-use crate::wallet_monitor::{
-    get_and_store_new_wallet_signatures, WalletMonitorError,
-};
+use crate::transaction_processor::{process_transaction_signature, TransactionProcessorError};
+use crate::wallet_monitor::{get_and_store_new_wallet_signatures, WalletMonitorError};
 
 const MAX_PROCESSING_ATTEMPTS: u32 = 6;
 
@@ -110,7 +106,10 @@ pub fn prepare_wallet_transaction_result(
     result = include_signature_observation(result, &item);
 
     let status = result.get("status").and_then(Value::as_str);
-    let raw_transaction = result.get("raw_transaction").cloned().unwrap_or(Value::Null);
+    let raw_transaction = result
+        .get("raw_transaction")
+        .cloned()
+        .unwrap_or(Value::Null);
     let changes = result
         .get("token_balance_changes")
         .cloned()
@@ -130,16 +129,13 @@ pub fn prepare_wallet_transaction_result(
         unknown_signal(
             "Signature status reports a transaction error; no buy/sell candidate was created.",
         )
-    } else if status == Some("success")
-        && !matches!(confirmation, Some("confirmed" | "finalized"))
+    } else if status == Some("success") && !matches!(confirmation, Some("confirmed" | "finalized"))
     {
         unknown_signal(
             "Transaction confirmation is insufficient; no buy/sell candidate was created.",
         )
     } else if status == Some("success") && !wallet_is_signer {
-        unknown_signal(
-            "The monitored wallet is not confirmed as a transaction signer.",
-        )
+        unknown_signal("The monitored wallet is not confirmed as a transaction signer.")
     } else if status == Some("success") {
         classify_transaction(&raw_transaction, wallet_address, Some(&changes))
     } else {
@@ -238,7 +234,9 @@ pub fn process_new_signatures(
                     SolanaRpcError::Http(429) => "http_429",
                     SolanaRpcError::Http(_) => "http_error",
                     SolanaRpcError::Provider(_) => "rpc_provider_error",
-                    SolanaRpcError::UnsupportedTransactionVersion => "unsupported_transaction_version",
+                    SolanaRpcError::UnsupportedTransactionVersion => {
+                        "unsupported_transaction_version"
+                    }
                     SolanaRpcError::Transport => "rpc_transport_error",
                     SolanaRpcError::InvalidResponse => "rpc_invalid_response",
                     SolanaRpcError::ResponseTooLarge => "rpc_response_too_large",
@@ -350,7 +348,10 @@ pub fn process_new_signatures(
             )?;
             let mut pending = processed;
             if let Some(object) = pending.as_object_mut() {
-                object.insert("retryable".to_string(), Value::Bool(processing_status == "pending"));
+                object.insert(
+                    "retryable".to_string(),
+                    Value::Bool(processing_status == "pending"),
+                );
                 object.insert(
                     "processing_status".to_string(),
                     Value::String(processing_status),
@@ -369,12 +370,8 @@ pub fn process_new_signatures(
             resolved = client.get_signature_status(signature).ok().flatten();
         }
 
-        let result = prepare_wallet_transaction_result(
-            wallet_address,
-            item,
-            processed,
-            resolved.as_ref(),
-        );
+        let result =
+            prepare_wallet_transaction_result(wallet_address, item, processed, resolved.as_ref());
         let raw = result.get("raw_transaction");
         let record_status = if result.get("status").and_then(Value::as_str) == Some("failed") {
             "failed"
@@ -412,7 +409,9 @@ pub fn annotate_stale_candidates(
                 .and_then(|observation| observation.get("block_time"))
                 .and_then(Value::as_i64);
             if !source_block_time_ok(block_time, now_ts) {
-                if let Some(signature) = signature.filter(|value| is_valid_transaction_signature(value)) {
+                if let Some(signature) =
+                    signature.filter(|value| is_valid_transaction_signature(value))
+                {
                     store.mark_stale(wallet_address, signature)?;
                 }
                 if let Some(object) = result.as_object_mut() {
@@ -462,7 +461,12 @@ pub fn monitor_wallet(
         defer_processed,
         latency_recorder,
     )?;
-    annotate_stale_candidates(store, wallet_address, processed, chrono::Utc::now().timestamp())
+    annotate_stale_candidates(
+        store,
+        wallet_address,
+        processed,
+        chrono::Utc::now().timestamp(),
+    )
 }
 
 #[cfg(test)]
@@ -527,15 +531,17 @@ mod tests {
         let mut candidate = processed_transaction();
         candidate["trade_signal"] = json!({"classification":"BUY_CANDIDATE"});
         candidate["signature_observation"] = json!({"block_time":1_759_999_900});
-        let results = annotate_stale_candidates(
-            &store,
-            WALLET,
-            vec![candidate],
-            1_760_000_001,
-        ).unwrap();
+        let results =
+            annotate_stale_candidates(&store, WALLET, vec![candidate], 1_760_000_001).unwrap();
         assert_eq!(results[0]["processing_status"], "stale");
-        assert_eq!(results[0]["paper_copy_skip_reason"], "SOURCE_TRANSACTION_STALE_OR_TIMESTAMP_MISSING");
-        assert_eq!(store.get_status(WALLET, &signature).unwrap().as_deref(), Some("stale"));
+        assert_eq!(
+            results[0]["paper_copy_skip_reason"],
+            "SOURCE_TRANSACTION_STALE_OR_TIMESTAMP_MISSING"
+        );
+        assert_eq!(
+            store.get_status(WALLET, &signature).unwrap().as_deref(),
+            Some("stale")
+        );
     }
 
     #[test]
@@ -547,7 +553,10 @@ mod tests {
             None,
         );
         assert_eq!(result["token_balance_changes"].as_array().unwrap().len(), 2);
-        assert_eq!(result["signature_observation"]["confirmation_status"], "confirmed");
+        assert_eq!(
+            result["signature_observation"]["confirmation_status"],
+            "confirmed"
+        );
         assert_eq!(result["trade_signal"]["classification"], "BUY_CANDIDATE");
         assert_eq!(result["retryable"], Value::Null);
     }
@@ -556,12 +565,8 @@ mod tests {
     fn insufficient_confirmation_stays_unknown_and_retryable() {
         let mut item = signature_item();
         item["confirmationStatus"] = json!("processed");
-        let result = prepare_wallet_transaction_result(
-            WALLET,
-            &item,
-            processed_transaction(),
-            None,
-        );
+        let result =
+            prepare_wallet_transaction_result(WALLET, &item, processed_transaction(), None);
         assert_eq!(result["trade_signal"]["classification"], "UNKNOWN");
         assert_eq!(result["retryable"], true);
     }
@@ -570,12 +575,7 @@ mod tests {
     fn mismatched_signer_never_becomes_candidate() {
         let mut processed = processed_transaction();
         processed["signers"] = json!([OTHER]);
-        let result = prepare_wallet_transaction_result(
-            WALLET,
-            &signature_item(),
-            processed,
-            None,
-        );
+        let result = prepare_wallet_transaction_result(WALLET, &signature_item(), processed, None);
         assert_eq!(result["trade_signal"]["classification"], "UNKNOWN");
     }
 
@@ -590,7 +590,10 @@ mod tests {
             processed_transaction(),
             Some(&resolved),
         );
-        assert_eq!(result["signature_observation"]["confirmation_status"], "finalized");
+        assert_eq!(
+            result["signature_observation"]["confirmation_status"],
+            "finalized"
+        );
         assert_eq!(result["signature_observation"]["slot"], 100);
     }
 
@@ -599,12 +602,10 @@ mod tests {
         let mut processed = processed_transaction();
         processed["status"] = json!("failed");
         processed["raw_transaction"] = json!({"meta":{"err":{"InstructionError":[0,"Custom"]}}});
-        let result = prepare_wallet_transaction_result(
-            WALLET,
-            &signature_item(),
-            processed,
-            None,
+        let result = prepare_wallet_transaction_result(WALLET, &signature_item(), processed, None);
+        assert_eq!(
+            result["trade_signal"]["classification"],
+            "FAILED_TRANSACTION"
         );
-        assert_eq!(result["trade_signal"]["classification"], "FAILED_TRANSACTION");
     }
 }

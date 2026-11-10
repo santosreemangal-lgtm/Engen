@@ -35,7 +35,8 @@ pub fn process_transaction_signature(
     signature: &str,
     latency_recorder: Option<&LatencyRecorder>,
 ) -> Result<Value, TransactionProcessorError> {
-    require_transaction_signature(signature).map_err(|_| TransactionProcessorError::InvalidInput)?;
+    require_transaction_signature(signature)
+        .map_err(|_| TransactionProcessorError::InvalidInput)?;
     let started = std::time::Instant::now();
     let response = client.get_transaction(signature);
     if let Some(recorder) = latency_recorder {
@@ -51,7 +52,8 @@ pub fn process_transaction_payload(
     signature: &str,
     transaction: Option<Value>,
 ) -> Result<Value, TransactionProcessorError> {
-    require_transaction_signature(signature).map_err(|_| TransactionProcessorError::InvalidInput)?;
+    require_transaction_signature(signature)
+        .map_err(|_| TransactionProcessorError::InvalidInput)?;
 
     let Some(transaction) = transaction else {
         return Ok(serde_json::json!({
@@ -136,10 +138,10 @@ pub fn process_transaction_payload(
         }
     }
 
-    let analysis = analyze_transaction(&transaction).map_err(|_| TransactionProcessorError::Analysis)?;
-    let mut balance_changes = analyze_token_balance_changes(
-        transaction.get("meta").unwrap_or(&Value::Null),
-    );
+    let analysis =
+        analyze_transaction(&transaction).map_err(|_| TransactionProcessorError::Analysis)?;
+    let mut balance_changes =
+        analyze_token_balance_changes(transaction.get("meta").unwrap_or(&Value::Null));
     if analysis.get("status").and_then(Value::as_str) == Some("success") {
         balance_changes.extend(analyze_native_sol_balance_changes(&transaction));
     }
@@ -153,7 +155,10 @@ pub fn process_transaction_payload(
         .as_object()
         .cloned()
         .ok_or(TransactionProcessorError::Analysis)?;
-    output.insert("signature".to_string(), Value::String(signature.to_string()));
+    output.insert(
+        "signature".to_string(),
+        Value::String(signature.to_string()),
+    );
     output.insert("available".to_string(), Value::Bool(true));
     output.insert(
         "metadata_complete".to_string(),

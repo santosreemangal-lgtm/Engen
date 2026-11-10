@@ -334,7 +334,7 @@ impl SignatureStore {
             params![wallet, signature],
         )?;
         transaction.execute(
-            "UPDATE transaction_records SET processing_status='processed', updated_at=CURRENT_TIMESTAMP WHERE wallet_address=?1 AND signature=?2 AND processing_status!='stale'",
+            "UPDATE transaction_records SET processing_status='processed', updated_at=CURRENT_TIMESTAMP WHERE wallet_address=?1 AND signature=?2 AND processing_status NOT IN ('stale','failed','incomplete','needs_review')",
             params![wallet, signature],
         )?;
         let slot: Option<i64> = transaction
@@ -577,6 +577,19 @@ mod tests {
         assert_eq!(store.get_status(WALLET, SIGNATURE).unwrap().as_deref(), Some("stale"));
         let record = store.get_transaction_record(WALLET, SIGNATURE).unwrap().unwrap();
         assert_eq!(record.status, "stale");
+    }
+
+    #[test]
+    fn mark_processed_preserves_failed_transaction_evidence_status() {
+        let dir = tempdir().unwrap();
+        let store = SignatureStore::open(dir.path().join("signatures.db")).unwrap();
+        store.save(WALLET, SIGNATURE, Some(10)).unwrap();
+        let raw = serde_json::json!({"meta":{"err":{"InstructionError":[0,"Custom"]}}});
+        store.save_transaction_record(WALLET, SIGNATURE, Some(&raw), "failed").unwrap();
+        assert!(store.mark_processed(WALLET, SIGNATURE).unwrap());
+        let record = store.get_transaction_record(WALLET, SIGNATURE).unwrap().unwrap();
+        assert_eq!(record.status, "failed");
+        assert_eq!(record.raw_transaction, Some(raw));
     }
 
     #[test]

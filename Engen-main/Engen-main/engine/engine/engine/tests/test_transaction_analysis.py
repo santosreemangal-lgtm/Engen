@@ -1,4 +1,6 @@
+import json
 import unittest
+from pathlib import Path
 
 from engine.transaction_analysis import (
     PUMP_FUN_PROGRAM_ID,
@@ -639,6 +641,32 @@ class TransactionAnalysisTests(unittest.TestCase):
             "meta": {"fee": 5000, "preBalances": [10_000], "postBalances": [9_000]},
         }
         self.assertEqual(analyze_native_sol_balance_changes(transaction), [])
+
+    def test_shared_phase2_golden_corpus_matches_transaction_type_contract(self):
+        from engine.transaction_analysis import classify_transaction
+        project_root = Path(__file__).resolve().parents[4]
+        fixture_path = (
+            project_root / "rust-engine" / "tests" / "fixtures"
+            / "phase2_transactions.json"
+        )
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(cases), 6)
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                result = classify_transaction(
+                    case["transaction"],
+                    case["wallet"],
+                    case["balance_changes"],
+                )
+                self.assertEqual(result["transaction_type"], case["expected_type"])
+                self.assertEqual(result["trade_signal"], case["expected_signal"])
+                expected_program_id = case.get("expected_outer_program_id")
+                if expected_program_id:
+                    summary = analyze_transaction(case["transaction"])
+                    self.assertEqual(
+                        summary["instructions"][0]["program_id"],
+                        expected_program_id,
+                    )
 
     def test_classifies_native_sol_buy_candidate(self):
         wallet = "WALLET_A"

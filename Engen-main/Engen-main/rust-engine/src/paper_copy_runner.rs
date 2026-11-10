@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use bigdecimal::BigDecimal;
 use chrono::{SecondsFormat, Utc};
-use num_traits::Zero;
+use num_traits::{Signed, Zero};
 use serde_json::{json, Value};
 use thiserror::Error;
 

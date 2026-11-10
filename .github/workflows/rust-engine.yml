@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - "Engen-main/Engen-main/rust-engine/**"
+      - "Engen-main/Engen-main/engine/**"
       - ".github/workflows/rust-engine.yml"
   push:
     branches:
       - "rewrite/rust-backend-20261109"
     paths:
       - "Engen-main/Engen-main/rust-engine/**"
+      - "Engen-main/Engen-main/engine/**"
       - ".github/workflows/rust-engine.yml"
 
 permissions:

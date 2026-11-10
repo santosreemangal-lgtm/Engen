@@ -216,7 +216,7 @@ pub fn process_new_signatures(
         let processed = match process_transaction_signature(client, signature, latency_recorder) {
             Ok(value) => value,
             Err(TransactionProcessorError::Rpc(error)) => {
-                let error_code = match error {
+                let error_code = match &error {
                     SolanaRpcError::Http(429) => "http_429",
                     SolanaRpcError::Http(_) => "http_error",
                     SolanaRpcError::Provider(_) => "rpc_provider_error",

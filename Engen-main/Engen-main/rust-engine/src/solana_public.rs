@@ -563,10 +563,19 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = thread::spawn(move || {
             let responses = [
-                json!({"jsonrpc":"2.0","id":7,"error":{"code":429,"message":"rate limit"}}),
-                json!({"jsonrpc":"2.0","id":7,"result":42}),
+                (
+                    429,
+                    "Retry-After: 0\r\n",
+                    json!({"error":{"code":429,"message":"HTTP rate limit"}}),
+                ),
+                (
+                    200,
+                    "",
+                    json!({"jsonrpc":"2.0","id":7,"error":{"code":429,"message":"provider rate limit"}}),
+                ),
+                (200, "", json!({"jsonrpc":"2.0","id":7,"result":42})),
             ];
-            for body in responses {
+            for (status, extra_headers, body) in responses {
                 let (mut stream, _) = listener.accept().unwrap();
                 stream
                     .set_read_timeout(Some(Duration::from_secs(2)))
@@ -577,8 +586,9 @@ mod tests {
                 let mut request = [0_u8; 4096];
                 let _ = stream.read(&mut request);
                 let payload = serde_json::to_vec(&body).unwrap();
+                let reason = if status == 429 { "Too Many Requests" } else { "OK" };
                 let header = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    "HTTP/1.1 {status} {reason}\r\n{extra_headers}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                     payload.len()
                 );
                 stream.write_all(header.as_bytes()).unwrap();
@@ -590,7 +600,7 @@ mod tests {
         let client = SolanaRpcClient::new(RpcConfig {
             endpoint: format!("http://{address}"),
             timeout: Duration::from_secs(2),
-            retries: 1,
+            retries: 2,
             backoff: Duration::ZERO,
             min_interval: Duration::ZERO,
         })

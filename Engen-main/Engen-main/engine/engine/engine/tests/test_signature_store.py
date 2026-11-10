@@ -1,4 +1,5 @@
 
+import json
 import sqlite3
 import subprocess
 import sys
@@ -169,7 +170,7 @@ class SignatureStoreTests(unittest.TestCase):
         self.store.save_transaction_evidence(
             wallet, signature, raw, parsed, classification, "observed"
         )
-        restarted = SignatureStore(self.db_path)
+        restarted = SignatureStore(self.store.db_path)
         record = restarted.get_transaction_record(wallet, signature)
         self.assertEqual(record["raw_transaction"], raw)
         self.assertEqual(record["parsed_evidence"], parsed)

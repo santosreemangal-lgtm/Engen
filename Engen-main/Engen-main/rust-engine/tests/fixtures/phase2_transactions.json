@@ -222,5 +222,92 @@
     "balance_changes": [],
     "expected_type": "UNKNOWN",
     "expected_signal": "NOT_COPYABLE"
+  },
+  {
+    "name": "jupiter_explicit_sell",
+    "wallet": "So11111111111111111111111111111111111111112",
+    "transaction": {
+      "transaction": {
+        "message": {
+          "accountKeys": [
+            "So11111111111111111111111111111111111111112",
+            "JUPITER_PROGRAM"
+          ],
+          "instructions": [
+            {
+              "program": "jupiter",
+              "programId": "JUPITER_PROGRAM",
+              "parsed": {
+                "type": "swap"
+              }
+            }
+          ]
+        }
+      },
+      "meta": {
+        "err": null,
+        "fee": 5000
+      }
+    },
+    "balance_changes": [
+      {
+        "owner": "So11111111111111111111111111111111111111112",
+        "mint": "MINT_A",
+        "delta_amount": "-100",
+        "decimals": 6
+      },
+      {
+        "owner": "So11111111111111111111111111111111111111112",
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "delta_amount": "2500000",
+        "decimals": 6
+      }
+    ],
+    "expected_type": "SELL",
+    "expected_signal": "SELL_CANDIDATE"
+  },
+  {
+    "name": "jupiter_native_sol_buy",
+    "wallet": "So11111111111111111111111111111111111111112",
+    "transaction": {
+      "transaction": {
+        "message": {
+          "accountKeys": [
+            "So11111111111111111111111111111111111111112",
+            "JUPITER_PROGRAM"
+          ],
+          "instructions": [
+            {
+              "program": "jupiter",
+              "programId": "JUPITER_PROGRAM",
+              "parsed": {
+                "type": "swap"
+              }
+            }
+          ]
+        }
+      },
+      "meta": {
+        "err": null,
+        "fee": 5000
+      }
+    },
+    "balance_changes": [
+      {
+        "owner": "So11111111111111111111111111111111111111112",
+        "mint": "MINT_A",
+        "delta_amount": "100",
+        "decimals": 6
+      },
+      {
+        "owner": "So11111111111111111111111111111111111111112",
+        "mint": "So11111111111111111111111111111111111111112",
+        "delta_amount": "-2000000000",
+        "decimals": 9,
+        "source": "native_sol"
+      }
+    ],
+    "expected_type": "BUY",
+    "expected_signal": "BUY_CANDIDATE"
   }
 ]

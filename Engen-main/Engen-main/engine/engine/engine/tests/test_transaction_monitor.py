@@ -567,7 +567,9 @@ class TransactionMonitorTests(unittest.TestCase):
                 )
             record = store.get_transaction_record(wallet, signature)
             self.assertEqual(record["raw_transaction"], raw)
-            self.assertEqual(record["status"], "processed")
+            # A failed transaction remains failed evidence even when a later
+            # idempotent pass marks its signature row as processed.
+            self.assertEqual(record["status"], "failed")
 
     @patch("engine.transaction_monitor.process_transaction_signature")
     def test_unavailable_transaction_is_returned_for_visibility(

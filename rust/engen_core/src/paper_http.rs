@@ -31,6 +31,9 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
     let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
 
     let (status, payload) = match (method, path) {
+        ("GET", "/") | ("GET", "/index.html") => {
+            return html_index();
+        }
         ("GET", "/health") => (
             200,
             serde_json::json!({
@@ -129,6 +132,23 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
         _ => (404, serde_json::json!({"error": "not found"})),
     };
     respond(status, &payload)
+}
+
+fn html_index() -> String {
+    let body = r#"<!doctype html><html><head><meta charset="utf-8"><title>Engen paper</title>
+<style>body{font:15px system-ui;background:#0b1020;color:#edf2ff;margin:32px}code{color:#9cf}</style>
+</head><body>
+<h1>Engen paper runtime</h1>
+<p>Paper only. No signing. No broadcast.</p>
+<p>GET <code>/health</code> · GET <code>/api/paper</code> · POST <code>/api/candidates</code> · POST <code>/api/fill</code></p>
+<pre id="out">loading…</pre>
+<script>
+fetch('/api/paper').then(r=>r.json()).then(j=>{document.getElementById('out').textContent=JSON.stringify(j,null,2)}).catch(e=>{document.getElementById('out').textContent=String(e)})
+</script></body></html>"#;
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
 }
 
 fn respond(status: u16, payload: &serde_json::Value) -> String {

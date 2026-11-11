@@ -1,48 +1,69 @@
-//! Paper-only binary. No network keys, no broadcast.
+//! Unified paper runtime. Binds HTTP, optional read-only signature poller.
+//! Live trading is refused.
 
-use engen_core::paper_copy::{queue_paper_orders, MonitorCandidate};
-use engen_core::paper_simulator::{MarketPrice, OrderSide, PaperSimulator};
-use rust_decimal::Decimal;
-use std::time::{SystemTime, UNIX_EPOCH};
+use engen_core::config::Config;
+use engen_core::logutil;
+use engen_core::monitor_service::MonitorService;
+use engen_core::paper_http::{serve, PaperApiState};
+use engen_core::paper_simulator::PaperSimulator;
+use engen_core::signature_store::SignatureStore;
+use engen_core::worker;
+use std::sync::{Arc, Mutex};
 
 fn main() {
-    println!("engen_paper — Rust paper core");
-    println!("real_trading=false transaction_broadcast=false");
+    let config = match Config::from_env() {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("config error: {err}");
+            std::process::exit(1);
+        }
+    };
+    logutil::info("engen_paper starting");
+    logutil::info("real_trading=false transaction_broadcast=false");
 
-    let mut sim = PaperSimulator::new();
-    sim.set_virtual_balance("100", "USD").expect("balance");
+    let sim = match PaperSimulator::with_sqlite(&config.paper_db) {
+        Ok(sim) => sim,
+        Err(err) => {
+            eprintln!("paper db: {err}");
+            std::process::exit(1);
+        }
+    };
+    let sig_path = config
+        .paper_db
+        .parent()
+        .unwrap_or(std::path::Path::new("data"))
+        .join("signatures.db");
+    let signatures = match SignatureStore::open(&sig_path) {
+        Ok(store) => store,
+        Err(err) => {
+            eprintln!("signature store: {err}");
+            std::process::exit(1);
+        }
+    };
 
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
-    let candidates = vec![MonitorCandidate {
-        signature: "demoSig111".into(),
-        wallet: "DemoWallet111111111111111111111111111".into(),
-        side: OrderSide::Buy,
-        asset_mint: "DemoTokenMint11111111111111111111111".into(),
-        block_time: Some(now - 5),
-        confirmation_status: "finalized".into(),
-        metadata_complete: true,
-        target_notional_usd: Some("10".into()),
-        source_sell_fraction: None,
-    }];
-
-    let queued = queue_paper_orders(&mut sim, &candidates).expect("queue");
-    println!("queued={}", queued.len());
-
-    if let Some(order) = queued.first() {
-        let market = MarketPrice {
-            price_usd: Decimal::from(2),
-            liquidity_usd: Decimal::from(50_000),
-            age_seconds: 1,
-        };
-        let fill = sim
-            .execute_order(&order.order_id, &market, 50, 10, Decimal::from(10_000), 60)
-            .expect("fill");
-        println!("fill={}", fill);
+    let mut monitor = MonitorService::new();
+    for wallet in &config.wallets {
+        if let Some(rpc) = &config.rpc_url {
+            monitor.add_wallet_rpc(wallet, rpc);
+        } else {
+            monitor.add_wallet(wallet);
+        }
     }
 
-    println!("{}", serde_json::to_string_pretty(&sim.report()).unwrap());
+    let state = PaperApiState {
+        sim: Arc::new(Mutex::new(sim)),
+        monitor: Arc::new(Mutex::new(monitor)),
+    };
+    let _worker = worker::spawn_poller(
+        Arc::clone(&state.monitor),
+        Arc::clone(&state.sim),
+        Arc::new(Mutex::new(signatures)),
+        config.poll_seconds,
+    );
+
+    logutil::info(&format!("listening on http://{}", config.bind));
+    if let Err(err) = serve(&config.bind, state) {
+        eprintln!("http server: {err}");
+        std::process::exit(1);
+    }
 }

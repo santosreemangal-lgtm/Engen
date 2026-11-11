@@ -1,40 +1,45 @@
-# Python → Rust Migration
+# Python → Rust migration
 
 **Branch:** `feature/rust-engine-core`  
-**Goal:** Run the copy engine in Rust. Python stays until full swap-classification parity.
+**Binary:** `engen_paper`  
+**Tests:** `cargo test` in `rust/engen_core` (14 passing as of this commit)
 
-## Progress
+## Unified paper runtime (this commit)
 
-| Python module | Rust module | Status |
-|---------------|-------------|--------|
-| `paper_simulator.py` | `paper_simulator.rs` | Fill BUY/SELL, fees, slippage, SQLite restart |
-| `paper_copy_runner.py` | `paper_copy.rs` | Queue, stale gate, execute pending |
-| source freshness | `source_freshness.rs` | Done |
-| `profile_store.py` | `profile_store.rs` | SQLite profiles |
-| `transaction_monitor.py` | `transaction_monitor.rs` | Read-only `getSignaturesForAddress` + classified ingest. Does **not** invent trades from signatures |
-| `monitor_service` / bridge | `monitor_service.rs` | Tick queue + fill |
-| dashboard API | `paper_http.rs` | Paper JSON: `/health`, `/api/paper`, `/api/candidates`, `/api/fill` |
-| swap classification | still Python | Not ported — needs token-balance parser |
-| Yellowstone gRPC | not started | Needs a provider token; polling RPC is the read-only path for now |
-| `dashboard/server.py` UI | Python | Keep until classification moves |
+One process, no Python required to run paper mode:
 
-## Verify
+| Concern | Rust module |
+|---------|-------------|
+| Bootstrap | `src/main.rs` |
+| Config | `src/config.rs` (`ENGEN_LIVE_ENABLED=true` is refused) |
+| Logging | `src/logutil.rs` |
+| Errors | `src/error.rs` |
+| Paper ledger + SQLite | `src/paper_simulator.rs` |
+| Copy queue | `src/paper_copy.rs` |
+| HTTP API + tiny UI | `src/paper_http.rs` |
+| Monitor loop | `src/monitor_service.rs` |
+| Read-only RPC signatures | `src/transaction_monitor.rs` |
+| Signature dedupe | `src/signature_store.rs` |
+| Swap classifier | `src/classifier.rs` |
+| Profiles | `src/profile_store.rs` |
+| Background worker | `src/worker.rs` |
+| Stale source gate | `src/source_freshness.rs` |
 
 ```bash
 cd rust/engen_core
 cargo test
-cargo run --bin engen_paper
+ENGEN_BIND=127.0.0.1:8787 cargo run --bin engen_paper
 ```
 
-`cargo test` covers ledger restart, profile reopen, stale gate, monitor tick fill, and paper-only health.
+Open `http://127.0.0.1:8787/`.
 
-## Still later
+## Not a full replacement of the Python tree yet
 
-1. Port Python swap classification (token deltas → BUY/SELL) into Rust
-2. Optional Yellowstone gRPC subscribe behind the same candidate ingest
-3. Point the Python dashboard at the Rust paper API
-4. Only then retire the Python ledger
+These Python pieces are still the richer implementation. Deleting them now would drop behavior this binary does not have:
 
-## Safety
+- Full dashboard (`dashboard/server.py`, auth, wallet UI, history tables)
+- Full Solana transaction parser / labeler (`transaction_analysis.py`, `transaction_processor.py`)
+- Yellowstone gRPC / sub-100ms detection
+- Market-data provider, PnL reports, Telegram, the old unittest suite
 
-No private keys, no signing, no broadcast. Signature polling is read-only. Unparsed signatures never become paper orders.
+The Python tree stays in the repo until those paths have Rust parity and the same tests. This binary does not sign or broadcast.

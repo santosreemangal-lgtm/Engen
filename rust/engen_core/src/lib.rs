@@ -12,6 +12,7 @@ pub mod monitor_service;
 pub mod paper_copy;
 pub mod paper_http;
 pub mod paper_simulator;
+pub mod parser;
 pub mod profile_store;
 pub mod signature_store;
 pub mod source_freshness;

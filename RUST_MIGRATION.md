@@ -2,7 +2,20 @@
 
 **Branch:** `feature/rust-engine-core`  
 **Binary:** `engen_paper`  
-**Tests:** `cargo test` in `rust/engen_core` (14 passing as of this commit)
+**Tests:** `cargo test` in `rust/engen_core` (18 passing)
+
+Dashboard-compatible paper routes on the same binary:
+
+- `GET /api/paper-simulation` and `GET /api/paper`
+- `GET/POST /api/wallets`
+- `GET/POST /api/profiles`
+- `GET /api/monitor`
+- `GET /api/rpc-health`
+- `POST /api/classify` (USDC/USDT/wSOL delta heuristic)
+- Optional `DASHBOARD_AUTH_TOKEN` bearer check
+
+Still not a drop-in of `dashboard/server.py` or the full `transaction_analysis.py` (history, rate limits, native-SOL edge cases, gRPC). Those Python files stay until that parity exists.
+
 
 ## Unified paper runtime (this commit)
 

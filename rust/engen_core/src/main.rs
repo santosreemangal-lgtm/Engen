@@ -6,6 +6,7 @@ use engen_core::logutil;
 use engen_core::monitor_service::MonitorService;
 use engen_core::paper_http::{serve, PaperApiState};
 use engen_core::paper_simulator::PaperSimulator;
+use engen_core::profile_store::ProfileStore;
 use engen_core::signature_store::SignatureStore;
 use engen_core::worker;
 use std::sync::{Arc, Mutex};
@@ -50,9 +51,21 @@ fn main() {
         }
     }
 
+    let profiles = match ProfileStore::open(&config.profile_db) {
+        Ok(store) => store,
+        Err(err) => {
+            eprintln!("profile db: {err}");
+            std::process::exit(1);
+        }
+    };
+
     let state = PaperApiState {
         sim: Arc::new(Mutex::new(sim)),
         monitor: Arc::new(Mutex::new(monitor)),
+        profiles: Arc::new(Mutex::new(profiles)),
+        api_token: std::env::var("DASHBOARD_AUTH_TOKEN")
+            .ok()
+            .filter(|s| !s.is_empty()),
     };
     let _worker = worker::spawn_poller(
         Arc::clone(&state.monitor),

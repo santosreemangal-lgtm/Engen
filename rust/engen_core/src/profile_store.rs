@@ -43,6 +43,9 @@ impl ProfileStore {
                 source_wallets TEXT NOT NULL,
                 active INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS watched_wallets (
+                address TEXT PRIMARY KEY
+            );
             "#,
         )?;
         Ok(())
@@ -108,6 +111,42 @@ impl ProfileStore {
         }
         Ok(out)
     }
+
+    pub fn wallets(&self) -> Result<Vec<String>> {
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare("SELECT address FROM watched_wallets ORDER BY address")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    pub fn add_wallet(&self, address: &str) -> Result<Vec<String>> {
+        if !is_pubkey_like(address) {
+            return Err(EngenError::InvalidInput("Invalid-looking Solana address".into()));
+        }
+        self.conn()?.execute(
+            "INSERT INTO watched_wallets(address) VALUES(?1) ON CONFLICT(address) DO NOTHING",
+            params![address],
+        )?;
+        self.wallets()
+    }
+
+    pub fn remove_wallet(&self, address: &str) -> Result<Vec<String>> {
+        self.conn()?
+            .execute("DELETE FROM watched_wallets WHERE address=?1", params![address])?;
+        self.wallets()
+    }
+}
+
+fn is_pubkey_like(value: &str) -> bool {
+    let n = value.len();
+    (32..=44).contains(&n)
+        && value
+            .chars()
+            .all(|c| matches!(c, '1'..='9' | 'A'..='H' | 'J'..='N' | 'P'..='Z' | 'a'..='k' | 'm'..='z'))
 }
 
 #[cfg(test)]

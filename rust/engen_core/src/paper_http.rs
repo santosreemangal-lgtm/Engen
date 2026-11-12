@@ -8,6 +8,8 @@
 use crate::monitor_service::MonitorService;
 use crate::paper_copy::MonitorCandidate;
 use crate::paper_simulator::{MarketPrice, PaperSimulator};
+use crate::parser::classify_balance_changes;
+use crate::profile_store::ProfileStore;
 use rust_decimal::Decimal;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -20,6 +22,20 @@ use std::time::Duration;
 pub struct PaperApiState {
     pub sim: Arc<Mutex<PaperSimulator>>,
     pub monitor: Arc<Mutex<MonitorService>>,
+    pub profiles: Arc<Mutex<ProfileStore>>,
+    pub api_token: Option<String>,
+}
+
+impl PaperApiState {
+    pub fn for_tests() -> Self {
+        let path = std::env::temp_dir().join(format!("engen-http-{}.db", uuid::Uuid::new_v4()));
+        Self {
+            sim: Arc::new(Mutex::new(PaperSimulator::new())),
+            monitor: Arc::new(Mutex::new(MonitorService::new())),
+            profiles: Arc::new(Mutex::new(ProfileStore::open(path).expect("profile db"))),
+            api_token: None,
+        }
+    }
 }
 
 pub fn handle_http(request: &str, state: &PaperApiState) -> String {
@@ -27,8 +43,13 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
     let request_line = lines.next().unwrap_or("");
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("");
-    let path = parts.next().unwrap_or("/");
+    let target = parts.next().unwrap_or("/");
+    let (path, _query) = target.split_once('?').unwrap_or((target, ""));
     let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
+
+    if path.starts_with("/api/") && !authorized(request, state.api_token.as_deref()) {
+        return respond(401, &serde_json::json!({"error": "Dashboard API authentication required."}));
+    }
 
     let (status, payload) = match (method, path) {
         ("GET", "/") | ("GET", "/index.html") => {
@@ -43,10 +64,102 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
                 "transaction_broadcast": false
             }),
         ),
-        ("GET", "/api/paper") => {
+        ("GET", "/api/paper") | ("GET", "/api/paper-simulation") => {
             let sim = state.sim.lock().unwrap_or_else(|e| e.into_inner());
-            (200, sim.report())
+            let mut report = sim.report();
+            report["simulated"] = serde_json::json!(true);
+            (200, report)
         }
+        ("GET", "/api/wallets") => {
+            let store = state.profiles.lock().unwrap_or_else(|e| e.into_inner());
+            match store.wallets() {
+                Ok(wallets) => (200, serde_json::json!({"wallets": wallets, "real_trading": false})),
+                Err(err) => (500, serde_json::json!({"error": err.to_string()})),
+            }
+        }
+        ("GET", "/api/profiles") => {
+            let store = state.profiles.lock().unwrap_or_else(|e| e.into_inner());
+            match store.list() {
+                Ok(profiles) => (
+                    200,
+                    serde_json::json!({"profiles": profiles, "real_trading": false}),
+                ),
+                Err(err) => (500, serde_json::json!({"error": err.to_string()})),
+            }
+        }
+        ("GET", "/api/monitor") => {
+            let monitor = state.monitor.lock().unwrap_or_else(|e| e.into_inner());
+            let wallets: Vec<_> = monitor.monitors.iter().map(|m| m.wallet.clone()).collect();
+            (
+                200,
+                serde_json::json!({
+                    "enabled": !wallets.is_empty(),
+                    "interval_seconds": 15,
+                    "wallets": wallets,
+                    "real_trading": false,
+                    "transaction_broadcast": false
+                }),
+            )
+        }
+        ("GET", "/api/rpc-health") => (
+            200,
+            serde_json::json!({
+                "mode": "READ_ONLY",
+                "ok": true,
+                "real_trading": false,
+                "transaction_broadcast": false
+            }),
+        ),
+        ("POST", "/api/wallets") => match serde_json::from_str::<serde_json::Value>(body) {
+            Ok(value) => {
+                let address = value.get("address").and_then(|v| v.as_str()).unwrap_or("");
+                let action = value.get("action").and_then(|v| v.as_str()).unwrap_or("add");
+                let store = state.profiles.lock().unwrap_or_else(|e| e.into_inner());
+                let result = if action == "remove" {
+                    store.remove_wallet(address)
+                } else {
+                    store.add_wallet(address)
+                };
+                match result {
+                    Ok(wallets) => (200, serde_json::json!({"wallets": wallets})),
+                    Err(err) => (400, serde_json::json!({"error": err.to_string()})),
+                }
+            }
+            Err(err) => (400, serde_json::json!({"error": err.to_string()})),
+        },
+        ("POST", "/api/profiles") => match serde_json::from_str::<serde_json::Value>(body) {
+            Ok(value) => {
+                let name = value.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let active = value.get("active").and_then(|v| v.as_bool()).unwrap_or(true);
+                let wallets = value
+                    .get("source_wallets")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let store = state.profiles.lock().unwrap_or_else(|e| e.into_inner());
+                match store.upsert(name, &wallets, active, None) {
+                    Ok(profile) => (200, serde_json::json!(profile)),
+                    Err(err) => (400, serde_json::json!({"error": err.to_string()})),
+                }
+            }
+            Err(err) => (400, serde_json::json!({"error": err.to_string()})),
+        },
+        ("POST", "/api/classify") => match serde_json::from_str::<serde_json::Value>(body) {
+            Ok(value) => {
+                let wallet = value.get("wallet").and_then(|v| v.as_str()).unwrap_or("");
+                let changes = value
+                    .get("token_balance_changes")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                (200, classify_balance_changes(wallet, &changes))
+            }
+            Err(err) => (400, serde_json::json!({"error": err.to_string()})),
+        },
         ("POST", "/api/candidates") => match serde_json::from_str::<Vec<MonitorCandidate>>(body) {
             Ok(items) => {
                 let mut monitor = state.monitor.lock().unwrap_or_else(|e| e.into_inner());
@@ -134,6 +247,18 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
     respond(status, &payload)
 }
 
+fn authorized(request: &str, token: Option<&str>) -> bool {
+    let Some(token) = token else {
+        return true;
+    };
+    let expected = format!("Bearer {token}");
+    request.lines().any(|line| {
+        let mut parts = line.splitn(2, ':');
+        matches!(parts.next(), Some(name) if name.eq_ignore_ascii_case("authorization"))
+            && parts.next().map(str::trim) == Some(expected.as_str())
+    })
+}
+
 fn html_index() -> String {
     let body = r#"<!doctype html><html><head><meta charset="utf-8"><title>Engen paper</title>
 <style>body{font:15px system-ui;background:#0b1020;color:#edf2ff;margin:32px}code{color:#9cf}</style>
@@ -197,13 +322,34 @@ mod tests {
 
     #[test]
     fn health_is_paper_only() {
-        let state = PaperApiState {
-            sim: Arc::new(Mutex::new(PaperSimulator::new())),
-            monitor: Arc::new(Mutex::new(MonitorService::new())),
-        };
+        let state = PaperApiState::for_tests();
         let raw = handle_http("GET /health HTTP/1.1\r\nHost: x\r\n\r\n", &state);
         assert!(raw.contains("200"));
         assert!(raw.contains("\"real_trading\":false"));
         assert!(raw.contains("\"transaction_broadcast\":false"));
+    }
+
+    #[test]
+    fn classify_route_buy() {
+        let state = PaperApiState::for_tests();
+        let body = r#"{"wallet":"Wallet11111111111111111111111111111111","token_balance_changes":[{"owner":"Wallet11111111111111111111111111111111","mint":"TokenMint111111111111111111111111111111","delta_amount":"10"},{"owner":"Wallet11111111111111111111111111111111","mint":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","delta_amount":"-4"}]}"#;
+        let raw = handle_http(
+            &format!("POST /api/classify HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{body}", body.len()),
+            &state,
+        );
+        assert!(raw.contains("BUY_CANDIDATE"));
+    }
+
+    #[test]
+    fn auth_required_when_token_set() {
+        let mut state = PaperApiState::for_tests();
+        state.api_token = Some("secret-token".into());
+        let denied = handle_http("GET /api/paper HTTP/1.1\r\nHost: x\r\n\r\n", &state);
+        assert!(denied.contains("401"));
+        let ok = handle_http(
+            "GET /api/paper HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer secret-token\r\n\r\n",
+            &state,
+        );
+        assert!(ok.contains("200"));
     }
 }

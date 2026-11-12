@@ -66,6 +66,7 @@ fn main() {
         api_token: std::env::var("DASHBOARD_AUTH_TOKEN")
             .ok()
             .filter(|s| !s.is_empty()),
+        hits: Arc::new(Mutex::new(Vec::new())),
     };
     let _worker = worker::spawn_poller(
         Arc::clone(&state.monitor),

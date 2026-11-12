@@ -16,7 +16,7 @@ use std::net::{TcpListener, TcpStream};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Clone)]
 pub struct PaperApiState {
@@ -24,6 +24,7 @@ pub struct PaperApiState {
     pub monitor: Arc<Mutex<MonitorService>>,
     pub profiles: Arc<Mutex<ProfileStore>>,
     pub api_token: Option<String>,
+    pub hits: Arc<Mutex<Vec<u64>>>,
 }
 
 impl PaperApiState {
@@ -34,6 +35,7 @@ impl PaperApiState {
             monitor: Arc::new(Mutex::new(MonitorService::new())),
             profiles: Arc::new(Mutex::new(ProfileStore::open(path).expect("profile db"))),
             api_token: None,
+            hits: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -49,6 +51,9 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
 
     if path.starts_with("/api/") && !authorized(request, state.api_token.as_deref()) {
         return respond(401, &serde_json::json!({"error": "Dashboard API authentication required."}));
+    }
+    if path.starts_with("/api/") && !allow_request(&state.hits) {
+        return respond(429, &serde_json::json!({"error": "API request limit reached. Wait before retrying."}));
     }
 
     let (status, payload) = match (method, path) {
@@ -148,6 +153,20 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
             }
             Err(err) => (400, serde_json::json!({"error": err.to_string()})),
         },
+        ("GET", "/api/profile-transactions") => {
+            let store = state.profiles.lock().unwrap_or_else(|e| e.into_inner());
+            match store.list_swaps(50) {
+                Ok(rows) => (
+                    200,
+                    serde_json::json!({
+                        "transactions": rows,
+                        "real_trading": false,
+                        "transaction_broadcast": false
+                    }),
+                ),
+                Err(err) => (500, serde_json::json!({"error": err.to_string()})),
+            }
+        }
         ("POST", "/api/classify") => match serde_json::from_str::<serde_json::Value>(body) {
             Ok(value) => {
                 let wallet = value.get("wallet").and_then(|v| v.as_str()).unwrap_or("");
@@ -156,7 +175,15 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
                     .and_then(|v| v.as_array())
                     .cloned()
                     .unwrap_or_default();
-                (200, classify_balance_changes(wallet, &changes))
+                let signal = classify_balance_changes(wallet, &changes);
+                if let Some(signature) = value.get("signature").and_then(|v| v.as_str()) {
+                    let class = signal.get("classification").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
+                    let asset = signal["asset_mints"].get(0).and_then(|v| v.as_str());
+                    let quote = signal["quote_mints"].get(0).and_then(|v| v.as_str());
+                    let store = state.profiles.lock().unwrap_or_else(|e| e.into_inner());
+                    let _ = store.record_swap(signature, wallet, class, asset, quote);
+                }
+                (200, signal)
             }
             Err(err) => (400, serde_json::json!({"error": err.to_string()})),
         },
@@ -245,6 +272,20 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
         _ => (404, serde_json::json!({"error": "not found"})),
     };
     respond(status, &payload)
+}
+
+fn allow_request(hits: &Mutex<Vec<u64>>) -> bool {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut hits = hits.lock().unwrap_or_else(|e| e.into_inner());
+    hits.retain(|seen| now.saturating_sub(*seen) < 60);
+    if hits.len() >= 120 {
+        return false;
+    }
+    hits.push(now);
+    true
 }
 
 fn authorized(request: &str, token: Option<&str>) -> bool {

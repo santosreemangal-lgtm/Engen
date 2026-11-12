@@ -2,7 +2,17 @@
 
 **Branch:** `feature/rust-engine-core`  
 **Binary:** `engen_paper`  
-**Tests:** `cargo test` in `rust/engen_core` (18 passing)
+**Tests:** `cargo test` in `rust/engen_core` (20 passing)
+
+Also on the binary:
+
+- API rate limit: 120 requests / 60s (`429`)
+- `GET /api/profile-transactions` from `observed_swaps`
+- `POST /api/classify` stores a row when `signature` is present
+- Native SOL quote (`source=native_sol`, decimals 9) and mixed SOL+USDC rejection
+
+Still Python-only: the large dashboard HTML, full Pump.fun log parser, Yellowstone gRPC, and the old unittest files. Do not delete those until a cutover.
+
 
 Dashboard-compatible paper routes on the same binary:
 

@@ -46,6 +46,14 @@ impl ProfileStore {
             CREATE TABLE IF NOT EXISTS watched_wallets (
                 address TEXT PRIMARY KEY
             );
+            CREATE TABLE IF NOT EXISTS observed_swaps (
+                signature TEXT PRIMARY KEY,
+                wallet TEXT NOT NULL,
+                classification TEXT NOT NULL,
+                asset_mint TEXT,
+                quote_mint TEXT,
+                created_at TEXT NOT NULL
+            );
             "#,
         )?;
         Ok(())
@@ -138,6 +146,52 @@ impl ProfileStore {
         self.conn()?
             .execute("DELETE FROM watched_wallets WHERE address=?1", params![address])?;
         self.wallets()
+    }
+
+    pub fn record_swap(
+        &self,
+        signature: &str,
+        wallet: &str,
+        classification: &str,
+        asset_mint: Option<&str>,
+        quote_mint: Option<&str>,
+    ) -> Result<()> {
+        if signature.is_empty() {
+            return Ok(());
+        }
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn()?.execute(
+            "INSERT INTO observed_swaps(signature, wallet, classification, asset_mint, quote_mint, created_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(signature) DO NOTHING",
+            params![signature, wallet, classification, asset_mint, quote_mint, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_swaps(&self, limit: i64) -> Result<Vec<serde_json::Value>> {
+        let limit = limit.clamp(1, 100);
+        let conn = self.conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT signature, wallet, classification, asset_mint, quote_mint, created_at
+             FROM observed_swaps ORDER BY created_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit], |row| {
+            Ok(serde_json::json!({
+                "signature": row.get::<_, String>(0)?,
+                "wallet": row.get::<_, String>(1)?,
+                "classification": row.get::<_, String>(2)?,
+                "asset_mint": row.get::<_, Option<String>>(3)?,
+                "quote_mint": row.get::<_, Option<String>>(4)?,
+                "created_at": row.get::<_, String>(5)?,
+                "real_trading": false
+            }))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
     }
 }
 

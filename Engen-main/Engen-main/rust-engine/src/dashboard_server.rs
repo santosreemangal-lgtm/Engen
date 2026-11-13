@@ -1438,11 +1438,7 @@ impl DashboardApp {
                 }
             };
             let value = match BigDecimal::from_str(&amount) {
-                Ok(value)
-                    if value > 0 && value <= 1_000_000_000 =>
-                {
-                    value
-                }
+                Ok(value) if value > 0 && value <= 1_000_000_000 => value,
                 _ => {
                     return HttpResponse::json(
                         400,

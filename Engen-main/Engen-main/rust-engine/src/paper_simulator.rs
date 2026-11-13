@@ -1761,6 +1761,156 @@ mod tests {
     }
 
     #[test]
+    fn configurable_trading_network_and_priority_fees_are_accounted_and_persisted() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("configured-fees.db");
+        let order_id;
+        {
+            let mut sim = PaperSimulator::open(&path, &virtual_cash()).unwrap();
+            order_id = buy_order(&mut sim, "configured-fee-order");
+            let policy = ExecutionPolicy {
+                fee_bps: 50,
+                network_cost: "0.25".to_string(),
+                priority_fee_usd: "0.75".to_string(),
+                ..ExecutionPolicy::default()
+            };
+
+            let result = sim
+                .execute_order(&order_id, Some(&price("TOKEN")), now(), &policy, true)
+                .unwrap();
+            assert_eq!(result["status"], "FILLED");
+
+            let fill = &sim.fills()[0];
+            assert_eq!(
+                BigDecimal::from_str(&fill.gross_quote).unwrap(),
+                BigDecimal::from_str("20.1").unwrap()
+            );
+            assert_eq!(
+                BigDecimal::from_str(&fill.fee).unwrap(),
+                BigDecimal::from_str("0.1005").unwrap()
+            );
+            assert_eq!(
+                BigDecimal::from_str(&fill.base_network_fee).unwrap(),
+                BigDecimal::from_str("0.25").unwrap()
+            );
+            assert_eq!(
+                BigDecimal::from_str(&fill.priority_fee).unwrap(),
+                BigDecimal::from_str("0.75").unwrap()
+            );
+            assert_eq!(
+                BigDecimal::from_str(&fill.network_cost).unwrap(),
+                BigDecimal::from(1)
+            );
+            assert_eq!(
+                BigDecimal::from_str(&fill.net_quote).unwrap(),
+                BigDecimal::from_str("21.2005").unwrap()
+            );
+            assert_eq!(
+                sim.orders()[&order_id].details["trading_fee_bps"],
+                50
+            );
+            assert_eq!(
+                sim.orders()[&order_id].details["base_network_fee_usd"],
+                "0.25"
+            );
+            assert_eq!(
+                sim.orders()[&order_id].details["priority_fee_usd"],
+                "0.75"
+            );
+        }
+
+        let recovered = PaperSimulator::open(&path, &BTreeMap::new()).unwrap();
+        let fill = &recovered.fills()[0];
+        assert_eq!(fill.order_id, order_id);
+        assert_eq!(fill.base_network_fee, "0.25");
+        assert_eq!(fill.priority_fee, "0.75");
+        assert_eq!(fill.network_cost, "1");
+        assert_eq!(recovered.orders()[&order_id].status, "FILLED");
+    }
+
+    #[test]
+    fn invalid_priority_fee_rejects_order_and_releases_its_reservation() {
+        let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
+        let id = budget_buy_order(&mut sim, "invalid-priority-fee", "20");
+        assert_eq!(sim.reserved_balance("USD"), BigDecimal::from(20));
+
+        let policy = ExecutionPolicy {
+            priority_fee_usd: "-0.01".to_string(),
+            ..ExecutionPolicy::default()
+        };
+        let result = sim
+            .execute_order(&id, Some(&price("TOKEN")), now(), &policy, true)
+            .unwrap();
+
+        assert_eq!(result["status"], "REJECTED");
+        assert!(result["reason"]
+            .as_str()
+            .unwrap()
+            .contains("priority fee"));
+        assert_eq!(sim.reserved_balance("USD"), BigDecimal::zero());
+        assert_eq!(sim.available_balance("USD"), BigDecimal::from(100));
+        assert!(sim.fills().is_empty());
+    }
+
+    #[test]
+    fn existing_simulated_fills_schema_is_migrated_with_fee_breakdown_columns() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("legacy-fills.db");
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE simulated_fills(
+                        fill_id TEXT PRIMARY KEY,
+                        order_id TEXT NOT NULL UNIQUE,
+                        asset_mint TEXT NOT NULL,
+                        quantity TEXT NOT NULL,
+                        reference_price TEXT NOT NULL,
+                        execution_price TEXT NOT NULL,
+                        gross_quote TEXT NOT NULL,
+                        fee TEXT NOT NULL,
+                        network_cost TEXT NOT NULL,
+                        net_quote TEXT NOT NULL,
+                        currency TEXT NOT NULL,
+                        price_source TEXT NOT NULL,
+                        price_timestamp TEXT NOT NULL,
+                        price_age_seconds INTEGER NOT NULL,
+                        slippage_bps INTEGER NOT NULL,
+                        created_at TEXT NOT NULL
+                    );",
+                )
+                .unwrap();
+        }
+
+        let sim = PaperSimulator::open(&path, &virtual_cash()).unwrap();
+        assert!(sim.fills().is_empty());
+
+        let connection = Connection::open(&path).unwrap();
+        let base_fee_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM pragma_table_info('simulated_fills')
+                    WHERE name='base_network_fee'
+                )",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let priority_fee_exists: bool = connection
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM pragma_table_info('simulated_fills')
+                    WHERE name='priority_fee'
+                )",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(base_fee_exists);
+        assert!(priority_fee_exists);
+    }
+
+    #[test]
     fn fills_a_paper_buy_with_decimal_accounting() {
         let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
         let id = buy_order(&mut sim, "signal-1");

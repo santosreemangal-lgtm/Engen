@@ -10,7 +10,7 @@ use crate::signature_store::{SignatureStore, SignatureStoreError};
 use crate::solana_public::{SolanaRpcClient, SolanaRpcError};
 use crate::solana_validation::{is_valid_solana_address, is_valid_transaction_signature};
 
-const MAX_SCAN_PAGES: usize = 5;
+const MAX_SCAN_PAGES: usize = MAX_BACKFILL_SIGNATURES;
 const MAX_PAGE_SIZE: usize = 1000;
 const MAX_BACKFILL_SIGNATURES: usize = 1_000;
 
@@ -138,6 +138,8 @@ where
 
     loop {
         pages += 1;
+        let previous_unique_count = records_by_signature.len();
+        let lane = if pages == 1 { "fresh" } else { "history" };
         let mut anchor_found = false;
         for item in &page {
             let Some(signature) = item.get("signature").and_then(Value::as_str) else {
@@ -150,7 +152,7 @@ where
                 break;
             }
             let slot = item.get("slot").and_then(Value::as_u64);
-            store.save(wallet_address, signature, slot)?;
+            store.save_in_lane(wallet_address, signature, slot, lane, Some(item))?;
             records_by_signature.insert(signature.to_string(), item.clone());
             if anchor_signature.as_deref() == Some(signature) {
                 anchor_found = true;
@@ -163,6 +165,7 @@ where
             || page.len() < limit
             || pages >= MAX_SCAN_PAGES
             || page.is_empty()
+            || records_by_signature.len() == previous_unique_count
         {
             break;
         }

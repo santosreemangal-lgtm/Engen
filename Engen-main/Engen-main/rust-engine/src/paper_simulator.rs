@@ -1375,7 +1375,7 @@ mod tests {
         assert!(unspent >= BigDecimal::zero());
         assert!(unspent < BigDecimal::from_str("0.00000000000000002").unwrap());
         assert_eq!(sim.balances()["USD"], unspent);
-        assert!(BigDecimal::from_str(&fill.quantity).unwrap() < BigDecimal::from(2));
+        assert!(BigDecimal::from_str(&fill.quantity).unwrap() < 2);
         assert_eq!(
             sim.orders()[&id].details["asset_quantity_step"],
             "0.000000000000000001"
@@ -1469,7 +1469,7 @@ mod tests {
         let spent = BigDecimal::from_str(&sim.fills()[0].gross_quote).unwrap()
             + BigDecimal::from_str(&sim.fills()[0].fee).unwrap()
             + BigDecimal::from_str(&sim.fills()[0].network_cost).unwrap();
-        assert!(spent <= BigDecimal::from(20));
+        assert!(spent <= 20);
         assert_eq!(sim.balances()["USD"], BigDecimal::from(20) - spent);
     }
 
@@ -1592,8 +1592,10 @@ mod tests {
     fn invalid_execution_policy_minimum_is_rejected_without_fill() {
         let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
         let id = buy_order(&mut sim, "invalid-minimum-policy");
-        let mut policy = ExecutionPolicy::default();
-        policy.min_order_value_usd = "NaN".to_string();
+        let policy = ExecutionPolicy {
+            min_order_value_usd: "NaN".to_string(),
+            ..ExecutionPolicy::default()
+        };
         let result = sim
             .execute_order(&id, Some(&price("TOKEN")), now(), &policy, true)
             .unwrap();

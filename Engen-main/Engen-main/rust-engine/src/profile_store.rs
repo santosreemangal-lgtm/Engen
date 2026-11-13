@@ -421,6 +421,11 @@ impl ProfileStore {
         self.get_profile(profile_id)
     }
 
+    /// Validate settings without changing persistent profile data.
+    pub fn validate_settings(settings: &Value) -> Result<(), ProfileStoreError> {
+        serialize_settings(settings).map(|_| ())
+    }
+
     pub fn set_settings(
         &self,
         profile_id: &str,

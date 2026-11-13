@@ -19,7 +19,7 @@ use crate::wallet_monitor::{
 };
 
 const MAX_PROCESSING_ATTEMPTS: u32 = 6;
-const SIGNATURE_CLAIM_LEASE_SECONDS: u64 = 120;
+const SIGNATURE_CLAIM_LEASE_SECONDS: u64 = 3_600;
 static CLAIM_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 fn fresh_claim_owner() -> String {

@@ -291,6 +291,163 @@ fn pending_fresh_signature_blocks_history_processing_in_the_same_monitor_cycle()
         .expect("mock RPC server completed only Fresh processing requests");
 }
 
+
+#[test]
+fn initial_baseline_defers_bounded_history_backfill_until_next_cycle_and_persists_history_as_non_copyable() {
+    const HISTORY_SIGNATURE: &str =
+        "1111111111111111111111111111111111111111111111111111111111111114";
+
+    let history_transfer = json!({
+        "slot": 99,
+        "transaction": {
+            "message": {
+                "header": {"numRequiredSignatures": 1},
+                "accountKeys": [
+                    {"pubkey": WALLET, "signer": true, "writable": true},
+                    {"pubkey": OTHER, "signer": false, "writable": true},
+                    {"pubkey": SYSTEM_PROGRAM, "signer": false, "writable": false}
+                ],
+                "instructions": [{
+                    "program": "system",
+                    "programId": SYSTEM_PROGRAM,
+                    "parsed": {
+                        "type": "transfer",
+                        "info": {
+                            "source": WALLET,
+                            "destination": OTHER,
+                            "lamports": 1000000
+                        }
+                    }
+                }]
+            }
+        },
+        "meta": {
+            "err": null,
+            "fee": 5000,
+            "preBalances": [10000000, 0, 1],
+            "postBalances": [8995000, 1000000, 1],
+            "preTokenBalances": [],
+            "postTokenBalances": [],
+            "innerInstructions": []
+        }
+    });
+
+    let (endpoint, server) = spawn_mock_rpc(vec![
+        rpc_response(
+            6,
+            json!([{
+                "signature": OLD_SIGNATURE,
+                "slot": 100,
+                "err": null,
+                "confirmationStatus": "finalized",
+                "blockTime": 1760000000
+            }]),
+        ),
+        rpc_response(
+            6,
+            json!([{
+                "signature": OLD_SIGNATURE,
+                "slot": 100,
+                "err": null,
+                "confirmationStatus": "finalized",
+                "blockTime": 1760000000
+            }]),
+        ),
+        rpc_response(
+            6,
+            json!([{
+                "signature": HISTORY_SIGNATURE,
+                "slot": 99,
+                "err": null,
+                "confirmationStatus": "confirmed",
+                "blockTime": 1759999999
+            }]),
+        ),
+        rpc_response(4, history_transfer.clone()),
+    ]);
+
+    let client = SolanaRpcClient::new(RpcConfig {
+        endpoint,
+        timeout: Duration::from_secs(3),
+        retries: 0,
+        backoff: Duration::ZERO,
+        min_interval: Duration::ZERO,
+    })
+    .expect("create loopback-only History backfill client");
+
+    let directory = tempfile::tempdir().expect("create disposable DB directory");
+    let database_path = directory.path().join("history-backfill-e2e.db");
+    {
+        let store = SignatureStore::open(&database_path).expect("open disposable signature store");
+
+        let baseline = monitor_wallet(&client, &store, WALLET, 10, false, None)
+            .expect("first observation must only establish the baseline");
+        assert!(baseline.is_empty());
+        assert_eq!(
+            store.history_backfill_state(WALLET).unwrap(),
+            Some((Some(OLD_SIGNATURE.to_string()), 0, false))
+        );
+
+        let history_results = monitor_wallet(&client, &store, WALLET, 10, false, None)
+            .expect("resume the bounded History cursor on the next cycle");
+        assert_eq!(history_results.len(), 1);
+        assert_eq!(history_results[0]["signature"], HISTORY_SIGNATURE);
+        assert_eq!(history_results[0]["source_lane"], "history");
+        assert_eq!(history_results[0]["paper_copy_eligible"], false);
+        assert_eq!(
+            history_results[0]["trade_signal"]["transaction_type"],
+            "TRANSFER"
+        );
+        assert_eq!(
+            history_results[0]["trade_signal"]["trade_signal"],
+            "NOT_COPYABLE"
+        );
+        assert_eq!(
+            store.get_status(WALLET, HISTORY_SIGNATURE).unwrap().as_deref(),
+            Some("processed")
+        );
+        assert_eq!(
+            store.history_backfill_state(WALLET).unwrap(),
+            Some((Some(HISTORY_SIGNATURE.to_string()), 1, true))
+        );
+        let record = store
+            .get_transaction_record(WALLET, HISTORY_SIGNATURE)
+            .unwrap()
+            .expect("History transaction evidence must be persisted");
+        assert_eq!(record.status, "processed");
+        assert_eq!(
+            record.parsed_evidence.as_ref().unwrap()["source_lane"],
+            "history"
+        );
+        assert_eq!(
+            record.parsed_evidence.as_ref().unwrap()["paper_copy_eligible"],
+            false
+        );
+        assert_eq!(
+            record.classification.as_ref().unwrap()["transaction_type"],
+            "TRANSFER"
+        );
+    }
+
+    let restarted = SignatureStore::open(&database_path).expect("reopen after monitoring restart");
+    assert_eq!(
+        restarted.history_backfill_state(WALLET).unwrap(),
+        Some((Some(HISTORY_SIGNATURE.to_string()), 1, true))
+    );
+    let record = restarted
+        .get_transaction_record(WALLET, HISTORY_SIGNATURE)
+        .unwrap()
+        .expect("History evidence survives restart");
+    assert_eq!(record.status, "processed");
+    assert_eq!(
+        record.parsed_evidence.unwrap()["source_lane"],
+        "history"
+    );
+    server
+        .join()
+        .expect("mock RPC server completed exactly the expected read-only requests");
+}
+
 #[test]
 fn unsupported_transaction_version_is_retained_for_manual_review_after_restart() {
     let (endpoint, server) = spawn_mock_rpc(vec![

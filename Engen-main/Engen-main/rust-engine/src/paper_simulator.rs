@@ -61,6 +61,11 @@ pub struct PaperFill {
     pub execution_price: String,
     pub gross_quote: String,
     pub fee: String,
+    /// Fixed base-network fee estimate charged in the paper quote currency.
+    pub base_network_fee: String,
+    /// Configured priority-fee estimate charged in the paper quote currency.
+    pub priority_fee: String,
+    /// Sum of base_network_fee and priority_fee (kept for existing P&L consumers).
     pub network_cost: String,
     pub net_quote: String,
     pub currency: String,
@@ -76,7 +81,11 @@ pub struct ExecutionPolicy {
     pub max_price_age_seconds: u64,
     pub slippage_bps: u16,
     pub fee_bps: u16,
+    /// Base network-fee estimate in USD per paper fill.
     pub network_cost: String,
+    /// Priority-fee estimate in USD per paper fill; this is an explicit
+    /// simulation input, not a live Solana priority-fee quote.
+    pub priority_fee_usd: String,
     pub min_liquidity_usd: String,
     pub min_order_value_usd: String,
     pub min_order_quantity: String,
@@ -91,6 +100,7 @@ impl Default for ExecutionPolicy {
             slippage_bps: 50,
             fee_bps: 10,
             network_cost: "0".to_string(),
+            priority_fee_usd: "0".to_string(),
             min_liquidity_usd: "10000".to_string(),
             min_order_value_usd: "1".to_string(),
             min_order_quantity: "0.000000000000000001".to_string(),
@@ -243,6 +253,8 @@ impl PaperSimulator {
                 execution_price TEXT NOT NULL,
                 gross_quote TEXT NOT NULL,
                 fee TEXT NOT NULL,
+                base_network_fee TEXT NOT NULL DEFAULT '0',
+                priority_fee TEXT NOT NULL DEFAULT '0',
                 network_cost TEXT NOT NULL,
                 net_quote TEXT NOT NULL,
                 currency TEXT NOT NULL,
@@ -254,6 +266,36 @@ impl PaperSimulator {
             );
             ",
         )?;
+
+        // Additive migration keeps existing paper-fill databases readable.
+        let has_base_network_fee: bool = transaction.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM pragma_table_info('simulated_fills')
+                WHERE name='base_network_fee'
+            )",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_base_network_fee {
+            transaction.execute_batch(
+                "ALTER TABLE simulated_fills
+                 ADD COLUMN base_network_fee TEXT NOT NULL DEFAULT '0'",
+            )?;
+        }
+        let has_priority_fee: bool = transaction.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM pragma_table_info('simulated_fills')
+                WHERE name='priority_fee'
+            )",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_priority_fee {
+            transaction.execute_batch(
+                "ALTER TABLE simulated_fills
+                 ADD COLUMN priority_fee TEXT NOT NULL DEFAULT '0'",
+            )?;
+        }
 
         let initialized: Option<String> = transaction
             .query_row(
@@ -379,7 +421,8 @@ impl PaperSimulator {
                 "SELECT f.fill_id,f.order_id,o.side,f.asset_mint,f.quantity,o.quote_mint,
                         f.reference_price,f.execution_price,f.gross_quote,f.fee,f.network_cost,
                         f.net_quote,f.currency,f.price_source,f.price_timestamp,
-                        f.price_age_seconds,f.slippage_bps,f.created_at
+                        f.price_age_seconds,f.slippage_bps,f.created_at,
+                        f.base_network_fee,f.priority_fee
                  FROM simulated_fills f JOIN simulated_orders o ON o.order_id=f.order_id
                  ORDER BY f.rowid",
             )?;
@@ -403,6 +446,8 @@ impl PaperSimulator {
                     price_age_seconds: row.get::<_, i64>(15)?.max(0) as u64,
                     slippage_bps: row.get::<_, i64>(16)?.clamp(0, u16::MAX as i64) as u16,
                     created_at: row.get(17)?,
+                    base_network_fee: row.get(18)?,
+                    priority_fee: row.get(19)?,
                 })
             })?;
             for row in rows {
@@ -540,8 +585,8 @@ impl PaperSimulator {
                 "INSERT INTO simulated_fills(
                     fill_id,order_id,asset_mint,quantity,reference_price,execution_price,
                     gross_quote,fee,network_cost,net_quote,currency,price_source,price_timestamp,
-                    price_age_seconds,slippage_bps,created_at
-                 ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
+                    price_age_seconds,slippage_bps,created_at,base_network_fee,priority_fee
+                 ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
                 params![
                     fill.fill_id,
                     fill.order_id,
@@ -558,7 +603,9 @@ impl PaperSimulator {
                     fill.price_timestamp,
                     fill.price_age_seconds as i64,
                     i64::from(fill.slippage_bps),
-                    fill.created_at
+                    fill.created_at,
+                    fill.base_network_fee,
+                    fill.priority_fee
                 ],
             )?;
         }
@@ -1159,7 +1206,7 @@ impl PaperSimulator {
         if policy.slippage_bps > 10_000 || policy.fee_bps > 10_000 {
             return self.reject_order(
                 &mut order,
-                "Slippage and fee basis points must be between 0 and 10000.",
+                "Slippage and trading-fee basis points must be between 0 and 10000.",
             );
         }
         let minimum_order_value_raw = match order.details.get("minimum_order_value_usd").cloned() {
@@ -1212,10 +1259,33 @@ impl PaperSimulator {
         };
         let fee_rate = BigDecimal::from(i64::from(policy.fee_bps)) / BigDecimal::from(10_000_i64);
         let fee_multiplier = BigDecimal::from(1) + &fee_rate;
-        let network = match decimal_value(&policy.network_cost, "Network cost", true) {
+        let base_network_fee = match decimal_value(
+            &policy.network_cost,
+            "Base network fee USD",
+            true,
+        ) {
             Ok(value) => value,
-            Err(_) => return self.reject_order(&mut order, "Simulated network cost is invalid."),
+            Err(_) => {
+                return self.reject_order(&mut order, "Configured base network fee is invalid.")
+            }
         };
+        let priority_fee = match decimal_value(
+            &policy.priority_fee_usd,
+            "Priority fee USD",
+            true,
+        ) {
+            Ok(value) => value,
+            Err(_) => {
+                return self.reject_order(&mut order, "Configured priority fee is invalid.")
+            }
+        };
+        let network = &base_network_fee + &priority_fee;
+        if network > BigDecimal::from(1_000) {
+            return self.reject_order(
+                &mut order,
+                "Combined simulated network and priority fees exceed the $1,000 per-fill safety limit.",
+            );
+        }
 
         let target_budget = match order.details.get("target_budget_usd").cloned() {
             None | Some(Value::Null) => None,
@@ -1369,6 +1439,8 @@ impl PaperSimulator {
             execution_price: execution_price.to_string(),
             gross_quote: gross.to_string(),
             fee: fee.to_string(),
+            base_network_fee: base_network_fee.to_string(),
+            priority_fee: priority_fee.to_string(),
             network_cost: network.to_string(),
             net_quote: total_cost_or_proceeds.to_string(),
             currency: "USD".to_string(),
@@ -1426,8 +1498,23 @@ impl PaperSimulator {
         set_detail(&mut order.details, "fee", json!(fee.to_string()));
         set_detail(
             &mut order.details,
+            "trading_fee_bps",
+            json!(policy.fee_bps),
+        );
+        set_detail(
+            &mut order.details,
+            "base_network_fee_usd",
+            json!(base_network_fee.normalized().to_plain_string()),
+        );
+        set_detail(
+            &mut order.details,
+            "priority_fee_usd",
+            json!(priority_fee.normalized().to_plain_string()),
+        );
+        set_detail(
+            &mut order.details,
             "network_cost",
-            json!(network.to_string()),
+            json!(network.normalized().to_plain_string()),
         );
         set_detail(&mut order.details, "fill_id", json!(fill.fill_id));
         if self.reservations.contains_key(order_id) {

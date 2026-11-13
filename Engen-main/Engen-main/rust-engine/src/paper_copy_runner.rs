@@ -1018,6 +1018,10 @@ mod tests {
         assert_eq!(order.details["minimum_order_quantity"], "0.000001");
         assert_eq!(order.details["asset_quantity_step"], "0.000001");
         assert_eq!(order.details["real_trading"], false);
+        assert_eq!(order.details["reservation_mint"], "USD");
+        assert_eq!(order.details["reservation_amount"], "5");
+        assert_eq!(simulator.reserved_balance("USD"), BigDecimal::from(5));
+        assert_eq!(simulator.available_balance("USD"), BigDecimal::from(95));
         let duplicate = queue_paper_orders(
             WALLET,
             &result,
@@ -1047,6 +1051,11 @@ mod tests {
         let order = simulator.orders().values().next().unwrap();
         assert_eq!(order.details["source_sell_fraction"], "0.5");
         assert_eq!(order.details["sizing_mode"], "SOURCE_POSITION_REDUCTION");
+        assert_eq!(BigDecimal::from_str(&order.quantity).unwrap(), BigDecimal::from(5));
+        assert_eq!(order.details["reservation_mint"], ASSET);
+        assert_eq!(order.details["reservation_amount"], "5");
+        assert_eq!(simulator.reserved_balance(ASSET), BigDecimal::from(5));
+        assert_eq!(simulator.available_balance(ASSET), BigDecimal::from(5));
     }
 
     #[test]
@@ -1276,6 +1285,20 @@ mod tests {
         )
         .unwrap();
         assert_eq!(queued.len(), 2);
+        assert_eq!(
+            BigDecimal::from_str(&simulator.orders().values().find(|order| {
+                order.details["source_slot"] == 101
+            }).unwrap().quantity).unwrap(),
+            BigDecimal::from(5)
+        );
+        assert_eq!(
+            simulator.reserved_balance(ASSET),
+            BigDecimal::from_str("7.5").unwrap()
+        );
+        assert_eq!(
+            simulator.available_balance(ASSET),
+            BigDecimal::from_str("2.5").unwrap()
+        );
 
         let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
         let mut price_call = 0usize;
@@ -1357,6 +1380,50 @@ mod tests {
         assert_eq!(status["pending_count"], 1);
         assert_eq!(status["real_trading"], false);
         assert_eq!(status["transaction_broadcast"], false);
+    }
+
+    #[test]
+    fn multiple_pending_buy_signals_reserve_decreasing_available_cash() {
+        let mut simulator = simulator();
+        let rows = vec![
+            buy_signal(&"b".repeat(64)),
+            buy_signal(&"c".repeat(64)),
+        ];
+        let queued = queue_paper_orders(
+            WALLET,
+            &rows,
+            &mut simulator,
+            AllowedSides::Buy,
+            &CopySettings::default(),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(queued.len(), 2);
+        let mut budgets: Vec<BigDecimal> = simulator
+            .orders()
+            .values()
+            .map(|order| {
+                BigDecimal::from_str(
+                    order.details["target_budget_usd"].as_str().unwrap(),
+                )
+                .unwrap()
+            })
+            .collect();
+        budgets.sort();
+        assert_eq!(budgets, vec![
+            BigDecimal::from_str("4.75").unwrap(),
+            BigDecimal::from(5),
+        ]);
+        assert_eq!(
+            simulator.reserved_balance("USD"),
+            BigDecimal::from_str("9.75").unwrap()
+        );
+        assert_eq!(
+            simulator.available_balance("USD"),
+            BigDecimal::from_str("90.25").unwrap()
+        );
+        assert_eq!(simulator.balances()["USD"], BigDecimal::from(100));
     }
 
     #[test]

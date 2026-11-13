@@ -2173,6 +2173,40 @@ mod tests {
     }
 
     #[test]
+    fn dashboard_api_requires_exact_bearer_token_when_auth_is_configured() {
+        let (_directory, mut app) = dashboard_app_fixture();
+        let app_mut = Arc::get_mut(&mut app).unwrap();
+        app_mut.auth_token = Some("0123456789abcdef0123456789abcdef".to_string());
+
+        let denied = app.handle(api_request("GET", "/api/wallets", Value::Null));
+        assert_eq!(denied.status, 401);
+
+        let mut request = api_request("GET", "/api/wallets", Value::Null);
+        request.headers.insert(
+            "authorization".to_string(),
+            "Bearer 0123456789abcdef0123456789abcdef".to_string(),
+        );
+        let allowed = app.handle(request);
+        assert_eq!(allowed.status, 200);
+    }
+
+    #[test]
+    fn dashboard_api_rejects_cross_origin_state_changes() {
+        let (_directory, app) = dashboard_app_fixture();
+        let mut request = api_request(
+            "POST",
+            "/api/wallets",
+            json!({"action":"add","address":"11111111111111111111111111111111"}),
+        );
+        request.headers.insert(
+            "origin".to_string(),
+            "https://attacker.example".to_string(),
+        );
+        let response = app.handle(request);
+        assert_eq!(response.status, 403);
+    }
+
+    #[test]
     fn real_http_request_parser_and_response_writer_serve_wallet_api_over_tcp() {
         use std::net::TcpListener;
 

@@ -859,7 +859,6 @@ impl SignatureStore {
         Ok(rows.collect::<Result<Vec<String>, _>>()?)
     }
 
-
     pub fn history_backfill_state(
         &self,
         wallet: &str,
@@ -881,11 +880,7 @@ impl SignatureStore {
             )
             .optional()?;
         Ok(row.map(|(cursor, count, completed)| {
-            (
-                cursor,
-                usize::try_from(count).unwrap_or(0),
-                completed != 0,
-            )
+            (cursor, usize::try_from(count).unwrap_or(0), completed != 0)
         }))
     }
 
@@ -904,7 +899,11 @@ impl SignatureStore {
             "INSERT OR IGNORE INTO wallet_history_backfills(
                 wallet_address,cursor_signature,signatures_count,completed
              ) VALUES(?1,?2,0,?3)",
-            params![wallet, cursor_signature, i64::from(cursor_signature.is_none())],
+            params![
+                wallet,
+                cursor_signature,
+                i64::from(cursor_signature.is_none())
+            ],
         )?;
         Ok(changed == 1)
     }
@@ -941,7 +940,12 @@ impl SignatureStore {
                  END,
                  updated_at=CURRENT_TIMESTAMP
              WHERE wallet_address=?1",
-            params![wallet, cursor_signature, scanned_count, i64::from(completed)],
+            params![
+                wallet,
+                cursor_signature,
+                scanned_count,
+                i64::from(completed)
+            ],
         )?;
         if changed != 1 {
             return Err(SignatureStoreError::NotFound);
@@ -1142,7 +1146,6 @@ mod tests {
             .is_empty());
     }
 
-
     #[test]
     fn history_backfill_progress_survives_restart_and_stops_at_one_thousand() {
         let dir = tempdir().unwrap();
@@ -1151,8 +1154,12 @@ mod tests {
         let cursor_b = "1111111111111111111111111111111111111111111111111111111111111112";
         {
             let store = SignatureStore::open(&path).unwrap();
-            assert!(store.start_history_backfill(WALLET, Some(cursor_a)).unwrap());
-            assert!(!store.start_history_backfill(WALLET, Some(cursor_b)).unwrap());
+            assert!(store
+                .start_history_backfill(WALLET, Some(cursor_a))
+                .unwrap());
+            assert!(!store
+                .start_history_backfill(WALLET, Some(cursor_b))
+                .unwrap());
             store
                 .advance_history_backfill(WALLET, Some(cursor_b), 600, false)
                 .unwrap();

@@ -10,7 +10,7 @@ use std::str::FromStr;
 use bigdecimal::rounding::RoundingMode;
 use bigdecimal::BigDecimal;
 use num_traits::Zero;
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use thiserror::Error;
@@ -31,6 +31,8 @@ pub enum PaperSimulatorError {
     InvalidInput(String),
     #[error("Order was not found.")]
     OrderNotFound,
+    #[error("Paper balance changed in another simulator instance; reload before retrying.")]
+    ConcurrentStateConflict,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -119,9 +121,16 @@ pub struct CreateOrderRequest<'a> {
     pub details: Option<Value>,
 }
 
+#[derive(Debug, Clone)]
+struct BalanceReservation {
+    mint: String,
+    amount: BigDecimal,
+}
+
 pub struct PaperSimulator {
     db_path: Option<PathBuf>,
     balances: BTreeMap<String, BigDecimal>,
+    reservations: BTreeMap<String, BalanceReservation>,
     orders: BTreeMap<String, PaperOrder>,
     fills: Vec<PaperFill>,
     processed_signals: BTreeSet<String>,
@@ -163,6 +172,7 @@ impl PaperSimulator {
         let mut simulator = Self {
             db_path,
             balances,
+            reservations: BTreeMap::new(),
             orders: BTreeMap::new(),
             fills: Vec::new(),
             processed_signals: BTreeSet::new(),
@@ -218,6 +228,11 @@ impl PaperSimulator {
                 reason TEXT,
                 created_at TEXT NOT NULL,
                 details_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS simulator_reservations(
+                order_id TEXT PRIMARY KEY REFERENCES simulated_orders(order_id) ON DELETE CASCADE,
+                mint TEXT NOT NULL,
+                amount TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS simulated_fills(
                 fill_id TEXT PRIMARY KEY,
@@ -283,9 +298,17 @@ impl PaperSimulator {
                 );
             }
         }
+        transaction.execute(
+            "DELETE FROM simulator_reservations
+             WHERE order_id NOT IN (
+                 SELECT order_id FROM simulated_orders WHERE status='CREATED'
+             )",
+            [],
+        )?;
         transaction.commit()?;
 
         self.load_orders_and_fills()?;
+        self.load_reservations()?;
         self.initial_balance = self.read_meta("initial_balance")?;
         if self.initial_balance.is_some() {
             self.initial_balance_mint = Some("USD".to_string());
@@ -390,6 +413,37 @@ impl PaperSimulator {
         Ok(())
     }
 
+    fn load_reservations(&mut self) -> Result<(), PaperSimulatorError> {
+        self.reservations.clear();
+        if self.db_path.is_none() {
+            return Ok(());
+        }
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT r.order_id,r.mint,r.amount
+             FROM simulator_reservations r
+             JOIN simulated_orders o ON o.order_id=r.order_id
+             WHERE o.status='CREATED'
+             ORDER BY o.rowid",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (order_id, mint, raw_amount) = row?;
+            let amount = decimal_value(&raw_amount, "Persisted reservation amount", false)?;
+            self.reservations.insert(
+                order_id,
+                BalanceReservation { mint, amount },
+            );
+        }
+        Ok(())
+    }
+
     fn read_meta(&self, key: &str) -> Result<Option<String>, PaperSimulatorError> {
         if self.db_path.is_none() {
             return Ok(None);
@@ -410,13 +464,71 @@ impl PaperSimulator {
         balances: Option<&BTreeMap<String, BigDecimal>>,
         fill: Option<&PaperFill>,
     ) -> Result<(), PaperSimulatorError> {
+        self.persist_with_reservation_release(order, balances, fill, false)
+    }
+
+    fn persist_releasing_reservation(
+        &self,
+        order: &PaperOrder,
+        balances: Option<&BTreeMap<String, BigDecimal>>,
+        fill: Option<&PaperFill>,
+    ) -> Result<(), PaperSimulatorError> {
+        self.persist_with_reservation_release(order, balances, fill, true)
+    }
+
+    fn persist_with_reservation_release(
+        &self,
+        order: &PaperOrder,
+        balances: Option<&BTreeMap<String, BigDecimal>>,
+        fill: Option<&PaperFill>,
+        release_reservation: bool,
+    ) -> Result<(), PaperSimulatorError> {
         if self.db_path.is_none() {
             return Ok(());
         }
         let mut connection = self.connect()?;
-        let transaction = connection.transaction()?;
+        let transaction =
+            connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         Self::persist_order(&transaction, order)?;
+
+        if release_reservation {
+            transaction.execute(
+                "DELETE FROM simulator_reservations WHERE order_id=?1",
+                [&order.order_id],
+            )?;
+        }
+
         if let Some(balances) = balances {
+            // Reject stale simulator snapshots. This is the final guard against
+            // two independently opened simulator instances spending the same cash.
+            for (mint, amount) in balances {
+                let stored_raw: Option<String> = transaction
+                    .query_row(
+                        "SELECT amount FROM simulator_balances WHERE mint=?1",
+                        [mint],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                let stored = stored_raw
+                    .as_deref()
+                    .map(|raw| decimal_value(raw, "Persisted virtual balance", true))
+                    .transpose()?
+                    .unwrap_or_else(BigDecimal::zero);
+                let expected = self
+                    .balances
+                    .get(mint)
+                    .cloned()
+                    .unwrap_or_else(BigDecimal::zero);
+                if stored != expected {
+                    return Err(PaperSimulatorError::ConcurrentStateConflict);
+                }
+
+                let reserved = Self::persisted_reserved_balance(&transaction, mint, None)?;
+                if amount < &reserved {
+                    return Err(PaperSimulatorError::ConcurrentStateConflict);
+                }
+            }
+
             for (mint, amount) in balances {
                 transaction.execute(
                     "INSERT INTO simulator_balances(mint,amount) VALUES(?1,?2)
@@ -425,6 +537,7 @@ impl PaperSimulator {
                 )?;
             }
         }
+
         if let Some(fill) = fill {
             transaction.execute(
                 "INSERT INTO simulated_fills(
@@ -456,6 +569,78 @@ impl PaperSimulator {
         Ok(())
     }
 
+    fn persist_new_order(
+        &self,
+        order: &PaperOrder,
+        reservation: Option<&BalanceReservation>,
+    ) -> Result<bool, PaperSimulatorError> {
+        if self.db_path.is_none() {
+            if let Some(reservation) = reservation {
+                if reservation.amount > self.available_balance(&reservation.mint) {
+                    return Ok(false);
+                }
+            }
+            self.persist(order, None, None)?;
+            return Ok(true);
+        }
+
+        let mut connection = self.connect()?;
+        let transaction =
+            connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(reservation) = reservation {
+            let stored_raw: Option<String> = transaction
+                .query_row(
+                    "SELECT amount FROM simulator_balances WHERE mint=?1",
+                    [&reservation.mint],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let stored = stored_raw
+                .as_deref()
+                .map(|raw| decimal_value(raw, "Persisted virtual balance", true))
+                .transpose()?
+                .unwrap_or_else(BigDecimal::zero);
+            let reserved =
+                Self::persisted_reserved_balance(&transaction, &reservation.mint, None)?;
+            if reservation.amount > stored - reserved {
+                return Ok(false);
+            }
+        }
+
+        Self::persist_order(&transaction, order)?;
+        if let Some(reservation) = reservation {
+            transaction.execute(
+                "INSERT INTO simulator_reservations(order_id,mint,amount) VALUES(?1,?2,?3)",
+                params![
+                    order.order_id,
+                    reservation.mint,
+                    reservation.amount.normalized().to_plain_string()
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(true)
+    }
+
+    fn persisted_reserved_balance(
+        transaction: &Transaction<'_>,
+        mint: &str,
+        exclude_order_id: Option<&str>,
+    ) -> Result<BigDecimal, PaperSimulatorError> {
+        let mut statement = transaction.prepare(
+            "SELECT amount FROM simulator_reservations
+             WHERE mint=?1 AND (?2 IS NULL OR order_id<>?2)",
+        )?;
+        let rows = statement.query_map(params![mint, exclude_order_id], |row| {
+            row.get::<_, String>(0)
+        })?;
+        let mut total = BigDecimal::zero();
+        for row in rows {
+            total += decimal_value(&row?, "Persisted reservation amount", false)?;
+        }
+        Ok(total)
+    }
+
     fn persist_order(
         transaction: &Transaction<'_>,
         order: &PaperOrder,
@@ -479,6 +664,53 @@ impl PaperSimulator {
     pub fn balances(&self) -> &BTreeMap<String, BigDecimal> {
         &self.balances
     }
+
+    pub fn reserved_balance(&self, mint: &str) -> BigDecimal {
+        self.reservations
+            .values()
+            .filter(|reservation| reservation.mint == mint)
+            .fold(BigDecimal::zero(), |total, reservation| {
+                total + &reservation.amount
+            })
+    }
+
+    pub fn available_balance(&self, mint: &str) -> BigDecimal {
+        let balance = self
+            .balances
+            .get(mint)
+            .cloned()
+            .unwrap_or_else(BigDecimal::zero);
+        let available = balance - self.reserved_balance(mint);
+        if available < BigDecimal::zero() {
+            BigDecimal::zero()
+        } else {
+            available
+        }
+    }
+
+    fn available_balance_for_order(&self, mint: &str, order_id: &str) -> BigDecimal {
+        let balance = self
+            .balances
+            .get(mint)
+            .cloned()
+            .unwrap_or_else(BigDecimal::zero);
+        let reserved = self
+            .reservations
+            .iter()
+            .filter(|(reserved_order_id, reservation)| {
+                reservation.mint == mint && reserved_order_id.as_str() != order_id
+            })
+            .fold(BigDecimal::zero(), |total, (_, reservation)| {
+                total + &reservation.amount
+            });
+        let available = balance - reserved;
+        if available < BigDecimal::zero() {
+            BigDecimal::zero()
+        } else {
+            available
+        }
+    }
+
     pub fn orders(&self) -> &BTreeMap<String, PaperOrder> {
         &self.orders
     }
@@ -547,7 +779,65 @@ impl PaperSimulator {
                 order_details.insert(key, value);
             }
         }
-        let order = PaperOrder {
+
+        // The order owns exactly one reservation. Automatic BUYs reserve their
+        // all-in USD budget; SELLs reserve their token quantity. Older BUY orders
+        // with only target_notional_usd retain a conservative notional reservation.
+        let explicit_reservation = order_details
+            .get("reservation_mint")
+            .and_then(Value::as_str)
+            .zip(
+                order_details
+                    .get("reservation_amount")
+                    .and_then(Value::as_str),
+            );
+        let reservation = if let Some((mint, raw_amount)) = explicit_reservation {
+            let amount = decimal_value(raw_amount, "Order reservation", false)?;
+            if mint.trim().is_empty() {
+                return Err(PaperSimulatorError::InvalidInput(
+                    "Reservation mint is required.".to_string(),
+                ));
+            }
+            Some(BalanceReservation {
+                mint: mint.to_string(),
+                amount,
+            })
+        } else if side == "SELL" {
+            Some(BalanceReservation {
+                mint: asset_mint.to_string(),
+                amount: qty.clone(),
+            })
+        } else {
+            let raw_budget = order_details
+                .get("target_budget_usd")
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    order_details
+                        .get("target_notional_usd")
+                        .and_then(Value::as_str)
+                });
+            raw_budget
+                .and_then(|raw| decimal_value(raw, "Order reservation", false).ok())
+                .map(|amount| BalanceReservation {
+                    mint: quote_mint.to_string(),
+                    amount,
+                })
+        };
+        if let Some(reservation) = &reservation {
+            set_detail(
+                &mut Value::Object(order_details.clone()),
+                "reservation_mint",
+                json!(reservation.mint),
+            );
+            order_details.insert("reservation_mint".to_string(), json!(reservation.mint));
+            order_details.insert(
+                "reservation_amount".to_string(),
+                json!(reservation.amount.normalized().to_plain_string()),
+            );
+            order_details.insert("reservation_state".to_string(), json!("RESERVED"));
+        }
+
+        let mut order = PaperOrder {
             order_id: Uuid::new_v4().to_string(),
             signal_id: signal_id.to_string(),
             side: side.to_string(),
@@ -560,12 +850,28 @@ impl PaperSimulator {
             details: Value::Object(order_details),
         };
 
-        if let Err(error) = self.persist(&order, None, None) {
-            if matches!(&error, PaperSimulatorError::Database(rusqlite::Error::SqliteFailure(code, _)) if code.code == rusqlite::ErrorCode::ConstraintViolation)
-            {
-                return Ok(json!({"status":"DUPLICATE","signal_id":signal_id}));
+        let reservation_created = match self.persist_new_order(&order, reservation.as_ref()) {
+            Ok(created) => created,
+            Err(error) => {
+                if matches!(&error, PaperSimulatorError::Database(rusqlite::Error::SqliteFailure(code, _)) if code.code == rusqlite::ErrorCode::ConstraintViolation)
+                {
+                    return Ok(json!({"status":"DUPLICATE","signal_id":signal_id}));
+                }
+                return Err(error);
             }
-            return Err(error);
+        };
+        if !reservation_created {
+            order.status = "REJECTED".to_string();
+            order.reason = Some(
+                "Insufficient available virtual balance; existing pending orders retain their reservations."
+                    .to_string(),
+            );
+            set_detail(&mut order.details, "execution_state", json!("REJECTED"));
+            set_detail(&mut order.details, "reservation_state", json!("REJECTED"));
+            self.persist(&order, None, None)?;
+        } else if let Some(reservation) = reservation {
+            self.reservations
+                .insert(order.order_id.clone(), reservation);
         }
         self.processed_signals.insert(signal_id.to_string());
         self.orders.insert(order.order_id.clone(), order.clone());
@@ -605,9 +911,12 @@ impl PaperSimulator {
             );
         }
 
-        if self.orders.values().any(|order| order.status == "FILLED") {
+        if self.orders.values().any(|order| order.status == "FILLED")
+            || !self.reservations.is_empty()
+        {
             return Err(PaperSimulatorError::InvalidInput(
-                "Starting balance cannot be changed after a paper order has filled.".to_string(),
+                "Starting balance cannot be changed after a paper order has filled or reserved funds."
+                    .to_string(),
             ));
         }
 
@@ -645,6 +954,12 @@ impl PaperSimulator {
             ));
         }
         let value = decimal_value(amount, "Virtual balance", true)?;
+        if value < self.reserved_balance(mint) {
+            return Err(PaperSimulatorError::InvalidInput(
+                "Virtual balance cannot be reduced below funds reserved by pending orders."
+                    .to_string(),
+            ));
+        }
         self.persist_balance(mint, &value, true)?;
         self.balances.insert(mint.to_string(), value.clone());
         Ok(
@@ -735,12 +1050,16 @@ impl PaperSimulator {
                 "execution_state".to_string(),
                 Value::String("CANCELLED".to_string()),
             );
+            if self.reservations.contains_key(order_id) {
+                details.insert("reservation_state".to_string(), json!("RELEASED"));
+            }
             details.insert(
                 "paper_copy_skip_reason".to_string(),
                 Value::String(safe_reason.to_string()),
             );
         }
-        self.persist(&order, None, None)?;
+        self.persist_releasing_reservation(&order, None, None)?;
+        self.reservations.remove(order_id);
         self.orders.insert(order_id.to_string(), order.clone());
         Ok(serde_json::to_value(order)?)
     }
@@ -760,6 +1079,14 @@ impl PaperSimulator {
             return Ok(false);
         }
         let parsed = decimal_value(quantity, "Order quantity", false)?;
+        if let Some(reservation) = self.reservations.get(order_id) {
+            if reservation.mint == order.asset_mint && reservation.amount != parsed {
+                return Err(PaperSimulatorError::InvalidInput(
+                    "A reserved SELL quantity cannot be changed; cancel and recreate the order."
+                        .to_string(),
+                ));
+            }
+        }
         order.quantity = parsed.to_string();
         self.persist(&order, None, None)?;
         self.orders.insert(order_id.to_string(), order);
@@ -906,11 +1233,8 @@ impl PaperSimulator {
                     "An all-in USD BUY budget can only be used by a BUY order.",
                 );
             }
-            let quote_balance = self
-                .balances
-                .get(&order.quote_mint)
-                .cloned()
-                .unwrap_or_else(BigDecimal::zero);
+            let quote_balance =
+                self.available_balance_for_order(&order.quote_mint, order_id);
             if budget > quote_balance {
                 return self.reject_order(
                     &mut order,
@@ -1001,7 +1325,9 @@ impl PaperSimulator {
             .cloned()
             .unwrap_or_else(BigDecimal::zero);
         if order.side == "BUY" {
-            if quote_balance < total_cost_or_proceeds {
+            let spendable_quote =
+                self.available_balance_for_order(&order.quote_mint, order_id);
+            if spendable_quote < total_cost_or_proceeds {
                 return self.reject_order(&mut order, "Insufficient simulated quote balance.");
             }
             balances.insert(
@@ -1010,8 +1336,13 @@ impl PaperSimulator {
             );
             balances.insert(order.asset_mint.clone(), asset_balance + &quantity);
         } else {
-            if asset_balance < quantity {
-                return self.reject_order(&mut order, "Insufficient simulated asset balance.");
+            let spendable_asset =
+                self.available_balance_for_order(&order.asset_mint, order_id);
+            if spendable_asset < quantity {
+                return self.reject_order(
+                    &mut order,
+                    "Insufficient simulated asset balance after pending-order reservations.",
+                );
             }
             balances.insert(order.asset_mint.clone(), asset_balance - &quantity);
             balances.insert(
@@ -1092,9 +1423,14 @@ impl PaperSimulator {
             json!(network.to_string()),
         );
         set_detail(&mut order.details, "fill_id", json!(fill.fill_id));
+        if self.reservations.contains_key(order_id) {
+            set_detail(&mut order.details, "reservation_state", json!("CONSUMED"));
+        }
 
-        // This single SQLite transaction commits the order, balances, and fill together.
-        self.persist(&order, Some(&balances), Some(&fill))?;
+        // This single SQLite transaction commits the order, balance changes,
+        // fill, and reservation release together.
+        self.persist_releasing_reservation(&order, Some(&balances), Some(&fill))?;
+        self.reservations.remove(order_id);
         self.orders.insert(order_id.to_string(), order.clone());
         self.balances = balances;
         self.fills.push(fill.clone());
@@ -1135,7 +1471,11 @@ impl PaperSimulator {
         order.status = "REJECTED".to_string();
         order.reason = Some(reason.to_string());
         set_detail(&mut order.details, "execution_state", json!("REJECTED"));
-        self.persist(order, None, None)?;
+        if self.reservations.contains_key(&order.order_id) {
+            set_detail(&mut order.details, "reservation_state", json!("RELEASED"));
+        }
+        self.persist_releasing_reservation(order, None, None)?;
+        self.reservations.remove(&order.order_id);
         self.orders.insert(order.order_id.clone(), order.clone());
         Ok(json!({
             "status":"REJECTED","reason":reason,
@@ -1233,6 +1573,12 @@ impl PaperSimulator {
             .iter()
             .map(|(mint, amount)| (mint.clone(), json!(amount.to_string())))
             .collect::<Map<_, _>>();
+        let mut reserved_balances = Map::new();
+        let mut available_balances = Map::new();
+        for mint in self.balances.keys() {
+            reserved_balances.insert(mint.clone(), json!(self.reserved_balance(mint).to_string()));
+            available_balances.insert(mint.clone(), json!(self.available_balance(mint).to_string()));
+        }
         Ok(json!({
             "mode":"PAPER_SIMULATION",
             "simulated":true,
@@ -1240,6 +1586,9 @@ impl PaperSimulator {
             "real_trading":false,
             "transaction_broadcast":false,
             "balances":balances,
+            "reserved_balances":reserved_balances,
+            "available_balances":available_balances,
+            "pending_reservation_count":self.reservations.len(),
             "initial_balance":self.initial_balance,
             "orders":self.orders.values().collect::<Vec<_>>(),
             "fills":self.fills,

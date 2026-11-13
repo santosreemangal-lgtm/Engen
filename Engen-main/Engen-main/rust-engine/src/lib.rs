@@ -4,6 +4,7 @@
 //! implementation. Paper fills are virtual ledger events only.
 
 pub mod config;
+pub mod dashboard_server;
 pub mod latency;
 pub mod market_data;
 pub mod monitor_scheduler;

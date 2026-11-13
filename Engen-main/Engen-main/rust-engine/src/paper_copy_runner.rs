@@ -463,6 +463,7 @@ pub fn queue_paper_orders_at(
 }
 
 /// Deterministic queue entrypoint that persists the resolved fee settings on every order.
+#[allow(clippy::too_many_arguments)]
 pub fn queue_paper_orders_at_with_policy(
     wallet_address: &str,
     results: &[Value],

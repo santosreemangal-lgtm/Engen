@@ -2198,10 +2198,9 @@ mod tests {
             "/api/wallets",
             json!({"action":"add","address":"11111111111111111111111111111111"}),
         );
-        request.headers.insert(
-            "origin".to_string(),
-            "https://attacker.example".to_string(),
-        );
+        request
+            .headers
+            .insert("origin".to_string(), "https://attacker.example".to_string());
         let response = app.handle(request);
         assert_eq!(response.status, 403);
     }

@@ -939,9 +939,7 @@ impl SignatureStore {
         let scanned_count = i64::try_from(scanned_count).map_err(|_| {
             SignatureStoreError::InvalidInput("History scan count is out of range.".to_string())
         })?;
-        if !(0..=1_000).contains(&expected_scanned_count)
-            || !(0..=1_000).contains(&scanned_count)
-        {
+        if !(0..=1_000).contains(&expected_scanned_count) || !(0..=1_000).contains(&scanned_count) {
             return Err(SignatureStoreError::InvalidInput(
                 "History scan counts must be between 0 and 1000.".to_string(),
             ));
@@ -1202,16 +1200,15 @@ mod tests {
             .unwrap());
     }
 
-
     #[test]
     fn concurrent_history_backfill_advances_use_compare_and_swap() {
         let dir = tempdir().unwrap();
         let store = SignatureStore::open(dir.path().join("history-cas.db")).unwrap();
-        let next_a =
-            "1111111111111111111111111111111111111111111111111111111111111112";
-        let next_b =
-            "1111111111111111111111111111111111111111111111111111111111111113";
-        store.start_history_backfill(WALLET, Some(SIGNATURE)).unwrap();
+        let next_a = "1111111111111111111111111111111111111111111111111111111111111112";
+        let next_b = "1111111111111111111111111111111111111111111111111111111111111113";
+        store
+            .start_history_backfill(WALLET, Some(SIGNATURE))
+            .unwrap();
 
         assert!(store
             .advance_history_backfill(WALLET, Some(SIGNATURE), 0, Some(next_a), 10, false)

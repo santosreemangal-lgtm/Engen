@@ -902,22 +902,19 @@ impl DashboardApp {
                         )
                     }
                     "stop" => {
-                        let service = match self.global_monitor_service() {
-                            Ok(value) => value,
-                            Err(response) => return response,
-                        };
-                        let _ = service.stop();
                         let mut prefs = self.monitor_prefs();
                         prefs["global_enabled"] = json!(false);
                         if let Err(response) = self.save_monitor_prefs(&prefs) {
                             return response;
                         }
-                        HttpResponse::json(
-                            200,
-                            service
-                                .status()
-                                .unwrap_or_else(|_| json!({"enabled":false,"wallets":[]})),
-                        )
+                        let service = match self.global_monitor_service() {
+                            Ok(value) => value,
+                            Err(response) => return response,
+                        };
+                        let status = service
+                            .stop()
+                            .unwrap_or_else(|_| json!({"enabled":false,"wallets":[]}));
+                        HttpResponse::json(200, status)
                     }
                     _ => HttpResponse::json(400, json!({"error":"Action must be start or stop"})),
                 }
@@ -1338,12 +1335,12 @@ impl DashboardApp {
                 )
             }
             "stop" => {
-                let status = self.profile_monitors.lock().ok().and_then(|services| services.get(&id).cloned())
-                    .and_then(|service| service.stop().ok())
-                    .unwrap_or_else(|| json!({"enabled":false,"interval_seconds":MONITOR_INTERVAL_SECONDS,"wallets":[]}));
                 if let Err(response) = self.set_profile_monitor_pref(&id, false) {
                     return response;
                 }
+                let status = self.profile_monitors.lock().ok().and_then(|services| services.get(&id).cloned())
+                    .and_then(|service| service.stop().ok())
+                    .unwrap_or_else(|| json!({"enabled":false,"interval_seconds":MONITOR_INTERVAL_SECONDS,"wallets":[]}));
                 HttpResponse::json(200, json!({"profile_id":id,"monitor":status}))
             }
             _ => HttpResponse::json(400, json!({"error":"Action must be start or stop."})),

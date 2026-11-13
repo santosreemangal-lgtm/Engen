@@ -1816,7 +1816,10 @@ fn merge_legacy_profile_paper_report(mut report: Value, path: &Path) -> Result<V
         report["available_balance_usd"] = legacy_cash.clone();
         report["available_balance"] = legacy_cash;
     } else {
-        let simulator_cash = simulator_balances.get("USD").cloned().unwrap_or(Value::Null);
+        let simulator_cash = simulator_balances
+            .get("USD")
+            .cloned()
+            .unwrap_or(Value::Null);
         let available = report
             .get("available_balance_usd")
             .filter(|value| !value.is_null())

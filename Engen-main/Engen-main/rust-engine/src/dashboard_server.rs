@@ -2114,6 +2114,161 @@ pub fn serve_dashboard() -> Result<(), Box<dyn Error>> {
 mod tests {
     use super::*;
 
+    fn dashboard_app_fixture() -> (tempfile::TempDir, Arc<DashboardApp>) {
+        use std::collections::BTreeMap;
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
+        let data = root.join("data");
+        let dashboard = root.join("dashboard");
+        fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(&dashboard).unwrap();
+
+        let config = Config::from_map(&BTreeMap::new()).unwrap();
+        let profile_store = Arc::new(ProfileStore::open(data.join("profiles.db")).unwrap());
+        let signature_store = Arc::new(SignatureStore::open(data.join("signatures.db")).unwrap());
+        let rpc = Arc::new(SolanaRpcClient::new(RpcConfig::default()).unwrap());
+        let global_paper = PaperSimulator::open(
+            data.join("paper_simulator.db"),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        let context = ScanContext {
+            project_root: root.clone(),
+            profile_store,
+            signature_store,
+            rpc,
+            profile_simulators: Arc::new(Mutex::new(HashMap::new())),
+            execution_policy: config.paper_execution_policy(),
+        };
+        let app = Arc::new(DashboardApp {
+            project_root: root.clone(),
+            host: "127.0.0.1".to_string(),
+            port: 8000,
+            auth_token: None,
+            wallets_file: dashboard.join("wallets.json"),
+            monitor_state_file: data.join("monitoring_state.json"),
+            context,
+            global_paper: Arc::new(Mutex::new(global_paper)),
+            global_monitor: Mutex::new(None),
+            profile_monitors: Mutex::new(HashMap::new()),
+            rate_limit: Mutex::new(HashMap::new()),
+        });
+        (directory, app)
+    }
+
+    fn api_request(method: &str, target: &str, body: Value) -> HttpRequest {
+        let mut headers = HashMap::from([(
+            "host".to_string(),
+            "127.0.0.1:8000".to_string(),
+        )]);
+        let body = if method == "POST" {
+            headers.insert(
+                "origin".to_string(),
+                "http://127.0.0.1:8000".to_string(),
+            );
+            serde_json::to_vec(&body).unwrap()
+        } else {
+            Vec::new()
+        };
+        HttpRequest {
+            method: method.to_string(),
+            target: target.to_string(),
+            headers,
+            body,
+            peer_ip: IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+        }
+    }
+
+    fn response_json(response: HttpResponse) -> Value {
+        serde_json::from_slice(&response.body).unwrap()
+    }
+
+    #[test]
+    fn dashboard_api_profile_wallet_and_paper_cash_flow_runs_without_network_or_python() {
+        let (_directory, app) = dashboard_app_fixture();
+
+        let created = app.handle(api_request(
+            "POST",
+            "/api/profiles",
+            json!({
+                "action":"create",
+                "name":"Rust API profile",
+                "settings":{"paper_trading":{"copy_side":"BOTH","sizing_mode":"SOURCE_PERCENT","sizing_value":"5"}}
+            }),
+        ));
+        assert_eq!(created.status, 201);
+        let profile_id = response_json(created)["profile"]["profile_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // A rejected settings payload must not partially update the profile name.
+        let invalid_update = app.handle(api_request(
+            "POST",
+            "/api/profiles",
+            json!({
+                "action":"update",
+                "profile_id":profile_id,
+                "name":"Must not be applied",
+                "settings":{"credentials":{"seed_phrase":"never-persist"}}
+            }),
+        ));
+        assert_eq!(invalid_update.status, 400);
+        let profiles = response_json(app.handle(api_request("GET", "/api/profiles", Value::Null)));
+        assert_eq!(profiles["profiles"][0]["name"], "Rust API profile");
+
+        let wallet = "11111111111111111111111111111111";
+        let saved = app.handle(api_request(
+            "POST",
+            "/api/wallets",
+            json!({"action":"add","address":wallet}),
+        ));
+        assert_eq!(saved.status, 200);
+
+        let associated = app.handle(api_request(
+            "POST",
+            "/api/profiles",
+            json!({
+                "action":"associate-source-wallet",
+                "profile_id":profile_id,
+                "wallet_address":wallet
+            }),
+        ));
+        assert_eq!(associated.status, 200);
+
+        let initialized = app.handle(api_request(
+            "POST",
+            "/api/paper-simulation",
+            json!({"action":"initialize-profile-ledger","profile_id":profile_id}),
+        ));
+        assert_eq!(initialized.status, 200);
+
+        let funded = app.handle(api_request(
+            "POST",
+            "/api/paper-simulation",
+            json!({"action":"set-profile-initial-balance","profile_id":profile_id,"amount":"500"}),
+        ));
+        assert_eq!(funded.status, 200);
+
+        let target = format!("/api/paper-simulation?profile_id={profile_id}");
+        let report = response_json(app.handle(api_request("GET", &target, Value::Null)));
+        assert_eq!(report["cash_balance_usd"], "500");
+        assert_eq!(report["total_portfolio_value_usd"], "500");
+        assert_eq!(report["real_trading"], false);
+        assert_eq!(report["transaction_broadcast"], false);
+
+        let history_target =
+            format!("/api/profile-transactions?profile_id={profile_id}&page=1&page_size=25");
+        let history = response_json(app.handle(api_request(
+            "GET",
+            &history_target,
+            Value::Null,
+        )));
+        assert_eq!(history["database_available"], true);
+        assert_eq!(history["total"], 0);
+    }
+
     #[test]
     fn profile_ids_must_be_canonicalizable_uuids() {
         let value = "e3d0a5b0-3b84-4df4-a9a7-0b7c8dc0a101";

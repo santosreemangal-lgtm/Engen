@@ -6,6 +6,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use crate::latency::LatencyRecorder;
+use crate::monitor_scheduler::MAX_FRESH_BATCH;
 use crate::signature_store::{SignatureStore, SignatureStoreError};
 use crate::solana_public::{SolanaRpcClient, SolanaRpcError};
 use crate::solana_validation::{is_valid_solana_address, is_valid_transaction_signature};
@@ -107,6 +108,12 @@ pub fn initialize_wallet_baseline(
         store.mark_processed(wallet_address, signature)?;
     }
     store.mark_baseline(wallet_address)?;
+    let cursor = signatures
+        .iter()
+        .rev()
+        .filter_map(|item| item.get("signature").and_then(Value::as_str))
+        .find(|signature| is_valid_transaction_signature(signature));
+    store.start_history_backfill(wallet_address, cursor)?;
     Ok(())
 }
 
@@ -194,6 +201,82 @@ where
         .collect())
 }
 
+
+/// Resume the one-time History backfill from its persisted cursor.
+/// A fetched page is committed atomically at the page boundary; on RPC failure,
+/// the cursor stays unchanged and the next process can safely retry that page.
+fn resume_history_backfill_with<F>(
+    store: &SignatureStore,
+    wallet_address: &str,
+    mut fetch_page: F,
+) -> Result<usize, WalletMonitorError>
+where
+    F: FnMut(usize, Option<&str>) -> Result<Vec<Value>, WalletMonitorError>,
+{
+    let Some((cursor, already_scanned, completed)) =
+        store.history_backfill_state(wallet_address)?
+    else {
+        return Ok(0);
+    };
+    if completed || already_scanned >= MAX_BACKFILL_SIGNATURES {
+        return Ok(0);
+    }
+
+    let remaining = MAX_BACKFILL_SIGNATURES - already_scanned;
+    let page_limit = remaining.min(MAX_PAGE_SIZE);
+    let page = fetch_page(page_limit, cursor.as_deref())?;
+    let mut seen = HashSet::new();
+    let mut scanned = 0usize;
+    let mut next_cursor = cursor.clone();
+
+    for item in &page {
+        let Some(signature) = item.get("signature").and_then(Value::as_str) else {
+            continue;
+        };
+        if !is_valid_transaction_signature(signature) || !seen.insert(signature.to_string()) {
+            continue;
+        }
+        store.save_in_lane(
+            wallet_address,
+            signature,
+            item.get("slot").and_then(Value::as_u64),
+            "history",
+            Some(item),
+        )?;
+        scanned += 1;
+        next_cursor = Some(signature.to_string());
+    }
+
+    let completed = page.is_empty()
+        || page.len() < page_limit
+        || scanned == 0
+        || already_scanned.saturating_add(scanned) >= MAX_BACKFILL_SIGNATURES;
+    store.advance_history_backfill(
+        wallet_address,
+        next_cursor.as_deref(),
+        scanned,
+        completed,
+    )?;
+    Ok(scanned)
+}
+
+fn resume_history_backfill(
+    client: &SolanaRpcClient,
+    store: &SignatureStore,
+    wallet_address: &str,
+    latency_recorder: Option<&LatencyRecorder>,
+) -> Result<usize, WalletMonitorError> {
+    resume_history_backfill_with(store, wallet_address, |limit, before| {
+        get_wallet_signatures(
+            client,
+            wallet_address,
+            limit,
+            before,
+            latency_recorder,
+        )
+    })
+}
+
 /// Full wallet scan: baseline on first observation, then bounded cursor recovery.
 pub fn get_and_store_new_wallet_signatures(
     client: &SolanaRpcClient,
@@ -208,22 +291,39 @@ pub fn get_and_store_new_wallet_signatures(
         ));
     }
     validate_page_size(limit)?;
-    let first_page = get_wallet_signatures(client, wallet_address, limit, None, latency_recorder)?;
+    // Fresh discovery never exceeds the approved per-cycle cap; History is backfilled
+    // separately from a durable cursor and processed in its own 10-25 item lane.
+    let fresh_limit = limit.min(MAX_FRESH_BATCH);
+    let first_page =
+        get_wallet_signatures(client, wallet_address, fresh_limit, None, latency_recorder)?;
+    let history_cursor = first_page
+        .iter()
+        .rev()
+        .filter_map(|item| item.get("signature").and_then(Value::as_str))
+        .find(|signature| is_valid_transaction_signature(signature))
+        .map(str::to_string);
 
     if !store.has_baseline(wallet_address)? {
         initialize_wallet_baseline(store, wallet_address, &first_page)?;
+        resume_history_backfill(client, store, wallet_address, latency_recorder)?;
         return Ok(Vec::new());
     }
 
-    scan_existing_wallet_pages(
+    let discovered = scan_existing_wallet_pages(
         store,
         wallet_address,
         first_page,
-        limit,
+        fresh_limit,
         |wallet, page_limit, before| {
             get_wallet_signatures(client, wallet, page_limit, before, latency_recorder)
         },
-    )
+    )?;
+
+    if store.history_backfill_state(wallet_address)?.is_none() {
+        store.start_history_backfill(wallet_address, history_cursor.as_deref())?;
+    }
+    resume_history_backfill(client, store, wallet_address, latency_recorder)?;
+    Ok(discovered)
 }
 
 #[cfg(test)]
@@ -270,6 +370,10 @@ mod tests {
         initialize_wallet_baseline(&store, WALLET, &rows).unwrap();
         assert!(store.has_baseline(WALLET).unwrap());
         assert_eq!(
+            store.history_backfill_state(WALLET).unwrap(),
+            Some((Some(NEW_A.to_string()), 0, false))
+        );
+        assert_eq!(
             store.get_status(WALLET, ANCHOR).unwrap().as_deref(),
             Some("processed")
         );
@@ -280,6 +384,68 @@ mod tests {
         assert_eq!(
             store.pending_signatures(WALLET, 10).unwrap(),
             Vec::<String>::new()
+        );
+    }
+
+
+    #[test]
+    fn history_backfill_persists_cursor_and_observations_for_restart_recovery() {
+        let (_directory, store) = store();
+        store.start_history_backfill(WALLET, Some(ANCHOR)).unwrap();
+        let mut requested = Vec::new();
+        let scanned = resume_history_backfill_with(
+            &store,
+            WALLET,
+            |limit, before| {
+                requested.push((limit, before.map(str::to_string)));
+                Ok(vec![
+                    serde_json::json!({
+                        "signature": NEW_A,
+                        "slot": 98,
+                        "blockTime": 1_760_000_000,
+                        "confirmationStatus": "finalized"
+                    }),
+                    serde_json::json!({
+                        "signature": NEW_B,
+                        "slot": 97,
+                        "blockTime": 1_759_999_999,
+                        "confirmationStatus": "confirmed"
+                    }),
+                ])
+            },
+        )
+        .unwrap();
+        assert_eq!(scanned, 2);
+        assert_eq!(requested, vec![(1_000, Some(ANCHOR.to_string()))]);
+        assert_eq!(
+            store.history_backfill_state(WALLET).unwrap(),
+            Some((Some(NEW_B.to_string()), 2, true))
+        );
+        assert_eq!(
+            store.pending_signatures_for_lane(WALLET, "history", 10).unwrap(),
+            vec![NEW_A.to_string(), NEW_B.to_string()]
+        );
+
+        let observations = store
+            .pending_signature_observations(WALLET, "history", 10)
+            .unwrap();
+        assert_eq!(observations[0]["blockTime"], 1_760_000_000);
+        assert_eq!(observations[1]["confirmationStatus"], "confirmed");
+    }
+
+    #[test]
+    fn failed_history_page_leaves_the_persisted_cursor_unchanged_for_retry() {
+        let (_directory, store) = store();
+        store.start_history_backfill(WALLET, Some(ANCHOR)).unwrap();
+        let error = resume_history_backfill_with(&store, WALLET, |_limit, _before| {
+            Err(WalletMonitorError::InvalidInput(
+                "simulated provider interruption".to_string(),
+            ))
+        });
+        assert!(error.is_err());
+        assert_eq!(
+            store.history_backfill_state(WALLET).unwrap(),
+            Some((Some(ANCHOR.to_string()), 0, false))
         );
     }
 

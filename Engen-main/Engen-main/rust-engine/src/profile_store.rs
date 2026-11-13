@@ -1104,7 +1104,8 @@ mod tests {
         assert!(ProfileStore::validate_settings(&serde_json::json!({"risk":"low"})).is_ok());
         assert!(ProfileStore::validate_settings(
             &serde_json::json!({"credentials":{"seed_phrase":"must-not-be-stored"}})
-        ).is_err());
+        )
+        .is_err());
     }
 
     #[test]

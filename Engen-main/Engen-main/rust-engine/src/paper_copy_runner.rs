@@ -486,8 +486,7 @@ pub fn queue_paper_orders_at_with_policy(
     }
     let global_base_network_fee =
         decimal(&execution_policy.network_cost, "Global base network fee")?;
-    let global_priority_fee =
-        decimal(&execution_policy.priority_fee_usd, "Global priority fee")?;
+    let global_priority_fee = decimal(&execution_policy.priority_fee_usd, "Global priority fee")?;
     if global_base_network_fee < 0
         || global_priority_fee < 0
         || global_base_network_fee + global_priority_fee > decimal("1000", "Fee limit")?
@@ -497,9 +496,7 @@ pub fn queue_paper_orders_at_with_policy(
                 .to_string(),
         ));
     }
-    let resolved_trading_fee_bps = settings
-        .trading_fee_bps
-        .unwrap_or(execution_policy.fee_bps);
+    let resolved_trading_fee_bps = settings.trading_fee_bps.unwrap_or(execution_policy.fee_bps);
     let resolved_network_fee_usd = settings
         .network_fee_usd
         .clone()

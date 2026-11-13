@@ -68,7 +68,7 @@ pub enum SizingMode {
 
 impl SizingMode {
     pub fn parse(value: &str) -> Result<Self, PaperCopyError> {
-        match value {
+        match value.trim().to_ascii_uppercase().as_str() {
             "SOURCE_PERCENT" | "FIXED_PERCENTAGE" => Ok(Self::SourcePercent),
             "FIXED_USD" | "FIXED_AMOUNT" => Ok(Self::FixedUsd),
             "MIRROR_AMOUNT" | "MIRROR_BUY_SELL_AMOUNT" => Ok(Self::MirrorAmount),
@@ -106,12 +106,19 @@ impl Default for CopySettings {
 
 impl CopySettings {
     pub fn from_json(settings: Option<&Value>) -> Result<Self, PaperCopyError> {
-        let Some(settings) = settings.filter(|value| value.is_object()) else {
+        let Some(settings) = settings else {
             return Ok(Self::default());
         };
+        if !settings.is_object() {
+            return Err(PaperCopyError::InvalidInput(
+                "Copy settings must be a JSON object.".to_string(),
+            ));
+        }
         let mode = settings
             .get("sizing_mode")
             .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
             .unwrap_or("SOURCE_PERCENT");
         let sizing_mode = SizingMode::parse(mode)?;
         let default_value = if sizing_mode == SizingMode::SourcePercent {
@@ -119,10 +126,14 @@ impl CopySettings {
         } else {
             "10"
         };
-        let sizing_value = settings
-            .get("sizing_value")
-            .and_then(number_to_string)
-            .unwrap_or_else(|| default_value.to_string());
+        let sizing_value = match settings.get("sizing_value") {
+            None | Some(Value::Null) => default_value.to_string(),
+            Some(value) => number_to_string(value).ok_or_else(|| {
+                PaperCopyError::InvalidInput(
+                    "Sizing value must be a valid number.".to_string(),
+                )
+            })?,
+        };
         let max_buy_usd = match settings.get("max_buy_usd") {
             None => Some("10".to_string()),
             Some(Value::Null) => None,
@@ -151,7 +162,7 @@ impl CopySettings {
         }
         if self.sizing_mode == SizingMode::SourcePercent && sizing >= 100 {
             return Err(PaperCopyError::InvalidInput(
-                "Source percentage must be greater than 0 and less than 100.".to_string(),
+                "Fixed percentage must be greater than 0 and less than 100.".to_string(),
             ));
         }
         if self.sizing_mode == SizingMode::FixedUsd && sizing > decimal(MAX_BUY_USD, "Maximum")? {
@@ -435,7 +446,9 @@ pub fn queue_paper_orders_at(
                 continue;
             }
             let sizing = decimal(&settings.sizing_value, "Sizing value")?;
-            let mut target = match settings.sizing_mode {
+            let mut target_budget = match settings.sizing_mode {
+                // Percentage is applied to the profile's current virtual USD cash,
+                // not the source wallet's trade size or its portfolio balance.
                 SizingMode::SourcePercent => &virtual_usd * sizing / BigDecimal::from(100),
                 SizingMode::FixedUsd => sizing,
                 SizingMode::MirrorAmount => {
@@ -446,13 +459,24 @@ pub fn queue_paper_orders_at(
                 }
             };
             if let Some(maximum) = &settings.max_buy_usd {
-                target = target.min(decimal(maximum, "Maximum BUY amount")?);
+                target_budget = target_budget.min(decimal(maximum, "Maximum BUY amount")?);
             }
-            target = target.min(virtual_usd);
-            if target <= 0 {
+            // Keep a global guard even when the profile explicitly disables its
+            // per-profile maximum.
+            target_budget = target_budget.min(decimal(MAX_BUY_USD, "Maximum BUY amount")?);
+            if settings.sizing_mode == SizingMode::FixedUsd {
+                // Fixed-dollar means the configured/capped amount, never a silent
+                // partial order just because the virtual account lacks the cash.
+                if target_budget > virtual_usd {
+                    continue;
+                }
+            } else {
+                target_budget = target_budget.min(virtual_usd);
+            }
+            if target_budget <= 0 {
                 continue;
             }
-            target_notional_usd = Some(target);
+            target_notional_usd = Some(target_budget);
             order_quantity = "1".to_string();
         } else {
             let Some(pre_source_raw) = asset_change.pre_amount.clone() else {
@@ -492,6 +516,8 @@ pub fn queue_paper_orders_at(
                 "sizing_mode": if side == "BUY" {settings.sizing_mode.as_str()} else {"SOURCE_POSITION_REDUCTION"},
                 "sizing_value": if side == "BUY" {Some(settings.sizing_value.clone())} else {None},
                 "target_notional_usd": target_notional_usd.as_ref().map(raw_to_string),
+                "target_budget_usd": target_notional_usd.as_ref().map(raw_to_string),
+                "target_budget_semantics":"ALL_IN_USD_BUDGET_INCLUDING_SLIPPAGE_FEES_AND_NETWORK_COST",
                 "max_buy_usd": settings.max_buy_usd,
                 "source_asset_quantity": raw_to_string(&source_quantity),
                 "source_asset_pre_amount": asset_change.pre_amount.as_ref().map(raw_to_string),
@@ -522,6 +548,7 @@ pub fn queue_paper_orders_at(
             "sizing_mode":if side == "BUY" {settings.sizing_mode.as_str()} else {"SOURCE_POSITION_REDUCTION"},
             "sizing_value":if side == "BUY" {Some(settings.sizing_value.clone())} else {None},
             "target_notional_usd":target_notional_usd.as_ref().map(raw_to_string),
+            "target_budget_usd":target_notional_usd.as_ref().map(raw_to_string),
             "source_quote_mint":quote_mint,
             "status":order.get("status"),
             "execution_state":"AWAITING_VERIFIED_MARKET_DATA"
@@ -1015,15 +1042,110 @@ mod tests {
     }
 
     #[test]
-    fn validates_copy_settings_and_allowed_sides() {
+    fn fixed_dollar_buy_queues_the_configured_budget_and_fills_within_it() {
+        let mut simulator = simulator();
+        let settings = CopySettings::from_json(Some(&json!({
+            "sizing_mode":" fixed_usd ",
+            "sizing_value":"7.50",
+            "max_buy_usd":null
+        }))).unwrap();
+        let queued = queue_paper_orders(
+            WALLET,
+            &[buy_signal(&"9".repeat(64))],
+            &mut simulator,
+            AllowedSides::Buy,
+            &settings,
+            None,
+        ).unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0]["target_budget_usd"], "7.5");
+        let order_id = queued[0]["order_id"].as_str().unwrap();
+
+        let observed = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let price = MarketPrice::new(
+            ASSET, "2", "USD", "test-fixture", &observed, Some("25000"),
+            Some("test-fixture".to_string()), Some(observed),
+        ).unwrap();
+        let outcomes = execute_pending_paper_orders_with(
+            &mut simulator, Some(WALLET), |_mint| Some(price.clone()), None,
+        );
+        assert_eq!(outcomes[0]["status"], "FILLED");
+        let order = simulator.orders().get(order_id).unwrap();
+        assert_eq!(order.details["sizing_mode"], "FIXED_USD");
+        let fill = &simulator.fills()[0];
+        let spent = BigDecimal::from_str(&fill.gross_quote).unwrap()
+            + BigDecimal::from_str(&fill.fee).unwrap()
+            + BigDecimal::from_str(&fill.network_cost).unwrap();
+        assert_eq!(spent, BigDecimal::from_str("7.5").unwrap());
+        assert_eq!(simulator.balances()["USD"].to_string(), "92.5");
+    }
+
+    #[test]
+    fn fixed_percentage_buy_uses_current_virtual_usd_balance() {
+        let mut balances = BTreeMap::new();
+        balances.insert("USD".to_string(), "80".to_string());
+        let mut simulator = PaperSimulator::in_memory(&balances).unwrap();
+        let settings = CopySettings::from_json(Some(&json!({
+            "sizing_mode":"FIXED_PERCENTAGE",
+            "sizing_value":"12.5",
+            "max_buy_usd":null
+        }))).unwrap();
+        let queued = queue_paper_orders(
+            WALLET,
+            &[buy_signal(&"a".repeat(64))],
+            &mut simulator,
+            AllowedSides::Buy,
+            &settings,
+            None,
+        ).unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0]["target_budget_usd"], "10");
+        assert_eq!(simulator.orders().values().next().unwrap().details["sizing_mode"], "SOURCE_PERCENT");
+    }
+
+    #[test]
+    fn fixed_dollar_buy_is_not_silently_reduced_when_cash_is_insufficient() {
+        let mut balances = BTreeMap::new();
+        balances.insert("USD".to_string(), "5".to_string());
+        let mut simulator = PaperSimulator::in_memory(&balances).unwrap();
+        let settings = CopySettings::from_json(Some(&json!({
+            "sizing_mode":"FIXED_USD",
+            "sizing_value":"6",
+            "max_buy_usd":null
+        }))).unwrap();
+        let queued = queue_paper_orders(
+            WALLET,
+            &[buy_signal(&"b".repeat(64))],
+            &mut simulator,
+            AllowedSides::Buy,
+            &settings,
+            None,
+        ).unwrap();
+        assert!(queued.is_empty());
+        assert!(simulator.orders().is_empty());
+    }
+
+    #[test]
+    fn validates_fixed_dollar_percentage_and_maximum_inputs() {
         assert!(AllowedSides::parse("UNKNOWN").is_err());
+        for invalid_percent in ["0", "-1", "100", "100.01", "NaN", "not-a-number"] {
+            assert!(CopySettings::from_json(Some(&json!({
+                "sizing_mode":"FIXED_PERCENTAGE","sizing_value":invalid_percent
+            }))).is_err(), "accepted invalid percentage {invalid_percent}");
+        }
+        for invalid_usd in ["0", "-1", "1000000.01", "NaN", "not-a-number"] {
+            assert!(CopySettings::from_json(Some(&json!({
+                "sizing_mode":"FIXED_USD","sizing_value":invalid_usd,"max_buy_usd":null
+            }))).is_err(), "accepted invalid fixed USD value {invalid_usd}");
+        }
+        for invalid_max in ["0", "-1", "1000000.01", "NaN", "not-a-number"] {
+            assert!(CopySettings::from_json(Some(&json!({
+                "sizing_mode":"FIXED_USD","sizing_value":"1","max_buy_usd":invalid_max
+            }))).is_err(), "accepted invalid maximum BUY amount {invalid_max}");
+        }
+        assert!(CopySettings::from_json(Some(&json!("FIXED_USD"))).is_err());
         assert!(CopySettings::from_json(Some(&json!({
-            "sizing_mode":"SOURCE_PERCENT","sizing_value":"100"
-        })))
-        .is_err());
-        assert!(CopySettings::from_json(Some(&json!({
-            "sizing_mode":"FIXED_USD","sizing_value":"10","max_buy_usd":"-1"
-        })))
-        .is_err());
+            "sizing_mode":"FIXED_USD","sizing_value":true
+        }))).is_err());
     }
 }

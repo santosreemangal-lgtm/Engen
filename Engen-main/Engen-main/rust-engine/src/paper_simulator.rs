@@ -937,7 +937,6 @@ impl PaperSimulator {
                     "The configured BUY budget produces no positive token quantity.",
                 );
             }
-            order.quantity = quantity.to_string();
         } else if order
             .details
             .get("target_notional_usd")
@@ -966,7 +965,7 @@ impl PaperSimulator {
         // exceed an all-in BUY budget because of decimal division precision.
         let whole_steps = (&quantity / &quantity_step).with_scale_round(0, RoundingMode::Down);
         quantity = whole_steps * &quantity_step;
-        order.quantity = quantity.to_string();
+        order.quantity = quantity.normalized().to_plain_string();
 
         if quantity < minimum_order_quantity {
             return self.reject_order(
@@ -1026,7 +1025,7 @@ impl PaperSimulator {
             order_id: order.order_id.clone(),
             side: order.side.clone(),
             asset_mint: order.asset_mint.clone(),
-            quantity: quantity.to_string(),
+            quantity: quantity.normalized().to_plain_string(),
             quote_mint: order.quote_mint.clone(),
             reference_price: reference_price.to_string(),
             execution_price: execution_price.to_string(),
@@ -1044,32 +1043,36 @@ impl PaperSimulator {
 
         order.status = "FILLED".to_string();
         order.reason = None;
-        if order.details.get("target_budget_usd").is_some() {
+        if order
+            .details
+            .get("target_budget_usd")
+            .is_some_and(|value| !value.is_null())
+        {
             set_detail(
                 &mut order.details,
                 "buy_budget_used_usd",
-                json!(total_cost_or_proceeds.to_string()),
+                json!(total_cost_or_proceeds.normalized().to_plain_string()),
             );
         }
         set_detail(
             &mut order.details,
             "minimum_order_value_usd",
-            json!(minimum_order_value.to_string()),
+            json!(minimum_order_value.normalized().to_plain_string()),
         );
         set_detail(
             &mut order.details,
             "minimum_order_quantity",
-            json!(minimum_order_quantity.to_string()),
+            json!(minimum_order_quantity.normalized().to_plain_string()),
         );
         set_detail(
             &mut order.details,
             "asset_quantity_step",
-            json!(quantity_step.to_string()),
+            json!(quantity_step.normalized().to_plain_string()),
         );
         set_detail(
             &mut order.details,
             "order_value_usd",
-            json!(gross.to_string()),
+            json!(gross.normalized().to_plain_string()),
         );
         set_detail(&mut order.details, "execution_state", json!("FILLED"));
         set_detail(

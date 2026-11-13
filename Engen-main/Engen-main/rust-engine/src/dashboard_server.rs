@@ -1148,6 +1148,13 @@ impl DashboardApp {
                     Ok(value) => value,
                     Err(response) => return response,
                 };
+                if action == "update" {
+                    if let Some(settings) = body.get("settings") {
+                        if let Err(error) = ProfileStore::validate_settings(settings) {
+                            return HttpResponse::json(400, json!({"error":error.to_string()}));
+                        }
+                    }
+                }
                 if action == "delete" {
                     if let Ok(mut services) = self.profile_monitors.lock() {
                         if let Some(service) = services.remove(&id) {

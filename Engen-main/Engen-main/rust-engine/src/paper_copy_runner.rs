@@ -489,7 +489,7 @@ pub fn queue_paper_orders_at_with_policy(
     let global_priority_fee = decimal(&execution_policy.priority_fee_usd, "Global priority fee")?;
     if global_base_network_fee < 0
         || global_priority_fee < 0
-        || global_base_network_fee + global_priority_fee > decimal("1000", "Fee limit")?
+        || &global_base_network_fee + &global_priority_fee > decimal("1000", "Fee limit")?
     {
         return Err(PaperCopyError::InvalidInput(
             "Combined global network and priority fees must be between 0 and 1000 USD per paper fill."

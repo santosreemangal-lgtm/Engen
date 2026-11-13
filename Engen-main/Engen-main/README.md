@@ -11,7 +11,7 @@ Engen is a read-only monitoring and research project for public Solana wallet ac
 - **Independent wallet profiles:** each profile stores its own public wallet address, monitored-trader list, settings, stored balance observations, transaction history, and read-only monitor lifecycle.
 - **Profile paper ledger:** when the paper-only runner is started with a saved profile ID, that profile uses its own persistent virtual balances and paper-trade history; configured position-size and open-position limits are enforced by the simulator.
 - **Transaction history:** paginated records with classification, status, and token-mint filters.
-- **Paper simulation:** separate simulated balances, orders, fills, and realized P&L; the report reads its database without creating or mutating it.
+- **Paper simulation:** separate simulated balances, orders, fills, realized P&L, and fee-aware unrealized mark-to-market using fresh public USD price snapshots; missing/stale prices and unknown cost basis remain explicitly unavailable.
 - **Failure handling:** backend/API failures are surfaced to the UI; no stale transaction-history results should be treated as fresh after a failed request.
 
 ## Run locally

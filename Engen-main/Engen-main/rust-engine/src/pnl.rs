@@ -515,38 +515,85 @@ impl AverageCostLedger {
         let Some(price) = market_price else {
             return Ok(unavailable("price_unavailable", None, None, None));
         };
-        if price.mint != mint {
-            return Ok(unavailable("price_unavailable", None, None, None));
-        }
-        let age = price.age_seconds(now)?;
-        let pos = self.positions.get(mint).cloned().unwrap_or_default();
-        let status = if age > max_age_seconds {
-            "stale_price"
-        } else if !pos.basis_complete {
-            "unknown_cost_basis"
-        } else {
-            "calculated"
-        };
-        if status != "calculated" {
+        if price.mint != mint || price.validate().is_err() {
             return Ok(unavailable(
-                status,
+                "invalid_or_mismatched_price",
+                None,
+                Some(price.source.clone()),
+                Some(price.observed_at.clone()),
+            ));
+        }
+
+        // A future-dated snapshot is not fresh. Do not let age_seconds' display
+        // clamping turn a provider clock error into a zero-age valuation.
+        let observed_at = parse_timestamp(&price.observed_at)?;
+        let current = current_or_parse(now)?;
+        if observed_at > current {
+            return Ok(unavailable(
+                "future_price",
+                None,
+                Some(price.source.clone()),
+                Some(price.observed_at.clone()),
+            ));
+        }
+        let age = current
+            .signed_duration_since(observed_at)
+            .num_seconds()
+            .max(0) as u64;
+        let pos = self.positions.get(mint).cloned().unwrap_or_default();
+        if age > max_age_seconds {
+            return Ok(unavailable(
+                "stale_price",
                 Some(age),
                 Some(price.source.clone()),
                 Some(price.observed_at.clone()),
             ));
         }
+        if pos.quantity.is_zero() {
+            return Ok(unavailable(
+                "no_open_position",
+                Some(age),
+                Some(price.source.clone()),
+                Some(price.observed_at.clone()),
+            ));
+        }
+
+        // Market value remains useful with an unknown acquisition basis, but
+        // unrealized P&L must stay null instead of assuming a zero cost basis.
         let value = &pos.quantity * &price.price;
+        if !pos.basis_complete {
+            return Ok(UnrealizedPnl {
+                pnl: None,
+                market_value: Some(value.to_string()),
+                cost_basis: None,
+                currency: PORTFOLIO_CURRENCY.to_string(),
+                status: "unknown_cost_basis".to_string(),
+                price_age_seconds: Some(age),
+                price_source: Some(price.source.clone()),
+                price_timestamp: Some(price.observed_at.clone()),
+            });
+        }
+
         let pnl = &value - &pos.cost_basis;
         Ok(UnrealizedPnl {
             pnl: Some(pnl.to_string()),
             market_value: Some(value.to_string()),
             cost_basis: Some(pos.cost_basis.to_string()),
             currency: PORTFOLIO_CURRENCY.to_string(),
-            status: status.to_string(),
+            status: "calculated".to_string(),
             price_age_seconds: Some(age),
             price_source: Some(price.source.clone()),
             price_timestamp: Some(price.observed_at.clone()),
         })
+    }
+
+    /// Open non-zero positions in stable mint order for market-data valuation.
+    pub fn open_positions(&self) -> Vec<PositionSnapshot> {
+        self.positions
+            .iter()
+            .filter(|(_, position)| !position.quantity.is_zero())
+            .map(|(mint, _)| self.snapshot(mint))
+            .collect()
     }
 }
 

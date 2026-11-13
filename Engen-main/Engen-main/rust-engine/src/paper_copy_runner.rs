@@ -1025,6 +1025,38 @@ where
     outcomes
 }
 
+/// Build a paper report using fresh public DEX Screener USD snapshots.
+///
+/// Only exact mint matches with at least $10,000 reported pool liquidity are used.
+/// Missing, stale, or low-liquidity data remains unavailable rather than becoming zero.
+pub fn report_with_verified_market_prices(
+    simulator: &PaperSimulator,
+    timeout: Duration,
+) -> Result<Value, PaperCopyError> {
+    if timeout.is_zero() || timeout > Duration::from_secs(60) {
+        return Err(PaperCopyError::InvalidInput(
+            "Market-data timeout must be greater than zero and no more than 60 seconds."
+                .to_string(),
+        ));
+    }
+    let minimum_liquidity = decimal("10000", "Minimum valuation liquidity")?;
+    let mut prices = std::collections::BTreeMap::new();
+    for mint in simulator.open_position_mints()? {
+        let Ok(Some(price)) = fetch_market_price(&mint, timeout) else {
+            continue;
+        };
+        let sufficiently_liquid = price
+            .liquidity_usd
+            .as_ref()
+            .is_some_and(|liquidity| liquidity >= &minimum_liquidity);
+        let fresh = price.is_fresh(60, None).unwrap_or(false);
+        if price.mint == mint && price.validate().is_ok() && sufficiently_liquid && fresh {
+            prices.insert(mint, price);
+        }
+    }
+    Ok(simulator.report_with_market_prices(&prices, 60, None)?)
+}
+
 /// Execute queued orders using DEX Screener public snapshots, with no live transaction path.
 pub fn execute_pending_paper_orders(
     simulator: &mut PaperSimulator,

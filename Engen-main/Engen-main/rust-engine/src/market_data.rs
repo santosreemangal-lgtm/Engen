@@ -58,7 +58,7 @@ fn snapshot_from_payload(payload: &Value, mint: &str, observed_at: &str) -> Opti
         let Some(liquidity_usd) = liquidity.get("usd").and_then(parse_decimal) else {
             continue;
         };
-        if price <= 0 || liquidity_usd < 0 {
+        if price <= 0 || liquidity_usd <= 0 {
             continue;
         }
         let replace = best
@@ -184,6 +184,12 @@ mod tests {
                 "baseToken":{"address":MINT},
                 "priceUsd":"1",
                 "liquidity":{"usd":"-1"}
+            },
+            {
+                "chainId":"solana",
+                "baseToken":{"address":MINT},
+                "priceUsd":"1",
+                "liquidity":{"usd":"0"}
             },
             {
                 "chainId":"solana",

@@ -115,6 +115,12 @@ pub struct PaperPnlSummary {
     pub cost_basis_method: String,
     pub currency: String,
     pub realized_by_mint: BTreeMap<String, Value>,
+    /// Per-token mark-to-market detail, including price provenance and availability status.
+    pub unrealized_by_mint: BTreeMap<String, Value>,
+    /// Portfolio-level totals are null unless the relevant inputs are complete.
+    pub unrealized_pnl: Option<String>,
+    pub unrealized_market_value: Option<String>,
+    pub unrealized_cost_basis: Option<String>,
     pub unrealized_status: String,
     pub unrealized_note: String,
 }
@@ -1564,10 +1570,15 @@ impl PaperSimulator {
         }))
     }
 
-    pub fn pnl_summary(&self) -> Result<PaperPnlSummary, PaperSimulatorError> {
+    fn rebuild_pnl_ledger(
+        &self,
+    ) -> Result<(AverageCostLedger, BTreeMap<String, Value>), PaperSimulatorError> {
         let mut ledger = AverageCostLedger::new();
         let mut realized: BTreeMap<String, (BigDecimal, bool)> = BTreeMap::new();
+        let mut quote_mints = BTreeSet::from(["USD".to_string()]);
+
         for fill in &self.fills {
+            quote_mints.insert(fill.quote_mint.clone());
             match fill.side.as_str() {
                 "BUY" => {
                     ledger.buy(
@@ -1591,7 +1602,7 @@ impl PaperSimulator {
                         let missing = &sold - &tracked;
                         ledger.deposit(
                             &fill.asset_mint,
-                            &missing.to_string(),
+                            &missing.normalized().to_plain_string(),
                             None,
                             Some(&fill.created_at),
                         )?;
@@ -1624,6 +1635,49 @@ impl PaperSimulator {
                 }
             }
         }
+
+        // Reconcile the reconstructed ledger against actual virtual token balances.
+        // Unmatched starting inventory is explicitly assigned unknown basis; it is
+        // never treated as a zero-cost acquisition.
+        let mut asset_mints: BTreeSet<String> = self
+            .fills
+            .iter()
+            .map(|fill| fill.asset_mint.clone())
+            .collect();
+        for mint in self.balances.keys() {
+            if !quote_mints.contains(mint) {
+                asset_mints.insert(mint.clone());
+            }
+        }
+        for mint in asset_mints {
+            let actual = self
+                .balances
+                .get(&mint)
+                .cloned()
+                .unwrap_or_else(BigDecimal::zero);
+            let tracked = decimal_value(
+                &ledger.snapshot(&mint).quantity,
+                "Tracked quantity",
+                true,
+            )?;
+            if actual > tracked {
+                let missing = &actual - &tracked;
+                ledger.deposit(
+                    &mint,
+                    &missing.normalized().to_plain_string(),
+                    None,
+                    None,
+                )?;
+            } else if actual < tracked {
+                let withdrawn = &tracked - &actual;
+                ledger.withdrawal(
+                    &mint,
+                    &withdrawn.normalized().to_plain_string(),
+                    None,
+                )?;
+            }
+        }
+
         let realized_by_mint = realized
             .into_iter()
             .map(|(mint, (value, complete))| {
@@ -1637,18 +1691,126 @@ impl PaperSimulator {
                 )
             })
             .collect();
+        Ok((ledger, realized_by_mint))
+    }
+
+    pub fn open_position_mints(&self) -> Result<Vec<String>, PaperSimulatorError> {
+        let (ledger, _) = self.rebuild_pnl_ledger()?;
+        Ok(ledger
+            .open_positions()
+            .into_iter()
+            .map(|position| position.mint)
+            .collect())
+    }
+
+    pub fn pnl_summary(&self) -> Result<PaperPnlSummary, PaperSimulatorError> {
+        self.pnl_summary_with_market_prices(&BTreeMap::new(), 60, None)
+    }
+
+    pub fn pnl_summary_with_market_prices(
+        &self,
+        market_prices: &BTreeMap<String, MarketPrice>,
+        max_price_age_seconds: u64,
+        now: Option<&str>,
+    ) -> Result<PaperPnlSummary, PaperSimulatorError> {
+        let (ledger, realized_by_mint) = self.rebuild_pnl_ledger()?;
+        let positions = ledger.open_positions();
+        let mut unrealized_by_mint = BTreeMap::new();
+        let mut total_pnl = BigDecimal::zero();
+        let mut total_market_value = BigDecimal::zero();
+        let mut total_cost_basis = BigDecimal::zero();
+        let mut all_pnl_calculated = true;
+        let mut all_market_values_available = true;
+        let mut all_cost_basis_available = true;
+
+        for position in &positions {
+            let valuation = ledger.unrealized_pnl(
+                &position.mint,
+                market_prices.get(&position.mint),
+                max_price_age_seconds,
+                now,
+            )?;
+            match valuation.pnl.as_deref() {
+                Some(value) => {
+                    total_pnl += BigDecimal::from_str(value).map_err(|_| {
+                        PaperSimulatorError::InvalidInput("Invalid unrealized P&L result.".to_string())
+                    })?;
+                }
+                None => all_pnl_calculated = false,
+            }
+            match valuation.market_value.as_deref() {
+                Some(value) => {
+                    total_market_value += BigDecimal::from_str(value).map_err(|_| {
+                        PaperSimulatorError::InvalidInput("Invalid market-value result.".to_string())
+                    })?;
+                }
+                None => all_market_values_available = false,
+            }
+            match valuation.cost_basis.as_deref() {
+                Some(value) => {
+                    total_cost_basis += BigDecimal::from_str(value).map_err(|_| {
+                        PaperSimulatorError::InvalidInput("Invalid unrealized cost-basis result.".to_string())
+                    })?;
+                }
+                None => all_cost_basis_available = false,
+            }
+            unrealized_by_mint.insert(position.mint.clone(), serde_json::to_value(valuation)?);
+        }
+
+        let has_open_positions = !positions.is_empty();
+        let unrealized_pnl = if !has_open_positions || all_pnl_calculated {
+            Some(total_pnl.normalized().to_plain_string())
+        } else {
+            None
+        };
+        let unrealized_market_value = if !has_open_positions || all_market_values_available {
+            Some(total_market_value.normalized().to_plain_string())
+        } else {
+            None
+        };
+        let unrealized_cost_basis = if !has_open_positions || all_cost_basis_available {
+            Some(total_cost_basis.normalized().to_plain_string())
+        } else {
+            None
+        };
+        let unrealized_status = if !has_open_positions {
+            "no_open_positions"
+        } else if all_pnl_calculated {
+            "calculated"
+        } else {
+            "incomplete_market_valuation"
+        };
+        let unrealized_note = if unrealized_status == "calculated" {
+            "All open token positions have a complete average-cost basis and a fresh, matching USD market price.".to_string()
+        } else if unrealized_status == "no_open_positions" {
+            "There are no open token positions to mark to market.".to_string()
+        } else {
+            "Portfolio unrealized P&L is withheld until every open position has a fresh, matching USD price and a complete cost basis; inspect unrealized_by_mint for individual statuses.".to_string()
+        };
 
         Ok(PaperPnlSummary {
             cost_basis_method: "average_cost".to_string(),
             currency: "USD".to_string(),
             realized_by_mint,
-            unrealized_status: "unavailable_no_verified_fresh_market_price".to_string(),
-            unrealized_note: "No verified market-price provider is connected to the simulator."
-                .to_string(),
+            unrealized_by_mint,
+            unrealized_pnl,
+            unrealized_market_value,
+            unrealized_cost_basis,
+            unrealized_status: unrealized_status.to_string(),
+            unrealized_note,
         })
     }
 
     pub fn report(&self) -> Result<Value, PaperSimulatorError> {
+        self.report_with_market_prices(&BTreeMap::new(), 60, None)
+    }
+
+    pub fn report_with_market_prices(
+        &self,
+        market_prices: &BTreeMap<String, MarketPrice>,
+        max_price_age_seconds: u64,
+        now: Option<&str>,
+    ) -> Result<Value, PaperSimulatorError> {
         let balances = self
             .balances
             .iter()
@@ -1676,7 +1838,11 @@ impl PaperSimulator {
             "initial_balance":self.initial_balance,
             "orders":self.orders.values().collect::<Vec<_>>(),
             "fills":self.fills,
-            "pnl":self.pnl_summary()?
+            "pnl":self.pnl_summary_with_market_prices(
+                market_prices,
+                max_price_age_seconds,
+                now
+            )?
         }))
     }
 
@@ -1721,6 +1887,142 @@ mod tests {
         )
         .unwrap()
     }
+    fn mark_price(mint: &str, value: &str, observed_at: &str) -> MarketPrice {
+        MarketPrice::new(
+            mint,
+            value,
+            "USD",
+            "dexscreener_public_api",
+            observed_at,
+            Some("25000"),
+            Some("dexscreener_public_api".to_string()),
+            Some(observed_at.to_string()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn unrealized_pnl_uses_fresh_usd_price_and_fee_inclusive_average_cost() {
+        let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
+        let id = buy_order(&mut sim, "unrealized-fee-aware-buy");
+        let policy = ExecutionPolicy {
+            slippage_bps: 0,
+            fee_bps: 50,
+            network_cost: "0.25".to_string(),
+            priority_fee_usd: "0.75".to_string(),
+            ..ExecutionPolicy::default()
+        };
+        let filled = sim
+            .execute_order(&id, Some(&price("TOKEN")), now(), &policy, true)
+            .unwrap();
+        assert_eq!(filled["status"], "FILLED");
+
+        let mark = mark_price("TOKEN", "12", now());
+        let prices = BTreeMap::from([("TOKEN".to_string(), mark)]);
+        let summary = sim
+            .pnl_summary_with_market_prices(&prices, 60, Some(now()))
+            .unwrap();
+
+        // 2 tokens cost $20 gross + $0.10 trading fee + $1.00 network fees.
+        assert_eq!(summary.unrealized_pnl.as_deref(), Some("2.9"));
+        assert_eq!(summary.unrealized_market_value.as_deref(), Some("24"));
+        assert_eq!(summary.unrealized_cost_basis.as_deref(), Some("21.1"));
+        assert_eq!(summary.unrealized_status, "calculated");
+        assert_eq!(summary.unrealized_by_mint["TOKEN"]["status"], "calculated");
+        assert_eq!(
+            summary.unrealized_by_mint["TOKEN"]["price_source"],
+            "dexscreener_public_api"
+        );
+
+        let report = sim
+            .report_with_market_prices(&prices, 60, Some(now()))
+            .unwrap();
+        assert_eq!(report["pnl"]["unrealized_pnl"], "2.9");
+        assert_eq!(report["real_trading"], false);
+        assert_eq!(report["transaction_broadcast"], false);
+    }
+
+    #[test]
+    fn unknown_starting_token_inventory_has_market_value_but_no_fabricated_pnl() {
+        let mut balances = virtual_cash();
+        balances.insert("TOKEN".to_string(), "5".to_string());
+        let sim = PaperSimulator::in_memory(&balances).unwrap();
+        let prices = BTreeMap::from([(
+            "TOKEN".to_string(),
+            mark_price("TOKEN", "10", now()),
+        )]);
+
+        assert_eq!(sim.open_position_mints().unwrap(), vec!["TOKEN".to_string()]);
+        let summary = sim
+            .pnl_summary_with_market_prices(&prices, 60, Some(now()))
+            .unwrap();
+        assert_eq!(summary.unrealized_status, "incomplete_market_valuation");
+        assert_eq!(summary.unrealized_pnl, None);
+        assert_eq!(summary.unrealized_market_value.as_deref(), Some("50"));
+        assert_eq!(summary.unrealized_cost_basis, None);
+        assert_eq!(
+            summary.unrealized_by_mint["TOKEN"]["status"],
+            "unknown_cost_basis"
+        );
+        assert_eq!(summary.unrealized_by_mint["TOKEN"]["market_value"], "50");
+        assert_eq!(summary.unrealized_by_mint["TOKEN"]["pnl"], Value::Null);
+    }
+
+    #[test]
+    fn stale_or_missing_token_prices_withhold_portfolio_unrealized_total() {
+        let mut balances = virtual_cash();
+        balances.insert("TOKEN_A".to_string(), "1".to_string());
+        balances.insert("TOKEN_B".to_string(), "2".to_string());
+        let sim = PaperSimulator::in_memory(&balances).unwrap();
+        let prices = BTreeMap::from([(
+            "TOKEN_A".to_string(),
+            mark_price("TOKEN_A", "12", "2026-11-09T11:00:00Z"),
+        )]);
+
+        let summary = sim
+            .pnl_summary_with_market_prices(&prices, 60, Some(now()))
+            .unwrap();
+        assert_eq!(summary.unrealized_pnl, None);
+        assert_eq!(summary.unrealized_market_value, None);
+        assert_eq!(
+            summary.unrealized_by_mint["TOKEN_A"]["status"],
+            "stale_price"
+        );
+        assert_eq!(
+            summary.unrealized_by_mint["TOKEN_B"]["status"],
+            "price_unavailable"
+        );
+    }
+
+    #[test]
+    fn future_dated_market_price_is_not_treated_as_fresh() {
+        let mut balances = virtual_cash();
+        balances.insert("TOKEN".to_string(), "1".to_string());
+        let sim = PaperSimulator::in_memory(&balances).unwrap();
+        let prices = BTreeMap::from([(
+            "TOKEN".to_string(),
+            mark_price("TOKEN", "12", "2026-11-09T12:00:10Z"),
+        )]);
+
+        let summary = sim
+            .pnl_summary_with_market_prices(&prices, 60, Some(now()))
+            .unwrap();
+        assert_eq!(
+            summary.unrealized_by_mint["TOKEN"]["status"],
+            "future_price"
+        );
+        assert_eq!(summary.unrealized_pnl, None);
+    }
+
+    #[test]
+    fn empty_portfolio_reports_zero_unrealized_pnl_without_market_data() {
+        let sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
+        let summary = sim.pnl_summary().unwrap();
+        assert_eq!(summary.unrealized_status, "no_open_positions");
+        assert_eq!(summary.unrealized_pnl.as_deref(), Some("0"));
+        assert_eq!(summary.unrealized_market_value.as_deref(), Some("0"));
+    }
+
 
     fn buy_order(sim: &mut PaperSimulator, signal: &str) -> String {
         sim.create_order(CreateOrderRequest {

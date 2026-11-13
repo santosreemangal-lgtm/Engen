@@ -902,7 +902,11 @@ impl SignatureStore {
             params![
                 wallet,
                 cursor_signature,
-                if cursor_signature.is_none() { 1_i64 } else { 0_i64 }
+                if cursor_signature.is_none() {
+                    1_i64
+                } else {
+                    0_i64
+                }
             ],
         )?;
         Ok(changed == 1)

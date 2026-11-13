@@ -96,14 +96,16 @@ fn shared_phase2_golden_corpus_matches_transaction_type_contract() {
                 })
                 .collect();
             assert_eq!(
-                projected, expected_analysis["instructions"],
+                Value::Array(projected),
+                expected_analysis["instructions"],
                 "instruction normalization mismatch for {name}"
             );
         }
         if let Some(expected_token_changes) = case.get("expected_token_balance_changes") {
             let actual = analyze_token_balance_changes(&transaction["meta"]);
             assert_eq!(
-                actual, *expected_token_changes,
+                Value::Array(actual),
+                *expected_token_changes,
                 "token balance delta mismatch for {name}"
             );
         }

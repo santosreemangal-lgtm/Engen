@@ -263,6 +263,28 @@ class PaperSimulatorTests(unittest.TestCase):
             self.assertEqual(restarted_summary, summary)
             self.assertEqual(len(restarted.fills), 2)
 
+    def test_virtual_funding_is_persisted_and_additive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "simulator.db"
+            simulator = PaperSimulator({}, db_path=db_path)
+            first = simulator.add_virtual_balance(QUOTE, "1000")
+            second = simulator.add_virtual_balance(QUOTE, "250")
+            self.assertEqual(first["balance"], "1000")
+            self.assertEqual(second["balance"], "1250")
+            self.assertFalse(second["real_trading"])
+            self.assertFalse(second["transaction_broadcast"])
+            restarted = PaperSimulator({}, db_path=db_path)
+            self.assertEqual(restarted.balances[QUOTE], Decimal("1250"))
+
+    def test_virtual_funding_rejects_invalid_values(self):
+        simulator = PaperSimulator()
+        with self.assertRaises(ValueError):
+            simulator.add_virtual_balance("", "100")
+        with self.assertRaises(ValueError):
+            simulator.add_virtual_balance(QUOTE, "-1")
+        with self.assertRaises(ValueError):
+            simulator.add_virtual_balance(QUOTE, "NaN")
+
     def test_report_explicitly_separates_simulation_from_real_balances(self):
         report = self.make_simulator().report()
         self.assertEqual(report["mode"], "PAPER_SIMULATION")

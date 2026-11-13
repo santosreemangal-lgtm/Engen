@@ -757,8 +757,52 @@ where
 pub fn execute_pending_paper_orders_with_at<F>(
     simulator: &mut PaperSimulator,
     wallet_address: Option<&str>,
+    price_provider: F,
+    latency_recorder: Option<&LatencyRecorder>,
+    now_ts: i64,
+) -> Vec<Value>
+where
+    F: FnMut(&str) -> Option<MarketPrice>,
+{
+    execute_pending_paper_orders_with_at_and_policy(
+        simulator,
+        wallet_address,
+        price_provider,
+        latency_recorder,
+        &ExecutionPolicy::default(),
+        now_ts,
+    )
+}
+
+/// Execute queued paper orders with an explicit global fee policy.
+/// Individual persisted order settings override the matching fee fields only.
+pub fn execute_pending_paper_orders_with_policy<F>(
+    simulator: &mut PaperSimulator,
+    wallet_address: Option<&str>,
+    price_provider: F,
+    latency_recorder: Option<&LatencyRecorder>,
+    execution_policy: &ExecutionPolicy,
+) -> Vec<Value>
+where
+    F: FnMut(&str) -> Option<MarketPrice>,
+{
+    execute_pending_paper_orders_with_at_and_policy(
+        simulator,
+        wallet_address,
+        price_provider,
+        latency_recorder,
+        execution_policy,
+        Utc::now().timestamp(),
+    )
+}
+
+/// Deterministic clock-injected paper execution with an explicit global fee policy.
+pub fn execute_pending_paper_orders_with_at_and_policy<F>(
+    simulator: &mut PaperSimulator,
+    wallet_address: Option<&str>,
     mut price_provider: F,
     latency_recorder: Option<&LatencyRecorder>,
+    execution_policy: &ExecutionPolicy,
     now_ts: i64,
 ) -> Vec<Value>
 where
@@ -837,11 +881,34 @@ where
             continue;
         };
         let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        // Resolve per-profile overrides from the order snapshot so fees remain
+        // deterministic across retries and process restarts.
+        let mut order_policy = execution_policy.clone();
+        if let Some(raw) = details.get("trading_fee_bps") {
+            if !raw.is_null() {
+                order_policy.fee_bps = number_to_string(raw)
+                    .and_then(|value| value.parse::<u16>().ok())
+                    .filter(|value| *value <= 10_000)
+                    .unwrap_or(u16::MAX);
+            }
+        }
+        if let Some(raw) = details.get("network_fee_usd") {
+            if !raw.is_null() {
+                order_policy.network_cost =
+                    number_to_string(raw).unwrap_or_else(|| "invalid".to_string());
+            }
+        }
+        if let Some(raw) = details.get("priority_fee_usd") {
+            if !raw.is_null() {
+                order_policy.priority_fee_usd =
+                    number_to_string(raw).unwrap_or_else(|| "invalid".to_string());
+            }
+        }
         let result = simulator.execute_order(
             &order.order_id,
             Some(&market_price),
             &now,
-            &ExecutionPolicy::default(),
+            &order_policy,
             true,
         );
         match result {

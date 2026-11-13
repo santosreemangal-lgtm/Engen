@@ -629,14 +629,8 @@ pub fn monitor_wallet(
     let fresh_count = store.pending_count_for_lane(wallet_address, "fresh")?;
     let mut processed = Vec::new();
 
-    if let Some(ScanStage::Fresh { limit: fresh_limit }) =
-        plan.next_stage(fresh_count, 0)
-    {
-        let fresh = store.pending_signature_observations(
-            wallet_address,
-            "fresh",
-            fresh_limit,
-        )?;
+    if let Some(ScanStage::Fresh { limit: fresh_limit }) = plan.next_stage(fresh_count, 0) {
+        let fresh = store.pending_signature_observations(wallet_address, "fresh", fresh_limit)?;
         processed.extend(process_signatures_for_lane(
             client,
             store,
@@ -654,14 +648,13 @@ pub fn monitor_wallet(
     if fresh_remaining == 0 {
         resume_history_backfill(client, store, wallet_address, latency_recorder)?;
         let history_remaining = store.pending_count_for_lane(wallet_address, "history")?;
-        if let Some(ScanStage::History { limit: history_limit, .. }) =
-            plan.next_stage(0, history_remaining)
+        if let Some(ScanStage::History {
+            limit: history_limit,
+            ..
+        }) = plan.next_stage(0, history_remaining)
         {
-            let history = store.pending_signature_observations(
-                wallet_address,
-                "history",
-                history_limit,
-            )?;
+            let history =
+                store.pending_signature_observations(wallet_address, "history", history_limit)?;
             processed.extend(process_signatures_for_lane(
                 client,
                 store,

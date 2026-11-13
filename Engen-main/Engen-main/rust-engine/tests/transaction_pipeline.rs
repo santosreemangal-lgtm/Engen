@@ -291,9 +291,9 @@ fn pending_fresh_signature_blocks_history_processing_in_the_same_monitor_cycle()
         .expect("mock RPC server completed only Fresh processing requests");
 }
 
-
 #[test]
-fn initial_baseline_defers_bounded_history_backfill_until_next_cycle_and_persists_history_as_non_copyable() {
+fn initial_baseline_defers_bounded_history_backfill_until_next_cycle_and_persists_history_as_non_copyable(
+) {
     const HISTORY_SIGNATURE: &str =
         "1111111111111111111111111111111111111111111111111111111111111114";
 
@@ -403,7 +403,10 @@ fn initial_baseline_defers_bounded_history_backfill_until_next_cycle_and_persist
             "NOT_COPYABLE"
         );
         assert_eq!(
-            store.get_status(WALLET, HISTORY_SIGNATURE).unwrap().as_deref(),
+            store
+                .get_status(WALLET, HISTORY_SIGNATURE)
+                .unwrap()
+                .as_deref(),
             Some("processed")
         );
         assert_eq!(
@@ -439,10 +442,7 @@ fn initial_baseline_defers_bounded_history_backfill_until_next_cycle_and_persist
         .unwrap()
         .expect("History evidence survives restart");
     assert_eq!(record.status, "processed");
-    assert_eq!(
-        record.parsed_evidence.unwrap()["source_lane"],
-        "history"
-    );
+    assert_eq!(record.parsed_evidence.unwrap()["source_lane"], "history");
     server
         .join()
         .expect("mock RPC server completed exactly the expected read-only requests");

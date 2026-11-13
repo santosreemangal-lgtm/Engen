@@ -560,7 +560,6 @@ mod tests {
         ));
     }
 
-
     #[test]
     fn client_keeps_429_cooldown_across_requests_and_honors_retry_after() {
         let client = SolanaRpcClient::new(RpcConfig {

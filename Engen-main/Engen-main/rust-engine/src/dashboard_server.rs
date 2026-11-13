@@ -2128,11 +2128,8 @@ mod tests {
         let profile_store = Arc::new(ProfileStore::open(data.join("profiles.db")).unwrap());
         let signature_store = Arc::new(SignatureStore::open(data.join("signatures.db")).unwrap());
         let rpc = Arc::new(SolanaRpcClient::new(RpcConfig::default()).unwrap());
-        let global_paper = PaperSimulator::open(
-            data.join("paper_simulator.db"),
-            &BTreeMap::new(),
-        )
-        .unwrap();
+        let global_paper =
+            PaperSimulator::open(data.join("paper_simulator.db"), &BTreeMap::new()).unwrap();
         let context = ScanContext {
             project_root: root.clone(),
             profile_store,
@@ -2158,15 +2155,9 @@ mod tests {
     }
 
     fn api_request(method: &str, target: &str, body: Value) -> HttpRequest {
-        let mut headers = HashMap::from([(
-            "host".to_string(),
-            "127.0.0.1:8000".to_string(),
-        )]);
+        let mut headers = HashMap::from([("host".to_string(), "127.0.0.1:8000".to_string())]);
         let body = if method == "POST" {
-            headers.insert(
-                "origin".to_string(),
-                "http://127.0.0.1:8000".to_string(),
-            );
+            headers.insert("origin".to_string(), "http://127.0.0.1:8000".to_string());
             serde_json::to_vec(&body).unwrap()
         } else {
             Vec::new()
@@ -2260,11 +2251,7 @@ mod tests {
 
         let history_target =
             format!("/api/profile-transactions?profile_id={profile_id}&page=1&page_size=25");
-        let history = response_json(app.handle(api_request(
-            "GET",
-            &history_target,
-            Value::Null,
-        )));
+        let history = response_json(app.handle(api_request("GET", &history_target, Value::Null)));
         assert_eq!(history["database_available"], true);
         assert_eq!(history["total"], 0);
     }

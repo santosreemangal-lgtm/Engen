@@ -819,11 +819,6 @@ impl PaperSimulator {
                 })
         };
         if let Some(reservation) = &reservation {
-            set_detail(
-                &mut Value::Object(order_details.clone()),
-                "reservation_mint",
-                json!(reservation.mint),
-            );
             order_details.insert("reservation_mint".to_string(), json!(reservation.mint));
             order_details.insert(
                 "reservation_amount".to_string(),
@@ -856,6 +851,11 @@ impl PaperSimulator {
             }
         };
         if !reservation_created {
+            if self.db_path.is_some() {
+                // Another process may have reserved funds after this instance
+                // loaded its snapshot. Refresh the reservation view before exposing it.
+                self.load_reservations()?;
+            }
             order.status = "REJECTED".to_string();
             order.reason = Some(
                 "Insufficient available virtual balance; existing pending orders retain their reservations."
@@ -2020,6 +2020,191 @@ mod tests {
         assert_eq!(result["status"], "REJECTED");
         assert_eq!(sim.balances()["TOKEN"].to_string(), "1");
         assert!(sim.fills().is_empty());
+    }
+
+    #[test]
+    fn pending_buy_reservations_prevent_double_spending_available_usd() {
+        let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
+        let first = budget_buy_order(&mut sim, "reserve-buy-60", "60");
+
+        assert_eq!(sim.balances()["USD"], BigDecimal::from(100));
+        assert_eq!(sim.reserved_balance("USD"), BigDecimal::from(60));
+        assert_eq!(sim.available_balance("USD"), BigDecimal::from(40));
+        assert_eq!(sim.orders()[&first].status, "CREATED");
+
+        let second = budget_buy_order(&mut sim, "reserve-buy-50", "50");
+        assert_eq!(sim.orders()[&second].status, "REJECTED");
+        assert!(sim.orders()[&second]
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("Insufficient available virtual balance"));
+        assert_eq!(sim.reserved_balance("USD"), BigDecimal::from(60));
+        assert_eq!(sim.available_balance("USD"), BigDecimal::from(40));
+        assert_eq!(sim.balances()["USD"], BigDecimal::from(100));
+
+        let final_order = budget_buy_order(&mut sim, "reserve-buy-40", "40");
+        assert_eq!(sim.orders()[&final_order].status, "CREATED");
+        assert_eq!(sim.reserved_balance("USD"), BigDecimal::from(100));
+        assert_eq!(sim.available_balance("USD"), BigDecimal::zero());
+    }
+
+    #[test]
+    fn pending_sell_reservations_prevent_double_spending_token_balance() {
+        let mut balances = virtual_cash();
+        balances.insert("TOKEN".to_string(), "10".to_string());
+        let mut sim = PaperSimulator::in_memory(&balances).unwrap();
+
+        let first = sim
+            .create_order(CreateOrderRequest {
+                signal_id: "reserve-sell-7",
+                side: "SELL",
+                asset_mint: "TOKEN",
+                quantity: "7",
+                quote_mint: "USD",
+                created_at: now(),
+                details: None,
+            })
+            .unwrap();
+        let first_id = first["order_id"].as_str().unwrap();
+
+        assert_eq!(sim.reserved_balance("TOKEN"), BigDecimal::from(7));
+        assert_eq!(sim.available_balance("TOKEN"), BigDecimal::from(3));
+
+        let second = sim
+            .create_order(CreateOrderRequest {
+                signal_id: "reserve-sell-4",
+                side: "SELL",
+                asset_mint: "TOKEN",
+                quantity: "4",
+                quote_mint: "USD",
+                created_at: now(),
+                details: None,
+            })
+            .unwrap();
+        let second_id = second["order_id"].as_str().unwrap();
+
+        assert_eq!(sim.orders()[first_id].status, "CREATED");
+        assert_eq!(sim.orders()[second_id].status, "REJECTED");
+        assert_eq!(sim.balances()["TOKEN"], BigDecimal::from(10));
+        assert_eq!(sim.reserved_balance("TOKEN"), BigDecimal::from(7));
+        assert_eq!(sim.available_balance("TOKEN"), BigDecimal::from(3));
+    }
+
+    #[test]
+    fn cancellation_and_rejection_release_pending_order_reservations() {
+        let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
+        let cancelled_id = budget_buy_order(&mut sim, "cancel-reservation", "40");
+        assert_eq!(sim.available_balance("USD"), BigDecimal::from(60));
+
+        let cancelled = sim.cancel_order(&cancelled_id).unwrap();
+        assert_eq!(cancelled["status"], "CANCELLED");
+        assert_eq!(sim.reserved_balance("USD"), BigDecimal::zero());
+        assert_eq!(sim.available_balance("USD"), BigDecimal::from(100));
+        assert_eq!(
+            sim.orders()[&cancelled_id].details["reservation_state"],
+            "RELEASED"
+        );
+
+        let rejected_id = budget_buy_order(&mut sim, "reject-reservation", "40");
+        let invalid_policy = ExecutionPolicy {
+            min_order_value_usd: "NaN".to_string(),
+            ..ExecutionPolicy::default()
+        };
+        let rejected = sim
+            .execute_order(
+                &rejected_id,
+                Some(&price("TOKEN")),
+                now(),
+                &invalid_policy,
+                true,
+            )
+            .unwrap();
+        assert_eq!(rejected["status"], "REJECTED");
+        assert_eq!(sim.reserved_balance("USD"), BigDecimal::zero());
+        assert_eq!(sim.available_balance("USD"), BigDecimal::from(100));
+        assert_eq!(
+            sim.orders()[&rejected_id].details["reservation_state"],
+            "RELEASED"
+        );
+    }
+
+    #[test]
+    fn reservations_survive_restart_and_are_consumed_atomically_with_fill() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("reservations.db");
+        let order_id;
+        {
+            let mut sim = PaperSimulator::open(&path, &virtual_cash()).unwrap();
+            order_id = budget_buy_order(&mut sim, "restart-reservation", "50");
+            assert_eq!(sim.reserved_balance("USD"), BigDecimal::from(50));
+            assert_eq!(sim.available_balance("USD"), BigDecimal::from(50));
+        }
+
+        {
+            let mut sim = PaperSimulator::open(&path, &BTreeMap::new()).unwrap();
+            assert_eq!(sim.reserved_balance("USD"), BigDecimal::from(50));
+            assert_eq!(sim.available_balance("USD"), BigDecimal::from(50));
+
+            let result = sim
+                .execute_order(
+                    &order_id,
+                    Some(&price("TOKEN")),
+                    now(),
+                    &ExecutionPolicy::default(),
+                    true,
+                )
+                .unwrap();
+            assert_eq!(result["status"], "FILLED");
+            assert_eq!(sim.reserved_balance("USD"), BigDecimal::zero());
+            assert_eq!(sim.available_balance("USD"), sim.balances()["USD"]);
+            assert_eq!(sim.fills().len(), 1);
+        }
+
+        let recovered = PaperSimulator::open(&path, &BTreeMap::new()).unwrap();
+        assert_eq!(recovered.reserved_balance("USD"), BigDecimal::zero());
+        assert_eq!(recovered.orders()[&order_id].status, "FILLED");
+        assert_eq!(recovered.fills().len(), 1);
+    }
+
+    #[test]
+    fn separate_simulator_instances_cannot_reserve_the_same_virtual_cash() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("concurrent-reservations.db");
+        let mut first = PaperSimulator::open(&path, &virtual_cash()).unwrap();
+        let mut second = PaperSimulator::open(&path, &BTreeMap::new()).unwrap();
+
+        let first_id = budget_buy_order(&mut first, "instance-one-70", "70");
+        assert_eq!(first.orders()[&first_id].status, "CREATED");
+
+        let second_order = second
+            .create_order(CreateOrderRequest {
+                signal_id: "instance-two-50",
+                side: "BUY",
+                asset_mint: "TOKEN",
+                quantity: "1",
+                quote_mint: "USD",
+                created_at: now(),
+                details: Some(json!({"target_budget_usd":"50"})),
+            })
+            .unwrap();
+        let second_id = second_order["order_id"].as_str().unwrap();
+
+        assert_eq!(second.orders()[second_id].status, "REJECTED");
+        assert_eq!(first.reserved_balance("USD"), BigDecimal::from(70));
+        assert_eq!(first.available_balance("USD"), BigDecimal::from(30));
+        assert_eq!(second.reserved_balance("USD"), BigDecimal::from(70));
+        assert_eq!(second.available_balance("USD"), BigDecimal::from(30));
+        assert_eq!(first.balances()["USD"], BigDecimal::from(100));
+    }
+
+    #[test]
+    fn virtual_balance_cannot_be_set_below_pending_reservations() {
+        let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
+        let _id = budget_buy_order(&mut sim, "protect-virtual-balance", "60");
+        assert!(sim.set_virtual_balance("50", "USD").is_err());
+        assert_eq!(sim.balances()["USD"], BigDecimal::from(100));
+        assert_eq!(sim.available_balance("USD"), BigDecimal::from(40));
     }
 
     #[test]

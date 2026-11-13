@@ -785,7 +785,7 @@ impl DashboardApp {
                     "associate-source-wallet" => {
                         let Some(wallet) = body.get("wallet_address").and_then(Value::as_str) else { return HttpResponse::json(400, json!({"error":"A valid public wallet address is required."})); };
                         self.context.profile_store.associate_source_wallet(&id, wallet).map_err(|error| error.to_string())
-                            .and_then(|_| self.context.profile_store.get_profile(&id).map_err(|error| error.to_string())?.ok_or_else(|| "Profile not found.".to_string()))
+                            .and_then(|_| serde_json::to_value(self.context.profile_store.get_profile(&id).map_err(|error| error.to_string())?.ok_or_else(|| "Profile not found.".to_string())?).map_err(|_| "Profile response serialization failed.".to_string()))
                     }
                     "disassociate-source-wallet" => {
                         let Some(wallet) = body.get("wallet_address").and_then(Value::as_str) else { return HttpResponse::json(400, json!({"error":"A valid public wallet address is required."})); };
@@ -973,7 +973,7 @@ impl DashboardApp {
         }
         let now=Utc::now().to_rfc3339_opts(SecondsFormat::Millis,true);
         let order=match simulator.create_order(CreateOrderRequest{
-            signal_id:body.get("signal_id").and_then(Value::as_str).unwrap_or("manual-paper-order"),
+            signal_id:body.get("signal_id").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| Uuid::new_v4().to_string()).as_str(),
             side,
             asset_mint:mint,
             quantity:&quantity,

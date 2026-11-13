@@ -89,6 +89,8 @@ Supported commands: `/start`, `/help`, `/status`, `/balance`, `/settings`, `/his
 
 Defaults are `ENGINE_MODE=read_only`, `LOG_LEVEL=INFO`, and `LIVE_TRADING_ENABLED=false`. Stage 1 rejects other engine modes and any value that attempts to enable live trading. Do not commit local `.env` files.
 
+The Rust paper executor also accepts global fee settings: `ENGEN_PAPER_TRADING_FEE_BPS` (default `10`, range `0..10000`), `ENGEN_PAPER_NETWORK_FEE_USD` (default `0`), and `ENGEN_PAPER_PRIORITY_FEE_USD` (default `0`). Network and priority values are fixed **USD estimates per simulated fill**, not live Solana fee quotes; each must be non-negative and their combined amount is capped at USD 1,000 per fill. `Config::paper_execution_policy()` supplies these global values to the paper-copy execution API. Copy profiles may override them with `trading_fee_bps`, `network_fee_usd`, and `priority_fee_usd`; the resolved values are stored with the order and fill so retries and restarts retain the same fee model.
+
 ## Backups and duplicate files
 
 Do not delete local `.bak` or `.pre_*.bak` files automatically. Compare each backup with its current file, preserve unique changes, and only then decide whether to archive or remove it. Remote GitHub history cannot show untracked files in a Codespaces workspace.

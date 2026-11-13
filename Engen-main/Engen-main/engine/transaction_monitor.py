@@ -286,10 +286,20 @@ def process_new_signatures(
                 else "failed" if result.get("status") == "failed"
                 else "observed"
             )
-            store.save_transaction_record(
+            parsed_evidence = {
+                "slot": result.get("slot"),
+                "fee": result.get("fee"),
+                "signers": result.get("signers"),
+                "program_ids": result.get("program_ids"),
+                "instructions": result.get("instructions"),
+                "token_balance_changes": result.get("token_balance_changes"),
+            }
+            store.save_transaction_evidence(
                 wallet_address,
                 signature,
-                result.get("raw_transaction"),
+                raw_transaction=result.get("raw_transaction"),
+                parsed_evidence=parsed_evidence,
+                classification=result.get("trade_signal"),
                 processing_status=record_status,
             )
 

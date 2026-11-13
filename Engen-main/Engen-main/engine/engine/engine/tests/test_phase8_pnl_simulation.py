@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from engine.pnl import AverageCostLedger, MarketPrice
+from engine.pnl import AverageCostLedger, MarketPrice, portfolio_valuation_usd
 from engine.paper_simulator import PaperSimulator
 
 
@@ -46,6 +46,16 @@ class PnLTests(unittest.TestCase):
         self.assertEqual(Decimal(result["pnl"]), Decimal("6"))
         self.assertEqual(result["price_source"], "test-price-feed")
         self.assertEqual(result["price_age_seconds"], 0)
+
+    def test_unrealized_roi_uses_remaining_cost_basis_and_loss_is_negative(self):
+        ledger = AverageCostLedger()
+        ledger.buy(MINT, "2", "10", fee="2")
+        result = ledger.unrealized_pnl(MINT, price("13.2"), now=NOW)
+        self.assertEqual(Decimal(result["pnl"]), Decimal("4.4"))
+        self.assertEqual(Decimal(result["cost_basis"]), Decimal("22"))
+        self.assertEqual(Decimal(result["roi_pct"]), Decimal("20"))
+        loss = ledger.unrealized_pnl(MINT, price("9"), now=NOW)
+        self.assertEqual(Decimal(loss["roi_pct"]), Decimal("-18.18181818181818181818181818"))
 
     def test_missing_price_does_not_become_zero_valuation(self):
         ledger = AverageCostLedger()
@@ -109,6 +119,87 @@ class PnLTests(unittest.TestCase):
             MarketPrice(MINT, "1", "USD", "", NOW)
         with self.assertRaises(ValueError):
             MarketPrice(MINT, "1", "USD", "source", "2026-10-26T12:00:00")
+
+    def test_portfolio_value_includes_cash_and_fresh_token_holdings_without_cost_basis(self):
+        token_price = MarketPrice(MINT, Decimal("12"), "USD", "test-feed", NOW)
+        report = portfolio_valuation_usd(
+            {"USD": "100", MINT: "2"},
+            {MINT: token_price},
+            max_age_seconds=60,
+            now=NOW,
+        )
+        self.assertEqual(report["cash_balance_usd"], "100")
+        self.assertEqual(report["token_holdings_value_usd"], "24")
+        self.assertEqual(report["portfolio_value_usd"], "124")
+        self.assertEqual(report["portfolio_value_status"], "calculated")
+        self.assertEqual(report["token_holdings"][0]["quantity"], "2")
+        self.assertEqual(report["token_holdings"][0]["price_usd"], "12")
+        self.assertEqual(report["token_holdings"][0]["market_value_usd"], "24")
+
+    def test_missing_token_price_withholds_total_but_keeps_each_holding_visible(self):
+        fresh = MarketPrice(MINT, Decimal("12"), "USD", "test-feed", NOW)
+        report = portfolio_valuation_usd(
+            {"USD": "100", MINT: "2", "TOKEN_B": "3"},
+            {MINT: fresh},
+            max_age_seconds=60,
+            now=NOW,
+        )
+        self.assertEqual(report["cash_balance_usd"], "100")
+        self.assertIsNone(report["token_holdings_value_usd"])
+        self.assertIsNone(report["portfolio_value_usd"])
+        self.assertEqual(report["portfolio_value_status"], "incomplete_market_valuation")
+        by_mint = {item["mint"]: item for item in report["token_holdings"]}
+        self.assertEqual(by_mint[MINT]["market_value_usd"], "24")
+        self.assertIsNone(by_mint["TOKEN_B"]["market_value_usd"])
+        self.assertEqual(by_mint["TOKEN_B"]["status"], "price_unavailable")
+
+    def test_future_price_is_not_accepted_for_portfolio_valuation(self):
+        future = MarketPrice(MINT, Decimal("12"), "USD", "test-feed", "2026-10-26T12:00:01Z")
+        self.assertFalse(future.is_fresh(max_age_seconds=60, now=NOW))
+        report = portfolio_valuation_usd(
+            {"USD": "100", MINT: "2"},
+            {MINT: future},
+            max_age_seconds=60,
+            now=NOW,
+        )
+        self.assertIsNone(report["portfolio_value_usd"])
+        self.assertEqual(report["token_holdings"][0]["status"], "future_price")
+
+    def test_empty_token_portfolio_is_valued_at_cash_balance(self):
+        report = portfolio_valuation_usd({"USD": "7.25"}, {}, now=NOW)
+        self.assertEqual(report["cash_balance_usd"], "7.25")
+        self.assertEqual(report["token_holdings_value_usd"], "0")
+        self.assertEqual(report["portfolio_value_usd"], "7.25")
+        self.assertEqual(report["token_holdings"], [])
+
+    def test_stale_price_is_retained_as_stale_but_not_included_in_value(self):
+        stale = MarketPrice(
+            MINT, Decimal("12"), "USD", "test-feed", "2026-10-26T11:58:59Z"
+        )
+        report = portfolio_valuation_usd(
+            {"USD": "100", MINT: "2"},
+            {MINT: stale},
+            max_age_seconds=60,
+            now=NOW,
+        )
+        holding = report["token_holdings"][0]
+        self.assertEqual(holding["status"], "stale_price")
+        self.assertEqual(holding["price_usd"], "12")
+        self.assertIsNone(holding["market_value_usd"])
+        self.assertIsNone(report["portfolio_value_usd"])
+
+    def test_mismatched_price_mint_is_never_used(self):
+        other = MarketPrice("TOKEN_B", Decimal("12"), "USD", "test-feed", NOW)
+        report = portfolio_valuation_usd(
+            {"USD": "100", MINT: "2"},
+            {MINT: other},
+            max_age_seconds=60,
+            now=NOW,
+        )
+        holding = report["token_holdings"][0]
+        self.assertEqual(holding["status"], "invalid_or_mismatched_price")
+        self.assertIsNone(holding["price_usd"])
+        self.assertIsNone(report["portfolio_value_usd"])
 
 
 class PaperSimulatorTests(unittest.TestCase):
@@ -262,6 +353,31 @@ class PaperSimulatorTests(unittest.TestCase):
             self.assertEqual(len(restarted.fills), 1)
             self.assertEqual(self.create(restarted)["status"], "DUPLICATE")
 
+    def test_realized_roi_uses_cost_basis_allocated_to_sold_units(self):
+        fills = [
+            {"side": "BUY", "asset_mint": MINT, "quantity": "2",
+             "execution_price": "10", "fee": "2", "network_cost": "0"},
+            {"side": "SELL", "asset_mint": MINT, "quantity": "1",
+             "execution_price": "16.5", "fee": "1.65", "network_cost": "0"},
+        ]
+        from engine.pnl import realized_pnl_from_fills
+        result = realized_pnl_from_fills(fills)[MINT]
+        self.assertEqual(Decimal(result["pnl"]), Decimal("3.85"))
+        self.assertEqual(Decimal(result["cost_basis_sold"]), Decimal("11"))
+        self.assertEqual(Decimal(result["roi_pct"]), Decimal("35"))
+
+    def test_unknown_realized_basis_has_no_roi(self):
+        fills = [{
+            "side": "SELL", "asset_mint": MINT, "quantity": "1",
+            "execution_price": "15", "fee": "0", "network_cost": "0",
+        }]
+        from engine.pnl import realized_pnl_from_fills
+        result = realized_pnl_from_fills(fills)[MINT]
+        self.assertIsNone(result["pnl"])
+        self.assertIsNone(result["cost_basis_sold"])
+        self.assertIsNone(result["roi_pct"])
+        self.assertEqual(result["status"], "unknown_cost_basis")
+
     def test_realized_pnl_is_reproducible_from_fills_after_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "simulator.db"
@@ -275,6 +391,9 @@ class PaperSimulatorTests(unittest.TestCase):
             summary = simulator.pnl_summary()
             self.assertEqual(Decimal(summary["realized_by_mint"][MINT]["pnl"]), Decimal("5"))
             self.assertEqual(summary["realized_by_mint"][MINT]["status"], "calculated")
+            self.assertEqual(Decimal(summary["realized_by_mint"][MINT]["cost_basis_sold"]), Decimal("10"))
+            self.assertEqual(Decimal(summary["realized_by_mint"][MINT]["roi_pct"]), Decimal("50"))
+            self.assertEqual(Decimal(summary["realized_roi_pct"]), Decimal("50"))
             self.assertIn("unavailable", summary["unrealized_status"])
 
             restarted = PaperSimulator({QUOTE: "1"}, db_path=db_path)

@@ -1,4 +1,6 @@
+import json
 import unittest
+from pathlib import Path
 
 from engine.transaction_analysis import (
     PUMP_FUN_PROGRAM_ID,
@@ -566,6 +568,132 @@ class TransactionAnalysisTests(unittest.TestCase):
         self.assertEqual(wallet_changes[0]["delta_amount"], "-1000000")
         self.assertFalse(wallet_changes[0]["fee_adjusted"])
 
+    def test_versioned_lookup_table_program_indices_resolve_for_outer_and_inner(self):
+        from engine.transaction_analysis import classify_transaction
+        wallet = "WALLET_A"
+        system_program = "11111111111111111111111111111111"
+        transaction = {
+            "slot": 101,
+            "transaction": {"message": {
+                "header": {"numRequiredSignatures": 1},
+                "accountKeys": [wallet, "OTHER"],
+                "instructions": [{
+                    "programIdIndex": 2,
+                    "parsed": {"type": "transfer"},
+                }],
+            }},
+            "meta": {
+                "err": None,
+                "fee": 5000,
+                "preBalances": [10_000, 20_000, 30_000],
+                "postBalances": [9_000, 21_000, 30_000],
+                "loadedAddresses": {
+                    "writable": [system_program],
+                    "readonly": [],
+                },
+                "innerInstructions": [{
+                    "index": 0,
+                    "instructions": [{
+                        "programIdIndex": 2,
+                        "parsed": {"type": "transferChecked"},
+                    }],
+                }],
+            },
+        }
+        summary = analyze_transaction(transaction)
+        self.assertEqual(summary["account_count"], 3)
+        self.assertEqual(summary["instructions"][0]["program_id"], system_program)
+        self.assertEqual(summary["instructions"][1]["program_id"], system_program)
+        result = classify_transaction(transaction, wallet, [])
+        self.assertEqual(result["transaction_type"], "TRANSFER")
+        self.assertEqual(result["trade_signal"], "NOT_COPYABLE")
+
+    def test_parsed_lookup_table_keys_are_not_duplicated(self):
+        transaction = {
+            "transaction": {"message": {
+                "accountKeys": [
+                    {"pubkey": "WALLET_A", "source": "transaction"},
+                    {"pubkey": "11111111111111111111111111111111", "source": "lookupTable"},
+                ],
+                "instructions": [{"programIdIndex": 1, "parsed": {"type": "transfer"}}],
+            }},
+            "meta": {
+                "err": None,
+                "fee": 5000,
+                "preBalances": [10_000, 20_000],
+                "postBalances": [9_000, 21_000],
+                "loadedAddresses": {
+                    "writable": ["11111111111111111111111111111111"],
+                    "readonly": [],
+                },
+            },
+        }
+        summary = analyze_transaction(transaction)
+        self.assertEqual(summary["account_count"], 2)
+        self.assertEqual(
+            summary["instructions"][0]["program_id"],
+            "11111111111111111111111111111111",
+        )
+        native_changes = analyze_native_sol_balance_changes(transaction)
+        self.assertEqual(len(native_changes), 2)
+        self.assertEqual(
+            native_changes[1]["owner"],
+            "11111111111111111111111111111111",
+        )
+
+    def test_native_sol_analysis_rejects_account_key_balance_length_mismatch(self):
+        transaction = {
+            "transaction": {"message": {"accountKeys": ["WALLET_A", "OTHER"]}},
+            "meta": {"fee": 5000, "preBalances": [10_000], "postBalances": [9_000]},
+        }
+        self.assertEqual(analyze_native_sol_balance_changes(transaction), [])
+
+    def test_shared_phase2_golden_corpus_matches_transaction_type_contract(self):
+        from engine.transaction_analysis import classify_transaction
+        project_root = Path(__file__).resolve().parents[4]
+        fixture_path = (
+            project_root / "rust-engine" / "tests" / "fixtures"
+            / "phase2_transactions.json"
+        )
+        cases = json.loads(fixture_path.read_text(encoding="utf-8"))
+        self.assertGreaterEqual(len(cases), 6)
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                result = classify_transaction(
+                    case["transaction"],
+                    case["wallet"],
+                    case["balance_changes"],
+                )
+                self.assertEqual(result["transaction_type"], case["expected_type"])
+                self.assertEqual(result["trade_signal"], case["expected_signal"])
+                expected_analysis = case.get("expected_analysis")
+                if expected_analysis:
+                    summary = analyze_transaction(case["transaction"])
+                    for field in (
+                        "status", "slot", "fee", "account_count", "signers", "program_ids"
+                    ):
+                        self.assertEqual(summary[field], expected_analysis[field], field)
+                    projected = [
+                        {
+                            "source": instruction["source"],
+                            "program_id": instruction["program_id"],
+                            "parsed_type": instruction["parsed_type"],
+                        }
+                        for instruction in summary["instructions"]
+                    ]
+                    self.assertEqual(projected, expected_analysis["instructions"])
+                expected_token_changes = case.get("expected_token_balance_changes")
+                if expected_token_changes is not None:
+                    actual = analyze_token_balance_changes(case["transaction"]["meta"])
+                    self.assertEqual(actual, expected_token_changes)
+                expected_program_id = case.get("expected_outer_program_id")
+                if expected_program_id:
+                    summary = analyze_transaction(case["transaction"])
+                    self.assertEqual(
+                        summary["instructions"][0]["program_id"],
+                        expected_program_id,
+                    )
+
     def test_classifies_native_sol_buy_candidate(self):
         wallet = "WALLET_A"
 
@@ -644,6 +772,8 @@ class TransactionAnalysisTests(unittest.TestCase):
             [{"owner": "WALLET_A", "mint": "TOKEN_A", "delta_amount": "100"}],
         )
         self.assertEqual(result["classification"], "FAILED_TRANSACTION")
+        self.assertEqual(result["transaction_type"], "FAILED")
+        self.assertEqual(result["trade_signal"], "NOT_COPYABLE")
         self.assertEqual(result["confidence"], "high")
         self.assertFalse(result["evidence"]["balance_changes_used"])
 
@@ -705,6 +835,59 @@ class TransactionAnalysisTests(unittest.TestCase):
         )
         self.assertEqual(result["classification"], "UNKNOWN")
 
+
+    def test_classifies_verified_token_2022_transfer_as_non_copyable(self):
+        from engine.transaction_analysis import classify_transaction
+        wallet = "WALLET_A"
+        transaction = {
+            "transaction": {
+                "message": {
+                    "accountKeys": [wallet, "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"],
+                    "instructions": [{
+                        "program": "spl-token-2022",
+                        "programId": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+                        "parsed": {"type": "transferChecked"},
+                    }],
+                }
+            },
+            "meta": {"err": None, "fee": 5000},
+        }
+        result = classify_transaction(transaction, wallet, [])
+        self.assertEqual(result["transaction_type"], "TRANSFER")
+        self.assertEqual(result["trade_signal"], "NOT_COPYABLE")
+
+    def test_unknown_program_cannot_claim_transfer_type(self):
+        from engine.transaction_analysis import classify_transaction
+        transaction = {
+            "transaction": {
+                "message": {
+                    "accountKeys": ["WALLET_A", "UnknownProgram"],
+                    "instructions": [{
+                        "program": "unknown",
+                        "programId": "UnknownProgram",
+                        "parsed": {"type": "transfer"},
+                    }],
+                }
+            },
+            "meta": {"err": None, "fee": 5000},
+        }
+        result = classify_transaction(transaction, "WALLET_A", [])
+        self.assertEqual(result["transaction_type"], "UNKNOWN")
+        self.assertEqual(result["trade_signal"], "NOT_COPYABLE")
+
+    def test_transaction_type_and_trade_signal_are_separate_for_buy_and_unknown(self):
+        from engine.transaction_analysis import classify_transaction
+        wallet = "WALLET_A"
+        buy = classify_transaction(None, wallet, [
+            {"owner": wallet, "mint": "TOKEN_A", "delta_amount": "100", "decimals": 6},
+            {"owner": wallet, "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+             "delta_amount": "-500", "decimals": 6},
+        ])
+        unknown = classify_transaction(None, wallet, [])
+        self.assertEqual(buy["transaction_type"], "BUY")
+        self.assertEqual(buy["trade_signal"], "BUY_CANDIDATE")
+        self.assertEqual(unknown["transaction_type"], "UNKNOWN")
+        self.assertEqual(unknown["trade_signal"], "NOT_COPYABLE")
 
     def test_rent_or_transfer_like_native_sol_movement_is_not_auto_swap(self):
         from engine.transaction_analysis import classify_transaction

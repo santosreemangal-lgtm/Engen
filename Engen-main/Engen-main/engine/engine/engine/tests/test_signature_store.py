@@ -1,4 +1,5 @@
 
+import json
 import sqlite3
 import subprocess
 import sys
@@ -151,6 +152,83 @@ class SignatureStoreTests(unittest.TestCase):
         record = self.store.get_transaction_record("wallet_A", "sig_public")
         self.assertEqual(record["raw_transaction"], payload)
         self.assertEqual(record["status"], "incomplete")
+
+    def test_parsed_and_classification_evidence_survive_store_restart(self):
+        wallet = "wallet_evidence"
+        signature = "sig_evidence"
+        raw = {"slot": 55, "meta": {"innerInstructions": [{"index": 0}]}}
+        parsed = {
+            "instructions": [
+                {"source": "message", "parsed_type": "transfer"},
+                {"source": "inner", "parsed_type": "transferChecked"},
+            ]
+        }
+        classification = {
+            "transaction_type": "TRANSFER",
+            "trade_signal": "NOT_COPYABLE",
+        }
+        self.store.save_transaction_evidence(
+            wallet, signature, raw, parsed, classification, "observed"
+        )
+        restarted = SignatureStore(self.store.db_path)
+        record = restarted.get_transaction_record(wallet, signature)
+        self.assertEqual(record["raw_transaction"], raw)
+        self.assertEqual(record["parsed_evidence"], parsed)
+        self.assertEqual(record["classification"], classification)
+
+    def test_legacy_transaction_records_schema_migrates_additive_evidence_columns(self):
+        legacy_path = Path(self.temp_dir.name) / "legacy_transaction_records.db"
+        connection = sqlite3.connect(legacy_path)
+        try:
+            connection.execute("""
+                CREATE TABLE transaction_records (
+                    wallet_address TEXT NOT NULL,
+                    signature TEXT NOT NULL,
+                    raw_transaction_json TEXT,
+                    processing_status TEXT NOT NULL,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (wallet_address, signature)
+                )
+            """)
+            payload = {"slot": 88, "meta": {"err": None}}
+            connection.execute(
+                """INSERT INTO transaction_records
+                   (wallet_address, signature, raw_transaction_json, processing_status)
+                   VALUES (?, ?, ?, ?)""",
+                ("wallet_legacy", "sig_legacy", json.dumps(payload), "observed"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        migrated = SignatureStore(legacy_path)
+        record = migrated.get_transaction_record("wallet_legacy", "sig_legacy")
+        self.assertEqual(record["raw_transaction"], payload)
+        self.assertIsNone(record["parsed_evidence"])
+        self.assertIsNone(record["classification"])
+        with sqlite3.connect(legacy_path) as connection:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(transaction_records)"
+                ).fetchall()
+            }
+        self.assertIn("parsed_evidence_json", columns)
+        self.assertIn("classification_json", columns)
+
+    def test_mark_processed_preserves_failed_transaction_evidence_status(self):
+        wallet = "wallet_failed"
+        signature = "sig_failed"
+        payload = {"meta": {"err": {"InstructionError": [0, "Custom"]}}}
+        self.store.save(wallet, signature, slot=10)
+        self.store.save_transaction_record(
+            wallet, signature, payload, processing_status="failed"
+        )
+
+        self.assertTrue(self.store.mark_processed(wallet, signature))
+        record = self.store.get_transaction_record(wallet, signature)
+        self.assertEqual(record["status"], "failed")
+        self.assertEqual(record["raw_transaction"], payload)
 
     def test_processed_slot_updates_wallet_position_monotonically(self):
         self.store.save("wallet_A", "sig_newer", slot=200)

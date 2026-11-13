@@ -1006,7 +1006,7 @@ impl PaperSimulator {
         let mut connection = self.connect()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let persisted_reserved = Self::persisted_reserved_balance(&transaction, mint, None)?;
-        if value < persisted_reserved {
+        if value < &persisted_reserved {
             return Err(PaperSimulatorError::InvalidInput(
                 "Virtual balance cannot be reduced below funds reserved by pending orders."
                     .to_string(),

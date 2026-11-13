@@ -1526,6 +1526,161 @@ mod tests {
     }
 
     #[test]
+    fn profile_fee_overrides_are_persisted_and_applied_over_global_policy() {
+        let mut simulator = simulator();
+        let settings = CopySettings::from_json(Some(&json!({
+            "sizing_mode":"FIXED_USD",
+            "sizing_value":"10",
+            "max_buy_usd":null,
+            "trading_fee_bps":25,
+            "network_fee_usd":"0.12",
+            "priority_fee_usd":"0.03"
+        })))
+        .unwrap();
+        let queued = queue_paper_orders(
+            WALLET,
+            &[buy_signal(&"d".repeat(64))],
+            &mut simulator,
+            AllowedSides::Buy,
+            &settings,
+            None,
+        )
+        .unwrap();
+        assert_eq!(queued.len(), 1);
+
+        let order_id = queued[0]["order_id"].as_str().unwrap().to_string();
+        let order = &simulator.orders()[&order_id];
+        assert_eq!(order.details["trading_fee_bps"], 25);
+        assert_eq!(order.details["network_fee_usd"], "0.12");
+        assert_eq!(order.details["priority_fee_usd"], "0.03");
+
+        let observed = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let price = MarketPrice::new(
+            ASSET,
+            "1",
+            "USD",
+            "profile-fee-fixture",
+            observed.clone(),
+            Some("25000"),
+            Some("test-liquidity".to_string()),
+            Some(observed.clone()),
+        )
+        .unwrap();
+        let global_policy = ExecutionPolicy {
+            fee_bps: 100,
+            network_cost: "1.00".to_string(),
+            priority_fee_usd: "0.50".to_string(),
+            ..ExecutionPolicy::default()
+        };
+        let outcomes = execute_pending_paper_orders_with_at_and_policy(
+            &mut simulator,
+            Some(WALLET),
+            |_mint| Some(price.clone()),
+            None,
+            &global_policy,
+            1_760_000_001,
+        );
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0]["status"], "FILLED");
+        let fill = &simulator.fills()[0];
+        let gross = BigDecimal::from_str(&fill.gross_quote).unwrap();
+        let expected_trading_fee = &gross * BigDecimal::from_str("0.0025").unwrap();
+        assert_eq!(
+            BigDecimal::from_str(&fill.fee).unwrap(),
+            expected_trading_fee
+        );
+        assert_eq!(fill.base_network_fee, "0.12");
+        assert_eq!(fill.priority_fee, "0.03");
+        assert_eq!(fill.network_cost, "0.15");
+        assert_eq!(simulator.orders()[&order_id].details["trading_fee_bps"], 25);
+    }
+
+    #[test]
+    fn global_execution_fee_policy_applies_when_profile_has_no_override() {
+        let mut simulator = simulator();
+        let queued = queue_paper_orders(
+            WALLET,
+            &[buy_signal(&"e".repeat(64))],
+            &mut simulator,
+            AllowedSides::Buy,
+            &CopySettings::default(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(queued.len(), 1);
+
+        let observed = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let price = MarketPrice::new(
+            ASSET,
+            "1",
+            "USD",
+            "global-fee-fixture",
+            observed.clone(),
+            Some("25000"),
+            Some("test-liquidity".to_string()),
+            Some(observed.clone()),
+        )
+        .unwrap();
+        let global_policy = ExecutionPolicy {
+            fee_bps: 40,
+            network_cost: "0.20".to_string(),
+            priority_fee_usd: "0.10".to_string(),
+            ..ExecutionPolicy::default()
+        };
+        let outcomes = execute_pending_paper_orders_with_at_and_policy(
+            &mut simulator,
+            Some(WALLET),
+            |_mint| Some(price.clone()),
+            None,
+            &global_policy,
+            1_760_000_001,
+        );
+
+        assert_eq!(outcomes[0]["status"], "FILLED");
+        let fill = &simulator.fills()[0];
+        let gross = BigDecimal::from_str(&fill.gross_quote).unwrap();
+        let expected_fee = &gross * BigDecimal::from_str("0.004").unwrap();
+        assert_eq!(BigDecimal::from_str(&fill.fee).unwrap(), expected_fee);
+        assert_eq!(fill.base_network_fee, "0.2");
+        assert_eq!(fill.priority_fee, "0.1");
+        assert_eq!(fill.network_cost, "0.3");
+    }
+
+    #[test]
+    fn validates_profile_fee_overrides_and_bounds() {
+        for raw in ["-1", "10001", "10.5", "NaN", "not-an-integer"] {
+            assert!(
+                CopySettings::from_json(Some(&json!({
+                    "trading_fee_bps":raw
+                })))
+                .is_err(),
+                "accepted invalid profile trading fee {raw}"
+            );
+        }
+
+        for key in ["network_fee_usd", "priority_fee_usd"] {
+            for raw in ["-0.01", "1000.01", "NaN", "invalid"] {
+                let settings = json!({key:raw});
+                assert!(
+                    CopySettings::from_json(Some(&settings)).is_err(),
+                    "accepted invalid profile {key} {raw}"
+                );
+            }
+        }
+
+        let zero_fee = CopySettings::from_json(Some(&json!({
+            "trading_fee_bps":0,
+            "network_fee_usd":"0",
+            "priority_fee_usd":"0"
+        })))
+        .unwrap();
+        assert_eq!(zero_fee.trading_fee_bps, Some(0));
+        assert_eq!(zero_fee.network_fee_usd.as_deref(), Some("0"));
+        assert_eq!(zero_fee.priority_fee_usd.as_deref(), Some("0"));
+    }
+
+    #[test]
     fn pending_status_is_observable_and_never_claims_live_trading() {
         let mut simulator = simulator();
         queue_paper_orders(

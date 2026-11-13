@@ -772,15 +772,15 @@ impl DashboardApp {
                                 if let Some(settings) = body.get("settings") {
                                     self.context.profile_store.set_settings(&id, settings).map_err(|error| error.to_string())?;
                                 }
-                                self.context.profile_store.get_profile(&id).map_err(|error| error.to_string())?
-                                    .ok_or_else(|| "Profile not found.".to_string())
+                                serde_json::to_value(self.context.profile_store.get_profile(&id).map_err(|error| error.to_string())?
+                                    .ok_or_else(|| "Profile not found.".to_string())?).map_err(|_| "Profile response serialization failed.".to_string())
                             })
                     }
                     "settings" => {
                         let Some(settings) = body.get("settings") else { return HttpResponse::json(400, json!({"error":"Settings must be an object."})); };
                         self.context.profile_store.set_settings(&id, settings)
                             .map_err(|error| error.to_string())
-                            .and_then(|_| self.context.profile_store.get_profile(&id).map_err(|error| error.to_string())?.ok_or_else(|| "Profile not found.".to_string()))
+                            .and_then(|_| serde_json::to_value(self.context.profile_store.get_profile(&id).map_err(|error| error.to_string())?.ok_or_else(|| "Profile not found.".to_string())?).map_err(|_| "Profile response serialization failed.".to_string()))
                     }
                     "associate-source-wallet" => {
                         let Some(wallet) = body.get("wallet_address").and_then(Value::as_str) else { return HttpResponse::json(400, json!({"error":"A valid public wallet address is required."})); };

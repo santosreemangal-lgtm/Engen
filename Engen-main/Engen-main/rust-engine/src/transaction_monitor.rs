@@ -499,7 +499,10 @@ pub fn process_signatures_for_lane(
         }
         let raw = result.get("raw_transaction");
         if let Some(object) = result.as_object_mut() {
-            object.insert("source_lane".to_string(), Value::String(source_lane.to_string()));
+            object.insert(
+                "source_lane".to_string(),
+                Value::String(source_lane.to_string()),
+            );
             object.insert(
                 "paper_copy_eligible".to_string(),
                 Value::Bool(source_lane == "fresh"),
@@ -619,11 +622,8 @@ pub fn monitor_wallet(
 
     match plan.next_stage(fresh_count, history_count) {
         Some(ScanStage::Fresh { limit: fresh_limit }) => {
-            let fresh = store.pending_signature_observations(
-                wallet_address,
-                "fresh",
-                fresh_limit,
-            )?;
+            let fresh =
+                store.pending_signature_observations(wallet_address, "fresh", fresh_limit)?;
             processed.extend(process_signatures_for_lane(
                 client,
                 store,
@@ -638,8 +638,10 @@ pub fn monitor_wallet(
             // to an explicit retry/review state. Active claims also block History.
             let fresh_remaining = store.pending_count_for_lane(wallet_address, "fresh")?;
             let history_remaining = store.pending_count_for_lane(wallet_address, "history")?;
-            if let Some(ScanStage::History { limit: history_limit, .. }) =
-                plan.next_stage(fresh_remaining, history_remaining)
+            if let Some(ScanStage::History {
+                limit: history_limit,
+                ..
+            }) = plan.next_stage(fresh_remaining, history_remaining)
             {
                 let history = store.pending_signature_observations(
                     wallet_address,
@@ -657,12 +659,12 @@ pub fn monitor_wallet(
                 )?);
             }
         }
-        Some(ScanStage::History { limit: history_limit, .. }) => {
-            let history = store.pending_signature_observations(
-                wallet_address,
-                "history",
-                history_limit,
-            )?;
+        Some(ScanStage::History {
+            limit: history_limit,
+            ..
+        }) => {
+            let history =
+                store.pending_signature_observations(wallet_address, "history", history_limit)?;
             processed.extend(process_signatures_for_lane(
                 client,
                 store,

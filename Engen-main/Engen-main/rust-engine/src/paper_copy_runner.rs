@@ -333,10 +333,7 @@ pub fn queue_paper_orders_at(
             .get("source_lane")
             .and_then(Value::as_str)
             .is_some_and(|lane| lane != "fresh")
-            || result
-                .get("paper_copy_eligible")
-                .and_then(Value::as_bool)
-                == Some(false)
+            || result.get("paper_copy_eligible").and_then(Value::as_bool) == Some(false)
         {
             continue;
         }
@@ -842,7 +839,6 @@ mod tests {
         assert!(queued.is_empty());
         assert!(simulator.orders().is_empty());
     }
-
 
     #[test]
     fn history_lane_results_are_never_queued_for_paper_execution() {

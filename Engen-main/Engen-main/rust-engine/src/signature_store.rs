@@ -174,6 +174,8 @@ impl SignatureStore {
             ("error_stage", "TEXT"),
             ("error_code", "TEXT"),
             ("error_message", "TEXT"),
+            ("claim_owner", "TEXT"),
+            ("claim_expires_at", "INTEGER"),
         ];
         for (column, definition) in migrations {
             if !columns.contains(column) {
@@ -321,7 +323,8 @@ impl SignatureStore {
         )?;
         let changed = transaction.execute(
             "UPDATE seen_signatures
-             SET status='stale',last_checked_at=CURRENT_TIMESTAMP,
+             SET status='stale',claim_owner=NULL,claim_expires_at=NULL,
+                 last_checked_at=CURRENT_TIMESTAMP,
                  error_stage='freshness',error_code='source_stale',
                  error_message='Source transaction is outside the 60-second paper-copy freshness window.'
              WHERE wallet_address=?1 AND signature=?2",
@@ -338,6 +341,123 @@ impl SignatureStore {
         Ok(changed == 1)
     }
 
+
+    /// Atomically claim one pending signature. Expired leases are reclaimable after a crash.
+    /// The injected timestamp makes lease expiry deterministic in tests.
+    pub fn claim_signature(
+        &self,
+        wallet: &str,
+        signature: &str,
+        owner: &str,
+        now_epoch: i64,
+        lease_seconds: u64,
+    ) -> Result<bool, SignatureStoreError> {
+        Self::validate_wallet(wallet)?;
+        Self::validate_signature(signature)?;
+        if owner.trim().is_empty() || owner.len() > 128 || now_epoch < 0 {
+            return Err(SignatureStoreError::InvalidInput(
+                "Claim owner and timestamp are invalid.".to_string(),
+            ));
+        }
+        let lease_seconds = i64::try_from(lease_seconds).map_err(|_| {
+            SignatureStoreError::InvalidInput("Claim lease is out of range.".to_string())
+        })?;
+        if !(1..=3_600).contains(&lease_seconds) {
+            return Err(SignatureStoreError::InvalidInput(
+                "Claim lease must be between 1 and 3600 seconds.".to_string(),
+            ));
+        }
+        let expires_at = now_epoch.checked_add(lease_seconds).ok_or_else(|| {
+            SignatureStoreError::InvalidInput("Claim expiry is out of range.".to_string())
+        })?;
+        let mut connection = self.connect()?;
+        let transaction = Self::transaction(&mut connection)?;
+        let claimed = transaction.execute(
+            "UPDATE seen_signatures
+             SET status='processing',claim_owner=?3,claim_expires_at=?4,
+                 last_checked_at=CURRENT_TIMESTAMP
+             WHERE wallet_address=?1 AND signature=?2
+               AND (status='pending'
+                    OR (status='processing'
+                        AND (claim_expires_at IS NULL OR claim_expires_at<=?5)))",
+            params![wallet, signature, owner, expires_at, now_epoch],
+        )?;
+        transaction.commit()?;
+        Ok(claimed == 1)
+    }
+
+    /// Release only the lease owned by this worker; failure states remain untouched.
+    pub fn release_signature_claim(
+        &self,
+        wallet: &str,
+        signature: &str,
+        owner: &str,
+    ) -> Result<bool, SignatureStoreError> {
+        Self::validate_wallet(wallet)?;
+        Self::validate_signature(signature)?;
+        let mut connection = self.connect()?;
+        let transaction = Self::transaction(&mut connection)?;
+        let released = transaction.execute(
+            "UPDATE seen_signatures
+             SET status='pending',claim_owner=NULL,claim_expires_at=NULL,
+                 last_checked_at=CURRENT_TIMESTAMP
+             WHERE wallet_address=?1 AND signature=?2
+               AND status='processing' AND claim_owner=?3",
+            params![wallet, signature, owner],
+        )?;
+        transaction.commit()?;
+        Ok(released == 1)
+    }
+
+    /// Complete a signature only while the caller still owns its atomic lease.
+    pub fn mark_claimed_processed(
+        &self,
+        wallet: &str,
+        signature: &str,
+        owner: &str,
+    ) -> Result<bool, SignatureStoreError> {
+        Self::validate_wallet(wallet)?;
+        Self::validate_signature(signature)?;
+        let mut connection = self.connect()?;
+        let transaction = Self::transaction(&mut connection)?;
+        let changed = transaction.execute(
+            "UPDATE seen_signatures
+             SET status='processed',claim_owner=NULL,claim_expires_at=NULL,
+                 last_checked_at=CURRENT_TIMESTAMP,error_stage=NULL,
+                 error_code=NULL,error_message=NULL
+             WHERE wallet_address=?1 AND signature=?2
+               AND status='processing' AND claim_owner=?3",
+            params![wallet, signature, owner],
+        )?;
+        if changed == 1 {
+            transaction.execute(
+                "UPDATE transaction_records
+                 SET processing_status='processed',updated_at=CURRENT_TIMESTAMP
+                 WHERE wallet_address=?1 AND signature=?2
+                   AND processing_status NOT IN ('stale','failed','incomplete','needs_review')",
+                params![wallet, signature],
+            )?;
+            let slot: Option<i64> = transaction.query_row(
+                "SELECT slot FROM seen_signatures WHERE wallet_address=?1 AND signature=?2",
+                params![wallet, signature],
+                |row| row.get(0),
+            )?;
+            if let Some(slot) = slot {
+                transaction.execute(
+                    "INSERT INTO wallet_positions(wallet_address,slot,signature)
+                     VALUES(?1,?2,?3)
+                     ON CONFLICT(wallet_address) DO UPDATE SET
+                       slot=CASE WHEN wallet_positions.slot IS NULL OR excluded.slot>=wallet_positions.slot THEN excluded.slot ELSE wallet_positions.slot END,
+                       signature=CASE WHEN wallet_positions.slot IS NULL OR excluded.slot>=wallet_positions.slot THEN excluded.signature ELSE wallet_positions.signature END,
+                       updated_at=CURRENT_TIMESTAMP",
+                    params![wallet, slot, signature],
+                )?;
+            }
+        }
+        transaction.commit()?;
+        Ok(changed == 1)
+    }
+
     pub fn mark_processed(
         &self,
         wallet: &str,
@@ -348,7 +468,7 @@ impl SignatureStore {
         let mut connection = self.connect()?;
         let transaction = Self::transaction(&mut connection)?;
         let changed = transaction.execute(
-            "UPDATE seen_signatures SET status='processed', last_checked_at=CURRENT_TIMESTAMP, error_stage=NULL, error_code=NULL, error_message=NULL WHERE wallet_address=?1 AND signature=?2 AND status!='stale'",
+            "UPDATE seen_signatures SET status='processed', claim_owner=NULL, claim_expires_at=NULL, last_checked_at=CURRENT_TIMESTAMP, error_stage=NULL, error_code=NULL, error_message=NULL WHERE wallet_address=?1 AND signature=?2 AND status!='stale'",
             params![wallet, signature],
         )?;
         transaction.execute(
@@ -418,7 +538,7 @@ impl SignatureStore {
             "pending"
         };
         transaction.execute(
-            "UPDATE seen_signatures SET status=?1,attempts=?2,last_checked_at=CURRENT_TIMESTAMP,error_stage=?3,error_code=?4,error_message=?5 WHERE wallet_address=?6 AND signature=?7",
+            "UPDATE seen_signatures SET status=?1,attempts=?2,last_checked_at=CURRENT_TIMESTAMP,error_stage=?3,error_code=?4,error_message=?5,claim_owner=NULL,claim_expires_at=NULL WHERE wallet_address=?6 AND signature=?7",
             params![status, attempts, stage.as_str(), safe_code, safe_message, wallet, signature],
         )?;
         transaction.commit()?;
@@ -589,7 +709,12 @@ impl SignatureStore {
         }
         let connection = self.connect()?;
         let mut statement = connection.prepare(
-            "SELECT signature FROM seen_signatures WHERE wallet_address=?1 AND status='pending' ORDER BY first_seen_at ASC LIMIT ?2"
+            "SELECT signature FROM seen_signatures
+             WHERE wallet_address=?1
+               AND (status='pending'
+                    OR (status='processing' AND
+                        (claim_expires_at IS NULL OR claim_expires_at<=CAST(strftime('%s','now') AS INTEGER))))
+             ORDER BY first_seen_at ASC LIMIT ?2"
         )?;
         let rows = statement.query_map(params![wallet, limit as i64], |row| row.get(0))?;
         Ok(rows.collect::<Result<Vec<String>, _>>()?)
@@ -646,6 +771,58 @@ mod tests {
 
     const WALLET: &str = "11111111111111111111111111111111";
     const SIGNATURE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+
+
+    #[test]
+    fn atomic_claim_prevents_duplicate_workers_and_recovers_expired_lease_after_restart() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("claims.db");
+        let store = SignatureStore::open(&path).unwrap();
+        store.save(WALLET, SIGNATURE, Some(22)).unwrap();
+        assert!(store.claim_signature(WALLET, SIGNATURE, "worker-a", 1_000, 30).unwrap());
+        assert!(!store.claim_signature(WALLET, SIGNATURE, "worker-b", 1_001, 30).unwrap());
+        assert!(store.release_signature_claim(WALLET, SIGNATURE, "worker-a").unwrap());
+        assert!(store.claim_signature(WALLET, SIGNATURE, "worker-b", 1_002, 30).unwrap());
+        assert!(!store.mark_claimed_processed(WALLET, SIGNATURE, "worker-a").unwrap());
+        assert!(store.mark_claimed_processed(WALLET, SIGNATURE, "worker-b").unwrap());
+        assert_eq!(store.get_status(WALLET, SIGNATURE).unwrap().as_deref(), Some("processed"));
+
+        let recovery_signature = "1111111111111111111111111111111111111111111111111111111111111112";
+        store.save(WALLET, recovery_signature, Some(23)).unwrap();
+        assert!(store.claim_signature(WALLET, recovery_signature, "crashed-worker", 1_000, 10).unwrap());
+        let restarted = SignatureStore::open(&path).unwrap();
+        assert_eq!(
+            restarted.pending_signatures(WALLET, 10).unwrap(),
+            vec![recovery_signature.to_string()]
+        );
+        assert!(restarted.claim_signature(WALLET, recovery_signature, "recovery-worker", 2_000, 30).unwrap());
+    }
+
+    #[test]
+    fn concurrent_connections_claim_one_signature_exactly_once() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("concurrent-claims.db");
+        SignatureStore::open(&path).unwrap().save(WALLET, SIGNATURE, Some(33)).unwrap();
+        let barrier = Arc::new(Barrier::new(3));
+        let mut workers = Vec::new();
+        for owner in ["worker-a", "worker-b"] {
+            let path = path.clone();
+            let barrier = Arc::clone(&barrier);
+            workers.push(thread::spawn(move || {
+                let store = SignatureStore::open(path).unwrap();
+                barrier.wait();
+                store.claim_signature(WALLET, SIGNATURE, owner, 5_000, 30).unwrap()
+            }));
+        }
+        barrier.wait();
+        let mut claimed = 0;
+        for worker in workers {
+            if worker.join().unwrap() {
+                claimed += 1;
+            }
+        }
+        assert_eq!(claimed, 1);
+    }
 
     #[test]
     fn stale_signatures_are_auditable_and_cannot_be_overwritten_as_processed() {

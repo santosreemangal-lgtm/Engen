@@ -1,6 +1,7 @@
 //! End-to-end read-only transaction monitoring and conservative signal preparation.
 
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{json, Value};
 use thiserror::Error;
@@ -15,6 +16,17 @@ use crate::transaction_processor::{process_transaction_signature, TransactionPro
 use crate::wallet_monitor::{get_and_store_new_wallet_signatures, WalletMonitorError};
 
 const MAX_PROCESSING_ATTEMPTS: u32 = 6;
+const SIGNATURE_CLAIM_LEASE_SECONDS: u64 = 120;
+static CLAIM_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+fn fresh_claim_owner() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let sequence = CLAIM_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    format!("monitor-{now}-{sequence}")
+}
 
 fn first_signature_occurrence(signature: &str, seen: &mut HashSet<String>) -> bool {
     seen.insert(signature.to_string())
@@ -227,6 +239,17 @@ pub fn process_new_signatures(
             continue;
         }
 
+        let claim_owner = fresh_claim_owner();
+        if !store.claim_signature(
+            wallet_address,
+            signature,
+            &claim_owner,
+            chrono::Utc::now().timestamp(),
+            SIGNATURE_CLAIM_LEASE_SECONDS,
+        )? {
+            continue;
+        }
+
         let processed = match process_transaction_signature(client, signature, latency_recorder) {
             Ok(value) => value,
             Err(TransactionProcessorError::Rpc(error)) => {
@@ -297,6 +320,7 @@ pub fn process_new_signatures(
                     "retryable":false,
                     "error":"Transaction signature or payload is invalid."
                 });
+                store.release_signature_claim(wallet_address, signature, &claim_owner)?;
                 results.push(include_signature_observation(invalid, item));
                 continue;
             }
@@ -370,8 +394,72 @@ pub fn process_new_signatures(
             resolved = client.get_signature_status(signature).ok().flatten();
         }
 
-        let result =
-            prepare_wallet_transaction_result(wallet_address, item, processed, resolved.as_ref());
+        let mut observation_item = item.clone();
+        let mut result = prepare_wallet_transaction_result(
+            wallet_address,
+            &observation_item,
+            processed.clone(),
+            resolved.as_ref(),
+        );
+
+        let candidate = result
+            .get("trade_signal")
+            .and_then(|signal| signal.get("classification"))
+            .and_then(Value::as_str)
+            .is_some_and(|value| matches!(value, "BUY_CANDIDATE" | "SELL_CANDIDATE"));
+        if candidate
+            && observation_item
+                .get("blockTime")
+                .and_then(Value::as_i64)
+                .is_none_or(|timestamp| timestamp <= 0)
+        {
+            let transaction_time = processed
+                .get("raw_transaction")
+                .and_then(|raw| raw.get("blockTime"))
+                .and_then(Value::as_i64)
+                .filter(|timestamp| *timestamp > 0);
+            let recovered_time = if let Some(timestamp) = transaction_time {
+                Some(timestamp)
+            } else {
+                let slot = observation_item
+                    .get("slot")
+                    .and_then(Value::as_u64)
+                    .or_else(|| processed.get("slot").and_then(Value::as_u64));
+                match slot {
+                    Some(slot) => client.get_block_time(slot).ok().flatten(),
+                    None => None,
+                }
+            };
+            if let Some(timestamp) = recovered_time.filter(|timestamp| *timestamp > 0) {
+                observation_item["blockTime"] = json!(timestamp);
+                result = prepare_wallet_transaction_result(
+                    wallet_address,
+                    &observation_item,
+                    processed.clone(),
+                    resolved.as_ref(),
+                );
+            } else {
+                let status = record_retry(
+                    store,
+                    wallet_address,
+                    signature,
+                    ProcessingStage::RpcFetch,
+                    "block_time_unavailable",
+                    "Source blockTime is missing and public RPC recovery did not return a valid timestamp.",
+                    processed.get("raw_transaction"),
+                )?;
+                if let Some(object) = result.as_object_mut() {
+                    object.insert(
+                        "trade_signal".to_string(),
+                        unknown_signal("Source blockTime could not be recovered; no copy candidate is permitted."),
+                    );
+                    object.insert("metadata_status".to_string(), Value::String("block_time_unavailable".to_string()));
+                    object.insert("error".to_string(), Value::String("Source blockTime is missing; retry or manual review is required.".to_string()));
+                    object.insert("retryable".to_string(), Value::Bool(status == "pending"));
+                    object.insert("processing_status".to_string(), Value::String(status));
+                }
+            }
+        }
         let raw = result.get("raw_transaction");
         let record_status = if result.get("status").and_then(Value::as_str) == Some("failed") {
             "failed"
@@ -396,8 +484,14 @@ pub fn process_new_signatures(
         )?;
 
         let retryable = result.get("retryable").and_then(Value::as_bool) == Some(true);
-        if !defer_processed && !retryable {
-            store.mark_processed(wallet_address, signature)?;
+        let held_for_review = matches!(
+            result.get("processing_status").and_then(Value::as_str),
+            Some("needs_review" | "incomplete" | "stale")
+        );
+        if !defer_processed && !retryable && !held_for_review {
+            store.mark_claimed_processed(wallet_address, signature, &claim_owner)?;
+        } else {
+            store.release_signature_claim(wallet_address, signature, &claim_owner)?;
         }
         results.push(result);
     }

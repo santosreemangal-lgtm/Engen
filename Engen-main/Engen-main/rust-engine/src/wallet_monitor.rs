@@ -10,8 +10,9 @@ use crate::signature_store::{SignatureStore, SignatureStoreError};
 use crate::solana_public::{SolanaRpcClient, SolanaRpcError};
 use crate::solana_validation::{is_valid_solana_address, is_valid_transaction_signature};
 
-const MAX_SCAN_PAGES: usize = 5;
+const MAX_SCAN_PAGES: usize = 1_000;
 const MAX_PAGE_SIZE: usize = 1000;
+const MAX_BACKFILL_SIGNATURES: usize = 1_000;
 
 #[derive(Debug, Error)]
 pub enum WalletMonitorError {
@@ -109,7 +110,7 @@ pub fn initialize_wallet_baseline(
     Ok(())
 }
 
-/// Scan newest-first until the last processed anchor is found (up to five pages).
+/// Scan newest-first until the last processed anchor is found, capped at 1,000 unique signatures.
 ///
 /// Every accepted signature is persisted before the next RPC call. If a later page
 /// fails, the saved pending queue remains durable for the monitoring worker to drain.
@@ -145,6 +146,9 @@ where
             if !is_valid_transaction_signature(signature) {
                 continue;
             }
+            if records_by_signature.len() >= MAX_BACKFILL_SIGNATURES {
+                break;
+            }
             let slot = item.get("slot").and_then(Value::as_u64);
             store.save(wallet_address, signature, slot)?;
             records_by_signature.insert(signature.to_string(), item.clone());
@@ -154,7 +158,12 @@ where
             }
         }
 
-        if anchor_found || page.len() < limit || pages >= MAX_SCAN_PAGES || page.is_empty() {
+        if anchor_found
+            || records_by_signature.len() >= MAX_BACKFILL_SIGNATURES
+            || page.len() < limit
+            || pages >= MAX_SCAN_PAGES
+            || page.is_empty()
+        {
             break;
         }
 

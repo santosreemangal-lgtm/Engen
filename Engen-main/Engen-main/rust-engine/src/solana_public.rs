@@ -28,6 +28,7 @@ pub enum ReadOnlyMethod {
     GetSlot,
     GetLatestBlockhash,
     GetSignatureStatuses,
+    GetBlockTime,
     GetSignaturesForAddress,
     GetTransaction,
 }
@@ -39,6 +40,7 @@ impl ReadOnlyMethod {
             Self::GetSlot => "getSlot",
             Self::GetLatestBlockhash => "getLatestBlockhash",
             Self::GetSignatureStatuses => "getSignatureStatuses",
+            Self::GetBlockTime => "getBlockTime",
             Self::GetSignaturesForAddress => "getSignaturesForAddress",
             Self::GetTransaction => "getTransaction",
         }
@@ -247,6 +249,15 @@ impl SolanaRpcClient {
         Ok(Some(status.clone()))
     }
 
+    /// Fetch a block timestamp from a public slot; null means the provider has no timestamp yet.
+    pub fn get_block_time(&self, slot: u64) -> Result<Option<i64>, SolanaRpcError> {
+        if slot > i64::MAX as u64 {
+            return Err(SolanaRpcError::InvalidInput("Slot is out of range.".to_string()));
+        }
+        let value = self.request(ReadOnlyMethod::GetBlockTime, json!([slot]), 7)?;
+        parse_block_time(value)
+    }
+
     /// Fetch a bounded, newest-first page of public wallet signatures.
     pub fn get_signatures_for_address(
         &self,
@@ -373,6 +384,17 @@ fn provider_error_is_retryable(value: &Value) -> bool {
         .any(|marker| message.contains(marker))
 }
 
+fn parse_block_time(value: Value) -> Result<Option<i64>, SolanaRpcError> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    let timestamp = value.as_i64().ok_or(SolanaRpcError::InvalidResponse)?;
+    if timestamp <= 0 {
+        return Err(SolanaRpcError::InvalidResponse);
+    }
+    Ok(Some(timestamp))
+}
+
 fn normalize_signature_rows(rows: &[Value]) -> Vec<Value> {
     rows.iter()
         .filter(|item| {
@@ -448,11 +470,21 @@ mod tests {
             ReadOnlyMethod::GetSlot,
             ReadOnlyMethod::GetLatestBlockhash,
             ReadOnlyMethod::GetSignatureStatuses,
+            ReadOnlyMethod::GetBlockTime,
             ReadOnlyMethod::GetTransaction,
         ];
         assert!(methods
             .iter()
             .all(|method| !method.as_str().contains("send")));
+    }
+
+    #[test]
+    fn block_time_response_is_parsed_without_fabricating_missing_values() {
+        assert_eq!(parse_block_time(Value::Null).unwrap(), None);
+        assert_eq!(parse_block_time(json!(1_760_000_000)).unwrap(), Some(1_760_000_000));
+        assert!(matches!(parse_block_time(json!(0)), Err(SolanaRpcError::InvalidResponse)));
+        assert!(matches!(parse_block_time(json!(-1)), Err(SolanaRpcError::InvalidResponse)));
+        assert!(matches!(parse_block_time(json!("1760000000")), Err(SolanaRpcError::InvalidResponse)));
     }
 
     #[test]

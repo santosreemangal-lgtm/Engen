@@ -914,47 +914,62 @@ impl SignatureStore {
 
     /// Persist progress after each page so a provider outage or process restart resumes
     /// from the next signature instead of re-reading an unbounded historical range.
+    /// Compare-and-swap the persisted History cursor. Concurrent workers that
+    /// fetched the same page may both persist idempotent signatures, but only one
+    /// may advance the page counter/cursor.
     pub fn advance_history_backfill(
         &self,
         wallet: &str,
-        cursor_signature: Option<&str>,
+        expected_cursor_signature: Option<&str>,
+        expected_scanned_count: usize,
+        next_cursor_signature: Option<&str>,
         scanned_count: usize,
         completed: bool,
-    ) -> Result<(), SignatureStoreError> {
+    ) -> Result<bool, SignatureStoreError> {
         Self::validate_wallet(wallet)?;
-        if let Some(signature) = cursor_signature {
+        for signature in [expected_cursor_signature, next_cursor_signature]
+            .into_iter()
+            .flatten()
+        {
             Self::validate_signature(signature)?;
         }
+        let expected_scanned_count = i64::try_from(expected_scanned_count).map_err(|_| {
+            SignatureStoreError::InvalidInput("History scan count is out of range.".to_string())
+        })?;
         let scanned_count = i64::try_from(scanned_count).map_err(|_| {
             SignatureStoreError::InvalidInput("History scan count is out of range.".to_string())
         })?;
-        if !(0..=1_000).contains(&scanned_count) {
+        if !(0..=1_000).contains(&expected_scanned_count)
+            || !(0..=1_000).contains(&scanned_count)
+        {
             return Err(SignatureStoreError::InvalidInput(
-                "History scan count must be between 0 and 1000.".to_string(),
+                "History scan counts must be between 0 and 1000.".to_string(),
             ));
         }
         let connection = self.connect()?;
         let changed = connection.execute(
             "UPDATE wallet_history_backfills
-             SET cursor_signature=?2,
-                 signatures_count=MIN(1000,signatures_count+?3),
+             SET cursor_signature=?4,
+                 signatures_count=MIN(1000,signatures_count+?5),
                  completed=CASE
-                   WHEN ?4=1 OR signatures_count+?3>=1000 THEN 1
+                   WHEN ?6=1 OR signatures_count+?5>=1000 THEN 1
                    ELSE 0
                  END,
                  updated_at=CURRENT_TIMESTAMP
-             WHERE wallet_address=?1",
+             WHERE wallet_address=?1
+               AND cursor_signature IS ?2
+               AND signatures_count=?3
+               AND completed=0",
             params![
                 wallet,
-                cursor_signature,
+                expected_cursor_signature,
+                expected_scanned_count,
+                next_cursor_signature,
                 scanned_count,
                 if completed { 1_i64 } else { 0_i64 }
             ],
         )?;
-        if changed != 1 {
-            return Err(SignatureStoreError::NotFound);
-        }
-        Ok(())
+        Ok(changed == 1)
     }
 
     pub fn get_position(
@@ -1165,7 +1180,8 @@ mod tests {
                 .start_history_backfill(WALLET, Some(cursor_b))
                 .unwrap());
             store
-                .advance_history_backfill(WALLET, Some(cursor_b), 600, false)
+                .advance_history_backfill(WALLET, Some(cursor_a), 0, Some(cursor_b), 600, false)
+                .map(|advanced| assert!(advanced))
                 .unwrap();
         }
         let restarted = SignatureStore::open(&path).unwrap();
@@ -1174,7 +1190,8 @@ mod tests {
             Some((Some(cursor_b.to_string()), 600, false))
         );
         restarted
-            .advance_history_backfill(WALLET, Some(cursor_b), 500, false)
+            .advance_history_backfill(WALLET, Some(cursor_b), 600, Some(cursor_b), 500, false)
+            .map(|advanced| assert!(advanced))
             .unwrap();
         assert_eq!(
             restarted.history_backfill_state(WALLET).unwrap(),
@@ -1183,6 +1200,29 @@ mod tests {
         assert!(!restarted
             .start_history_backfill(WALLET, Some(cursor_a))
             .unwrap());
+    }
+
+
+    #[test]
+    fn concurrent_history_backfill_advances_use_compare_and_swap() {
+        let dir = tempdir().unwrap();
+        let store = SignatureStore::open(dir.path().join("history-cas.db")).unwrap();
+        let next_a =
+            "1111111111111111111111111111111111111111111111111111111111111112";
+        let next_b =
+            "1111111111111111111111111111111111111111111111111111111111111113";
+        store.start_history_backfill(WALLET, Some(SIGNATURE)).unwrap();
+
+        assert!(store
+            .advance_history_backfill(WALLET, Some(SIGNATURE), 0, Some(next_a), 10, false)
+            .unwrap());
+        assert!(!store
+            .advance_history_backfill(WALLET, Some(SIGNATURE), 0, Some(next_b), 10, false)
+            .unwrap());
+        assert_eq!(
+            store.history_backfill_state(WALLET).unwrap(),
+            Some((Some(next_a.to_string()), 10, false))
+        );
     }
 
     #[test]

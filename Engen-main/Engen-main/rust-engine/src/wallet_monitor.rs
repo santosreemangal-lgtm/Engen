@@ -250,7 +250,18 @@ where
         || page.len() < page_limit
         || scanned == 0
         || already_scanned.saturating_add(scanned) >= MAX_BACKFILL_SIGNATURES;
-    store.advance_history_backfill(wallet_address, next_cursor.as_deref(), scanned, completed)?;
+    let advanced = store.advance_history_backfill(
+        wallet_address,
+        cursor.as_deref(),
+        already_scanned,
+        next_cursor.as_deref(),
+        scanned,
+        completed,
+    )?;
+    if !advanced {
+        // Another worker advanced the same page first; do not increment its count twice.
+        return Ok(0);
+    }
     Ok(scanned)
 }
 

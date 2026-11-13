@@ -28,7 +28,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
 from engine.logger import redact
-from engine.pnl import MarketPrice, realized_pnl_from_fills
+from engine.pnl import MarketPrice, realized_pnl_from_fills, roi_percentage
 from engine.market_data import fetch_market_price
 from engine.paper_copy_runner import get_paper_simulator, PAPER_SIMULATOR_LOCK as paper_simulator_lock
 from engine.paper_simulator import PaperSimulator
@@ -338,8 +338,10 @@ def load_profile_paper_simulation_report(profile_id):
         "available_balance": None, "available_balance_usd": None,
         "initial_balance": None, "portfolio_value_usd": None,
         "realized_pnl_usd": None, "unrealized_pnl_usd": None,
+        "realized_roi_pct": None, "unrealized_roi_pct": None,
         "pnl": {"cost_basis_method": "average_cost", "currency": "USD",
-                "realized_by_mint": {},
+                "realized_by_mint": {}, "unrealized_by_mint": {},
+                "realized_roi_pct": None, "unrealized_roi_pct": None,
                 "unrealized_status": "unavailable_no_verified_fresh_market_price"},
     }
     if not PROFILE_STORE_DB.is_file():
@@ -409,6 +411,7 @@ def load_profile_paper_simulation_report(profile_id):
         )[:100]
         base["fills"] = sim_fills
         base["pnl"] = simulator_report.get("pnl", base["pnl"])
+        base["realized_roi_pct"] = base["pnl"].get("realized_roi_pct")
         realized = base["pnl"].get("realized_by_mint", {})
         if not realized:
             base["realized_pnl_usd"] = "0"
@@ -423,6 +426,8 @@ def load_profile_paper_simulation_report(profile_id):
         # case unrealized P&L stays unavailable rather than being guessed.
         token_values = []
         unrealized_values = []
+        unrealized_cost_bases = []
+        unrealized_by_mint = {}
         valuation_notes = []
         with paper_simulator_lock:
             simulator = get_profile_paper_simulator(profile_id)
@@ -444,8 +449,14 @@ def load_profile_paper_simulation_report(profile_id):
                     valuation_notes.append("cost_basis_does_not_match_balance:" + mint)
                     continue
                 pnl = ledger.unrealized_pnl(mint, market_price, max_age_seconds=60)
+                unrealized_by_mint[mint] = pnl
                 unrealized_values.append(
                     Decimal(pnl["pnl"]) if pnl.get("status") == "calculated" else None
+                )
+                unrealized_cost_bases.append(
+                    Decimal(pnl["cost_basis"])
+                    if pnl.get("status") == "calculated" and pnl.get("cost_basis") is not None
+                    else None
                 )
                 if pnl.get("status") != "calculated":
                     valuation_notes.append(str(pnl.get("status")) + ":" + mint)
@@ -454,11 +465,24 @@ def load_profile_paper_simulation_report(profile_id):
             base["portfolio_value_usd"] = format(cash_value + sum(token_values, Decimal("0")), "f")
         else:
             base["portfolio_value_usd"] = None
-        if all(value is not None for value in unrealized_values):
-            base["unrealized_pnl_usd"] = format(sum(unrealized_values, Decimal("0")), "f")
+        base["pnl"]["unrealized_by_mint"] = unrealized_by_mint
+        if not unrealized_values:
+            base["unrealized_pnl_usd"] = "0"
+            base["unrealized_roi_pct"] = None
+            base["pnl"]["unrealized_roi_pct"] = None
+            base["pnl"]["unrealized_status"] = "no_open_positions"
+        elif (all(value is not None for value in unrealized_values)
+              and all(value is not None for value in unrealized_cost_bases)):
+            total_unrealized = sum(unrealized_values, Decimal("0"))
+            total_unrealized_basis = sum(unrealized_cost_bases, Decimal("0"))
+            base["unrealized_pnl_usd"] = format(total_unrealized, "f")
+            base["unrealized_roi_pct"] = roi_percentage(total_unrealized, total_unrealized_basis)
+            base["pnl"]["unrealized_roi_pct"] = base["unrealized_roi_pct"]
             base["pnl"]["unrealized_status"] = "calculated"
         else:
             base["unrealized_pnl_usd"] = None
+            base["unrealized_roi_pct"] = None
+            base["pnl"]["unrealized_roi_pct"] = None
             base["pnl"]["unrealized_status"] = "unavailable_unknown_basis_or_verified_fresh_price"
         base["pnl"]["valuation_notes"] = valuation_notes
         base["database_available"] = True
@@ -538,6 +562,25 @@ def load_paper_simulation_report(profile_id=None):
                     ORDER BY f.rowid""")
             ]
             base["pnl"]["realized_by_mint"] = realized_pnl_from_fills(all_fills)
+            realized_rows = list(base["pnl"]["realized_by_mint"].values())
+            if not realized_rows:
+                base["pnl"]["realized_pnl"] = "0"
+                base["pnl"]["realized_cost_basis"] = "0"
+                base["pnl"]["realized_roi_pct"] = None
+                base["pnl"]["realized_status"] = "no_realized_sells"
+            elif all(row.get("status") == "calculated" for row in realized_rows):
+                total_pnl = sum((Decimal(row["pnl"]) for row in realized_rows), Decimal("0"))
+                total_basis = sum((Decimal(row["cost_basis_sold"])
+                                   for row in realized_rows), Decimal("0"))
+                base["pnl"]["realized_pnl"] = format(total_pnl, "f")
+                base["pnl"]["realized_cost_basis"] = format(total_basis, "f")
+                base["pnl"]["realized_roi_pct"] = roi_percentage(total_pnl, total_basis)
+                base["pnl"]["realized_status"] = "calculated"
+            else:
+                base["pnl"]["realized_pnl"] = None
+                base["pnl"]["realized_cost_basis"] = None
+                base["pnl"]["realized_roi_pct"] = None
+                base["pnl"]["realized_status"] = "incomplete_cost_basis"
     except (OSError, sqlite3.Error, ValueError) as exc:
         base["error"] = "Simulation report unavailable (" + type(exc).__name__ + ")."
     return base

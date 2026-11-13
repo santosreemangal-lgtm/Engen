@@ -118,8 +118,8 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <div class="grid">
 <div class="metric"><div class="label">Portfolio Value</div><p id="total-value" class="value">$—</p></div>
 <div class="metric"><div class="label">Available USD</div><p id="available" class="value">$—</p></div>
-<div class="metric"><div class="label">Realized P&amp;L</div><p id="realized" class="value">$—</p></div>
-<div class="metric"><div class="label">Unrealized P&amp;L</div><p id="unrealized" class="value">$—</p></div>
+<div class="metric"><div class="label">Realized P&amp;L</div><p id="realized" class="value">$—</p><p id="realized-roi" class="hint">ROI —</p></div>
+<div class="metric"><div class="label">Unrealized P&amp;L</div><p id="unrealized" class="value">$—</p><p id="unrealized-roi" class="hint">ROI —</p></div>
 </div>
 <p id="portfolio-message" class="message" role="status">Portfolio amounts are from the selected profile’s paper simulator. Token holdings require verified prices before total value can be calculated.</p>
 </section>
@@ -212,6 +212,7 @@ async function api(path, options={}) {
   }
 }
 function money(value){if(value===null||value===undefined||value==="")return "$—";const n=Number(value);return Number.isFinite(n)?"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"$—";}
+function roiText(value){if(value===null||value===undefined||value==="")return "ROI —";const n=Number(value);return Number.isFinite(n)?"ROI "+(n>0?"+":"")+n.toFixed(2)+"%":"ROI —";}
 function say(id,text){$(id).textContent=text;}
 function post(path,payload){return api(path,{method:"POST",body:JSON.stringify(payload)});}
 async function loadPortfolio(){
@@ -220,8 +221,10 @@ async function loadPortfolio(){
   const initial=r.initial_balance;
   $("total-value").textContent=money(r.portfolio_value_usd ?? (r.available_balance!==undefined && r.open_positions_value_usd!==undefined ? Number(r.available_balance)+Number(r.open_positions_value_usd) : null));
   $("available").textContent=money(r.available_balance_usd ?? r.available_balance);
-  $("realized").textContent=money(r.realized_pnl_usd ?? r.realized_pnl);
+  $("realized").textContent=money(r.realized_pnl_usd ?? r.realized_pnl ?? r.pnl?.realized_pnl);
   $("unrealized").textContent=money(r.unrealized_pnl_usd ?? r.unrealized_pnl);
+  say("realized-roi",roiText(r.realized_roi_pct ?? r.pnl?.realized_roi_pct));
+  say("unrealized-roi",roiText(r.unrealized_roi_pct ?? r.pnl?.unrealized_roi_pct));
   say("portfolio-message",r.database_available===false?"Paper ledger is not initialized yet.":"Values not provided by the ledger or verified price data remain unavailable.");
  }catch(e){say("portfolio-message",e.message);}
 }
@@ -343,6 +346,7 @@ async function loadPortfolioForProfile(){
   balanceInputDirty=false;input.value="";input.disabled=true;save.disabled=true;
   $("total-value").textContent=money(null);$("available").textContent=money(null);
   $("realized").textContent=money(null);$("unrealized").textContent=money(null);
+  say("realized-roi","ROI —");say("unrealized-roi","ROI —");
   say("virtual-balance-message","Select a paper profile to set its virtual balance.");
   say("portfolio-message","Select a paper profile to view its portfolio.");
   await loadPaperTradeHistory(null);return;
@@ -363,6 +367,8 @@ async function loadPortfolioForProfile(){
   $("available").textContent=money(balance);
   $("realized").textContent=money(r.realized_pnl_usd);
   $("unrealized").textContent=money(r.unrealized_pnl_usd);
+  say("realized-roi",roiText(r.realized_roi_pct ?? r.pnl?.realized_roi_pct));
+  say("unrealized-roi",roiText(r.unrealized_roi_pct ?? r.pnl?.unrealized_roi_pct));
   if(r.error){say("portfolio-message",r.error);}
   else if(balance===null||balance===undefined){say("portfolio-message","No virtual USD balance is set for this profile yet. Enter an amount above and confirm it.");}
   else if(r.portfolio_value_usd===null||r.portfolio_value_usd===undefined){say("portfolio-message","Available cash is shown in USD. Portfolio value is unavailable while token holdings lack a verified fresh market price.");}

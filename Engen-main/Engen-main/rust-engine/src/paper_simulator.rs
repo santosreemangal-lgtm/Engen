@@ -1908,6 +1908,87 @@ impl PaperSimulator {
                 json!(self.available_balance(mint).to_string()),
             );
         }
+        let pnl = self.pnl_summary_with_market_prices(
+            market_prices,
+            max_price_age_seconds,
+            now,
+        )?;
+        let cash_balance = self
+            .balances
+            .get("USD")
+            .cloned()
+            .unwrap_or_else(BigDecimal::zero);
+        let mut token_holdings = Vec::new();
+        let mut token_value_total = BigDecimal::zero();
+        let mut all_holdings_priced = true;
+
+        // Value every non-cash balance independently of acquisition cost basis.
+        // A fresh mark can establish market value even when P&L basis is unknown.
+        for (mint, quantity) in &self.balances {
+            if mint == "USD" || quantity.is_zero() {
+                continue;
+            }
+            let valuation = pnl
+                .unrealized_by_mint
+                .get(mint)
+                .cloned()
+                .unwrap_or(Value::Null);
+            let market_value = valuation
+                .get("market_value")
+                .and_then(Value::as_str)
+                .map(|value| {
+                    BigDecimal::from_str(value).map_err(|_| {
+                        PaperSimulatorError::InvalidInput(
+                            "Invalid token market value in portfolio report.".to_string(),
+                        )
+                    })
+                })
+                .transpose()?;
+            if let Some(value) = &market_value {
+                token_value_total += value;
+            } else {
+                all_holdings_priced = false;
+            }
+            let market_price = market_prices.get(mint);
+            let status = valuation
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("price_unavailable");
+            token_holdings.push(json!({
+                "mint": mint,
+                "quantity": quantity.normalized().to_plain_string(),
+                "currency": "USD",
+                "price_usd": if market_value.is_some() {
+                    market_price.map(|price| price.price.normalized().to_plain_string())
+                } else {
+                    None
+                },
+                "market_value_usd": market_value.as_ref().map(|value| value.normalized().to_plain_string()),
+                "status": status,
+                "price_source": valuation.get("price_source").cloned().unwrap_or(Value::Null),
+                "price_timestamp": valuation.get("price_timestamp").cloned().unwrap_or(Value::Null),
+                "price_age_seconds": valuation.get("price_age_seconds").cloned().unwrap_or(Value::Null)
+            }));
+        }
+        let token_holdings_value = if all_holdings_priced {
+            Some(token_value_total)
+        } else {
+            None
+        };
+        let portfolio_value = token_holdings_value
+            .as_ref()
+            .map(|token_value| &cash_balance + token_value);
+        let portfolio_value_status = if portfolio_value.is_some() {
+            "calculated"
+        } else {
+            "incomplete_market_valuation"
+        };
+        let portfolio_value_note = if portfolio_value.is_some() {
+            "Virtual USD cash plus every non-cash holding with a fresh, matching USD market price."
+        } else {
+            "Total value is withheld until every token holding has a fresh, matching USD market price; individual priced holdings remain visible."
+        };
+
         Ok(json!({
             "mode":"PAPER_SIMULATION",
             "simulated":true,
@@ -1917,15 +1998,18 @@ impl PaperSimulator {
             "balances":balances,
             "reserved_balances":reserved_balances,
             "available_balances":available_balances,
+            "cash_balance_usd":cash_balance.normalized().to_plain_string(),
+            "token_holdings_value_usd":token_holdings_value.as_ref().map(|value| value.normalized().to_plain_string()),
+            "token_holdings":token_holdings,
+            "portfolio_value_usd":portfolio_value.as_ref().map(|value| value.normalized().to_plain_string()),
+            "total_portfolio_value_usd":portfolio_value.as_ref().map(|value| value.normalized().to_plain_string()),
+            "portfolio_value_status":portfolio_value_status,
+            "portfolio_value_note":portfolio_value_note,
             "pending_reservation_count":self.reservations.len(),
             "initial_balance":self.initial_balance,
             "orders":self.orders.values().collect::<Vec<_>>(),
             "fills":self.fills,
-            "pnl":self.pnl_summary_with_market_prices(
-                market_prices,
-                max_price_age_seconds,
-                now
-            )?
+            "pnl":pnl
         }))
     }
 
@@ -2972,6 +3056,70 @@ mod tests {
         assert_eq!(sim.orders()[&id].status, "FILLED");
         assert_eq!(sim.fills().len(), 1);
         assert_eq!(sim.balances()["TOKEN"], BigDecimal::from(2));
+    }
+
+    #[test]
+    fn portfolio_valuation_includes_cash_and_token_market_value_without_cost_basis() {
+        let balances = BTreeMap::from([
+            ("USD".to_string(), "100".to_string()),
+            ("TOKEN".to_string(), "2".to_string()),
+        ]);
+        let sim = PaperSimulator::in_memory(&balances).unwrap();
+        let prices = BTreeMap::from([("TOKEN".to_string(), mark_price("TOKEN", "12", now()))]);
+        let report = sim
+            .report_with_market_prices(&prices, 60, Some(now()))
+            .unwrap();
+
+        assert_eq!(report["cash_balance_usd"], "100");
+        assert_eq!(report["token_holdings_value_usd"], "24");
+        assert_eq!(report["portfolio_value_usd"], "124");
+        assert_eq!(report["total_portfolio_value_usd"], "124");
+        assert_eq!(report["portfolio_value_status"], "calculated");
+        assert_eq!(report["token_holdings"][0]["mint"], "TOKEN");
+        assert_eq!(report["token_holdings"][0]["quantity"], "2");
+        assert_eq!(report["token_holdings"][0]["price_usd"], "12");
+        assert_eq!(report["token_holdings"][0]["market_value_usd"], "24");
+        // Market value is valid even though this starting inventory has no known basis.
+        assert_eq!(report["token_holdings"][0]["status"], "unknown_cost_basis");
+    }
+
+    #[test]
+    fn portfolio_total_is_withheld_when_any_token_price_is_missing_or_stale() {
+        let balances = BTreeMap::from([
+            ("USD".to_string(), "100".to_string()),
+            ("TOKEN_A".to_string(), "2".to_string()),
+            ("TOKEN_B".to_string(), "3".to_string()),
+        ]);
+        let sim = PaperSimulator::in_memory(&balances).unwrap();
+        let prices = BTreeMap::from([(
+            "TOKEN_A".to_string(),
+            mark_price("TOKEN_A", "12", now()),
+        )]);
+        let report = sim
+            .report_with_market_prices(&prices, 60, Some(now()))
+            .unwrap();
+
+        assert_eq!(report["cash_balance_usd"], "100");
+        assert_eq!(report["token_holdings"].as_array().unwrap().len(), 2);
+        assert_eq!(report["token_holdings_value_usd"], Value::Null);
+        assert_eq!(report["portfolio_value_usd"], Value::Null);
+        assert_eq!(report["portfolio_value_status"], "incomplete_market_valuation");
+        assert_eq!(report["token_holdings"][0]["market_value_usd"], "24");
+        assert_eq!(report["token_holdings"][1]["market_value_usd"], Value::Null);
+        assert_eq!(report["token_holdings"][1]["status"], "price_unavailable");
+    }
+
+    #[test]
+    fn cash_only_portfolio_has_zero_token_value_and_total_equals_cash() {
+        let balances = BTreeMap::from([("USD".to_string(), "7.25".to_string())]);
+        let sim = PaperSimulator::in_memory(&balances).unwrap();
+        let report = sim.report().unwrap();
+
+        assert_eq!(report["cash_balance_usd"], "7.25");
+        assert_eq!(report["token_holdings_value_usd"], "0");
+        assert_eq!(report["portfolio_value_usd"], "7.25");
+        assert_eq!(report["portfolio_value_status"], "calculated");
+        assert!(report["token_holdings"].as_array().unwrap().is_empty());
     }
 
     #[test]

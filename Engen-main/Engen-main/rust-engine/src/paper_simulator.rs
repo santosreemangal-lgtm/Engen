@@ -1655,26 +1655,14 @@ impl PaperSimulator {
                 .get(&mint)
                 .cloned()
                 .unwrap_or_else(BigDecimal::zero);
-            let tracked = decimal_value(
-                &ledger.snapshot(&mint).quantity,
-                "Tracked quantity",
-                true,
-            )?;
+            let tracked =
+                decimal_value(&ledger.snapshot(&mint).quantity, "Tracked quantity", true)?;
             if actual > tracked {
                 let missing = &actual - &tracked;
-                ledger.deposit(
-                    &mint,
-                    &missing.normalized().to_plain_string(),
-                    None,
-                    None,
-                )?;
+                ledger.deposit(&mint, &missing.normalized().to_plain_string(), None, None)?;
             } else if actual < tracked {
                 let withdrawn = &tracked - &actual;
-                ledger.withdrawal(
-                    &mint,
-                    &withdrawn.normalized().to_plain_string(),
-                    None,
-                )?;
+                ledger.withdrawal(&mint, &withdrawn.normalized().to_plain_string(), None)?;
             }
         }
 
@@ -1733,7 +1721,9 @@ impl PaperSimulator {
             match valuation.pnl.as_deref() {
                 Some(value) => {
                     total_pnl += BigDecimal::from_str(value).map_err(|_| {
-                        PaperSimulatorError::InvalidInput("Invalid unrealized P&L result.".to_string())
+                        PaperSimulatorError::InvalidInput(
+                            "Invalid unrealized P&L result.".to_string(),
+                        )
                     })?;
                 }
                 None => all_pnl_calculated = false,
@@ -1741,7 +1731,9 @@ impl PaperSimulator {
             match valuation.market_value.as_deref() {
                 Some(value) => {
                     total_market_value += BigDecimal::from_str(value).map_err(|_| {
-                        PaperSimulatorError::InvalidInput("Invalid market-value result.".to_string())
+                        PaperSimulatorError::InvalidInput(
+                            "Invalid market-value result.".to_string(),
+                        )
                     })?;
                 }
                 None => all_market_values_available = false,
@@ -1749,7 +1741,9 @@ impl PaperSimulator {
             match valuation.cost_basis.as_deref() {
                 Some(value) => {
                     total_cost_basis += BigDecimal::from_str(value).map_err(|_| {
-                        PaperSimulatorError::InvalidInput("Invalid unrealized cost-basis result.".to_string())
+                        PaperSimulatorError::InvalidInput(
+                            "Invalid unrealized cost-basis result.".to_string(),
+                        )
                     })?;
                 }
                 None => all_cost_basis_available = false,
@@ -1947,12 +1941,12 @@ mod tests {
         let mut balances = virtual_cash();
         balances.insert("TOKEN".to_string(), "5".to_string());
         let sim = PaperSimulator::in_memory(&balances).unwrap();
-        let prices = BTreeMap::from([(
-            "TOKEN".to_string(),
-            mark_price("TOKEN", "10", now()),
-        )]);
+        let prices = BTreeMap::from([("TOKEN".to_string(), mark_price("TOKEN", "10", now()))]);
 
-        assert_eq!(sim.open_position_mints().unwrap(), vec!["TOKEN".to_string()]);
+        assert_eq!(
+            sim.open_position_mints().unwrap(),
+            vec!["TOKEN".to_string()]
+        );
         let summary = sim
             .pnl_summary_with_market_prices(&prices, 60, Some(now()))
             .unwrap();
@@ -2022,7 +2016,6 @@ mod tests {
         assert_eq!(summary.unrealized_pnl.as_deref(), Some("0"));
         assert_eq!(summary.unrealized_market_value.as_deref(), Some("0"));
     }
-
 
     fn buy_order(sim: &mut PaperSimulator, signal: &str) -> String {
         sim.create_order(CreateOrderRequest {

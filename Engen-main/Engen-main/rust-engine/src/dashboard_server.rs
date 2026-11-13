@@ -1383,7 +1383,13 @@ impl DashboardApp {
                 }
             };
             return match report_with_verified_market_prices(&simulator, Duration::from_secs(5)) {
-                Ok(report) => HttpResponse::json(200, enrich_paper_report(report, &id)),
+                Ok(report) => match merge_legacy_profile_paper_report(
+                    enrich_paper_report(report, &id),
+                    &path,
+                ) {
+                    Ok(report) => HttpResponse::json(200, report),
+                    Err(error) => HttpResponse::json(503, json!({"error":error})),
+                },
                 Err(_) => HttpResponse::json(503, json!({"error":"Paper report unavailable."})),
             };
         }

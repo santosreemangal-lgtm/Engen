@@ -123,6 +123,13 @@ impl SignatureStore {
                 wallet_address TEXT PRIMARY KEY,
                 initialized_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS wallet_history_backfills (
+                wallet_address TEXT PRIMARY KEY,
+                cursor_signature TEXT,
+                signatures_count INTEGER NOT NULL DEFAULT 0,
+                completed INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS wallet_positions (
                 wallet_address TEXT PRIMARY KEY,
                 slot INTEGER,
@@ -852,6 +859,96 @@ impl SignatureStore {
         Ok(rows.collect::<Result<Vec<String>, _>>()?)
     }
 
+
+    pub fn history_backfill_state(
+        &self,
+        wallet: &str,
+    ) -> Result<Option<(Option<String>, usize, bool)>, SignatureStoreError> {
+        Self::validate_wallet(wallet)?;
+        let connection = self.connect()?;
+        let row = connection
+            .query_row(
+                "SELECT cursor_signature,signatures_count,completed
+                 FROM wallet_history_backfills WHERE wallet_address=?1",
+                [wallet],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        Ok(row.map(|(cursor, count, completed)| {
+            (
+                cursor,
+                usize::try_from(count).unwrap_or(0),
+                completed != 0,
+            )
+        }))
+    }
+
+    /// Initialize the one-time bounded History backfill. Existing state is never reset.
+    pub fn start_history_backfill(
+        &self,
+        wallet: &str,
+        cursor_signature: Option<&str>,
+    ) -> Result<bool, SignatureStoreError> {
+        Self::validate_wallet(wallet)?;
+        if let Some(signature) = cursor_signature {
+            Self::validate_signature(signature)?;
+        }
+        let connection = self.connect()?;
+        let changed = connection.execute(
+            "INSERT OR IGNORE INTO wallet_history_backfills(
+                wallet_address,cursor_signature,signatures_count,completed
+             ) VALUES(?1,?2,0,?3)",
+            params![wallet, cursor_signature, i64::from(cursor_signature.is_none())],
+        )?;
+        Ok(changed == 1)
+    }
+
+    /// Persist progress after each page so a provider outage or process restart resumes
+    /// from the next signature instead of re-reading an unbounded historical range.
+    pub fn advance_history_backfill(
+        &self,
+        wallet: &str,
+        cursor_signature: Option<&str>,
+        scanned_count: usize,
+        completed: bool,
+    ) -> Result<(), SignatureStoreError> {
+        Self::validate_wallet(wallet)?;
+        if let Some(signature) = cursor_signature {
+            Self::validate_signature(signature)?;
+        }
+        let scanned_count = i64::try_from(scanned_count).map_err(|_| {
+            SignatureStoreError::InvalidInput("History scan count is out of range.".to_string())
+        })?;
+        if !(0..=1_000).contains(&scanned_count) {
+            return Err(SignatureStoreError::InvalidInput(
+                "History scan count must be between 0 and 1000.".to_string(),
+            ));
+        }
+        let connection = self.connect()?;
+        let changed = connection.execute(
+            "UPDATE wallet_history_backfills
+             SET cursor_signature=?2,
+                 signatures_count=MIN(1000,signatures_count+?3),
+                 completed=CASE
+                   WHEN ?4=1 OR signatures_count+?3>=1000 THEN 1
+                   ELSE 0
+                 END,
+                 updated_at=CURRENT_TIMESTAMP
+             WHERE wallet_address=?1",
+            params![wallet, cursor_signature, scanned_count, i64::from(completed)],
+        )?;
+        if changed != 1 {
+            return Err(SignatureStoreError::NotFound);
+        }
+        Ok(())
+    }
+
     pub fn get_position(
         &self,
         wallet: &str,
@@ -1043,6 +1140,49 @@ mod tests {
             .pending_signatures_for_lane(WALLET, "history", 10)
             .unwrap()
             .is_empty());
+    }
+
+
+    #[test]
+    fn history_backfill_progress_survives_restart_and_stops_at_one_thousand() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history-backfill.db");
+        let cursor_a = SIGNATURE;
+        let cursor_b = "1111111111111111111111111111111111111111111111111111111111111112";
+        {
+            let store = SignatureStore::open(&path).unwrap();
+            assert!(store.start_history_backfill(WALLET, Some(cursor_a)).unwrap());
+            assert!(!store.start_history_backfill(WALLET, Some(cursor_b)).unwrap());
+            store
+                .advance_history_backfill(WALLET, Some(cursor_b), 600, false)
+                .unwrap();
+        }
+        let restarted = SignatureStore::open(&path).unwrap();
+        assert_eq!(
+            restarted.history_backfill_state(WALLET).unwrap(),
+            Some((Some(cursor_b.to_string()), 600, false))
+        );
+        restarted
+            .advance_history_backfill(WALLET, Some(cursor_b), 500, false)
+            .unwrap();
+        assert_eq!(
+            restarted.history_backfill_state(WALLET).unwrap(),
+            Some((Some(cursor_b.to_string()), 1_000, true))
+        );
+        assert!(!restarted
+            .start_history_backfill(WALLET, Some(cursor_a))
+            .unwrap());
+    }
+
+    #[test]
+    fn empty_history_backfill_starts_completed() {
+        let dir = tempdir().unwrap();
+        let store = SignatureStore::open(dir.path().join("empty-backfill.db")).unwrap();
+        assert!(store.start_history_backfill(WALLET, None).unwrap());
+        assert_eq!(
+            store.history_backfill_state(WALLET).unwrap(),
+            Some((None, 0, true))
+        );
     }
 
     #[test]

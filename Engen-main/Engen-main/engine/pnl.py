@@ -22,6 +22,14 @@ def decimal_value(value, field, *, allow_zero=False):
     return number
 
 
+def roi_percentage(pnl, cost_basis):
+    """Return percentage ROI against a positive, exact cost-basis denominator."""
+    basis = Decimal(str(cost_basis))
+    if not basis.is_finite() or basis <= 0:
+        return None
+    return str(Decimal(str(pnl)) * Decimal("100") / basis)
+
+
 def parse_timestamp(value):
     if not isinstance(value, str) or not value.strip():
         raise ValueError("Timestamp must be a timezone-aware ISO-8601 string.")
@@ -225,17 +233,23 @@ class AverageCostLedger:
     def unrealized_pnl(self, mint, market_price, *, max_age_seconds=60, now=None):
         pos = self._position(mint)
         if not isinstance(market_price, MarketPrice) or market_price.mint != mint:
-            return {"pnl": None, "status": "price_unavailable", "currency": self.currency}
+            return {"pnl": None, "roi_pct": None, "status": "price_unavailable",
+                    "currency": self.currency}
         age = market_price.age_seconds(now)
         if age > max_age_seconds:
-            return {"pnl": None, "status": "stale_price", "currency": self.currency,
-                    "price_age_seconds": age, "price_source": market_price.source}
-        if not pos["basis_complete"]:
-            return {"pnl": None, "status": "unknown_cost_basis", "currency": self.currency,
-                    "price_age_seconds": age, "price_source": market_price.source}
+            return {"pnl": None, "roi_pct": None, "status": "stale_price",
+                    "currency": self.currency, "price_age_seconds": age,
+                    "price_source": market_price.source}
         value = pos["quantity"] * market_price.price
+        if not pos["basis_complete"]:
+            return {"pnl": None, "roi_pct": None, "market_value": str(value),
+                    "cost_basis": None, "status": "unknown_cost_basis",
+                    "currency": self.currency, "price_age_seconds": age,
+                    "price_source": market_price.source,
+                    "price_timestamp": market_price.observed_at}
         pnl = value - pos["cost_basis"]
         return {"pnl": str(pnl), "market_value": str(value), "cost_basis": str(pos["cost_basis"]),
+                "roi_pct": roi_percentage(pnl, pos["cost_basis"]),
                 "currency": self.currency, "status": "calculated",
                 "price_age_seconds": age, "price_source": market_price.source,
                 "price_timestamp": market_price.observed_at}
@@ -273,16 +287,24 @@ def realized_pnl_from_fills(fills):
                 ledger.deposit(mint, sold - tracked, unit_price=None, timestamp=timestamp)
             event = ledger.sell(mint, quantity, price, fee=fee, network_fee=network,
                                 timestamp=timestamp)
-            item = by_mint.setdefault(mint, {"pnl": Decimal("0"), "complete": True})
-            if event["realized_pnl"] is None:
+            item = by_mint.setdefault(mint, {
+                "pnl": Decimal("0"), "cost_basis_sold": Decimal("0"), "complete": True
+            })
+            if event["realized_pnl"] is None or event["allocated_cost_basis"] is None:
                 item["complete"] = False
             else:
                 item["pnl"] += Decimal(event["realized_pnl"])
+                item["cost_basis_sold"] += Decimal(event["allocated_cost_basis"])
         else:
             raise ValueError("Fill side must be BUY or SELL.")
     return {
-        mint: {"pnl": str(item["pnl"]) if item["complete"] else None,
-               "status": "calculated" if item["complete"] else "unknown_cost_basis",
-               "currency": PORTFOLIO_CURRENCY}
+        mint: {
+            "pnl": str(item["pnl"]) if item["complete"] else None,
+            "cost_basis_sold": str(item["cost_basis_sold"]) if item["complete"] else None,
+            "roi_pct": roi_percentage(item["pnl"], item["cost_basis_sold"])
+                if item["complete"] else None,
+            "status": "calculated" if item["complete"] else "unknown_cost_basis",
+            "currency": PORTFOLIO_CURRENCY,
+        }
         for mint, item in sorted(by_mint.items())
     }

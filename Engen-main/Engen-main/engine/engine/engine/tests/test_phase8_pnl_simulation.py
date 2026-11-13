@@ -47,6 +47,16 @@ class PnLTests(unittest.TestCase):
         self.assertEqual(result["price_source"], "test-price-feed")
         self.assertEqual(result["price_age_seconds"], 0)
 
+    def test_unrealized_roi_uses_remaining_cost_basis_and_loss_is_negative(self):
+        ledger = AverageCostLedger()
+        ledger.buy(MINT, "2", "10", fee="2")
+        result = ledger.unrealized_pnl(MINT, price("13.2"), now=NOW)
+        self.assertEqual(Decimal(result["pnl"]), Decimal("4.4"))
+        self.assertEqual(Decimal(result["cost_basis"]), Decimal("22"))
+        self.assertEqual(Decimal(result["roi_pct"]), Decimal("20"))
+        loss = ledger.unrealized_pnl(MINT, price("9"), now=NOW)
+        self.assertEqual(Decimal(loss["roi_pct"]), Decimal("-18.18181818181818181818181818"))
+
     def test_missing_price_does_not_become_zero_valuation(self):
         ledger = AverageCostLedger()
         ledger.buy(MINT, "3", "4")
@@ -262,6 +272,31 @@ class PaperSimulatorTests(unittest.TestCase):
             self.assertEqual(len(restarted.fills), 1)
             self.assertEqual(self.create(restarted)["status"], "DUPLICATE")
 
+    def test_realized_roi_uses_cost_basis_allocated_to_sold_units(self):
+        fills = [
+            {"side": "BUY", "asset_mint": MINT, "quantity": "2",
+             "execution_price": "10", "fee": "2", "network_cost": "0"},
+            {"side": "SELL", "asset_mint": MINT, "quantity": "1",
+             "execution_price": "16.5", "fee": "1.65", "network_cost": "0"},
+        ]
+        from engine.pnl import realized_pnl_from_fills
+        result = realized_pnl_from_fills(fills)[MINT]
+        self.assertEqual(Decimal(result["pnl"]), Decimal("3.85"))
+        self.assertEqual(Decimal(result["cost_basis_sold"]), Decimal("11"))
+        self.assertEqual(Decimal(result["roi_pct"]), Decimal("35"))
+
+    def test_unknown_realized_basis_has_no_roi(self):
+        fills = [{
+            "side": "SELL", "asset_mint": MINT, "quantity": "1",
+            "execution_price": "15", "fee": "0", "network_cost": "0",
+        }]
+        from engine.pnl import realized_pnl_from_fills
+        result = realized_pnl_from_fills(fills)[MINT]
+        self.assertIsNone(result["pnl"])
+        self.assertIsNone(result["cost_basis_sold"])
+        self.assertIsNone(result["roi_pct"])
+        self.assertEqual(result["status"], "unknown_cost_basis")
+
     def test_realized_pnl_is_reproducible_from_fills_after_restart(self):
         with tempfile.TemporaryDirectory() as directory:
             db_path = Path(directory) / "simulator.db"
@@ -275,6 +310,9 @@ class PaperSimulatorTests(unittest.TestCase):
             summary = simulator.pnl_summary()
             self.assertEqual(Decimal(summary["realized_by_mint"][MINT]["pnl"]), Decimal("5"))
             self.assertEqual(summary["realized_by_mint"][MINT]["status"], "calculated")
+            self.assertEqual(Decimal(summary["realized_by_mint"][MINT]["cost_basis_sold"]), Decimal("10"))
+            self.assertEqual(Decimal(summary["realized_by_mint"][MINT]["roi_pct"]), Decimal("50"))
+            self.assertEqual(Decimal(summary["realized_roi_pct"]), Decimal("50"))
             self.assertIn("unavailable", summary["unrealized_status"])
 
             restarted = PaperSimulator({QUOTE: "1"}, db_path=db_path)

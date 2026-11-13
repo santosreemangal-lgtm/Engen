@@ -365,25 +365,50 @@ class PaperSimulator:
         self.pnl_events = events
 
     def pnl_summary(self):
+        from engine.pnl import roi_percentage
+
         by_mint = {}
         for event in self.pnl_events:
             if event["type"] != "SELL":
                 continue
             mint = event["mint"]
-            item = by_mint.setdefault(mint, {"realized_pnl": Decimal("0"), "complete": True,
-                                               "currency": "USD"})
-            if event["realized_pnl"] is None:
+            item = by_mint.setdefault(mint, {
+                "realized_pnl": Decimal("0"),
+                "cost_basis_sold": Decimal("0"),
+                "complete": True,
+                "currency": "USD",
+            })
+            if event["realized_pnl"] is None or event["allocated_cost_basis"] is None:
                 item["complete"] = False
             else:
                 item["realized_pnl"] += Decimal(event["realized_pnl"])
+                item["cost_basis_sold"] += Decimal(event["allocated_cost_basis"])
         realized = {
-            mint: {"pnl": str(item["realized_pnl"]) if item["complete"] else None,
-                   "status": "calculated" if item["complete"] else "unknown_cost_basis",
-                   "currency": item["currency"]}
+            mint: {
+                "pnl": str(item["realized_pnl"]) if item["complete"] else None,
+                "cost_basis_sold": str(item["cost_basis_sold"]) if item["complete"] else None,
+                "roi_pct": roi_percentage(item["realized_pnl"], item["cost_basis_sold"])
+                    if item["complete"] else None,
+                "status": "calculated" if item["complete"] else "unknown_cost_basis",
+                "currency": item["currency"],
+            }
             for mint, item in sorted(by_mint.items())
         }
+        has_sales = bool(realized)
+        complete = all(item["status"] == "calculated" for item in realized.values())
+        total_pnl = sum((item["realized_pnl"] for item in by_mint.values()), Decimal("0"))
+        total_basis = sum((item["cost_basis_sold"] for item in by_mint.values()), Decimal("0"))
+        realized_status = "no_realized_sells" if not has_sales else (
+            "calculated" if complete else "incomplete_cost_basis"
+        )
         return {"cost_basis_method": "average_cost", "currency": "USD",
                 "realized_by_mint": realized,
+                "realized_pnl": str(total_pnl) if not has_sales or complete else None,
+                "realized_cost_basis": str(total_basis) if not has_sales or complete else None,
+                "realized_roi_pct": roi_percentage(total_pnl, total_basis)
+                    if has_sales and complete else None,
+                "realized_status": realized_status,
+                "unrealized_roi_pct": None,
                 "unrealized_status": "unavailable_no_verified_fresh_market_price",
                 "unrealized_note": "No verified market-price provider is connected to the simulator."}
 

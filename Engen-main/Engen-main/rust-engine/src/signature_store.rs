@@ -176,6 +176,8 @@ impl SignatureStore {
             ("error_message", "TEXT"),
             ("claim_owner", "TEXT"),
             ("claim_expires_at", "INTEGER"),
+            ("queue_lane", "TEXT NOT NULL DEFAULT 'history'"),
+            ("signature_observation_json", "TEXT"),
         ];
         for (column, definition) in migrations {
             if !columns.contains(column) {
@@ -269,8 +271,26 @@ impl SignatureStore {
         signature: &str,
         slot: Option<u64>,
     ) -> Result<bool, SignatureStoreError> {
+        self.save_in_lane(wallet, signature, slot, "fresh", None)
+    }
+
+    /// Save a first-seen signature together with its source queue and RPC observation.
+    /// Existing lane assignments are never downgraded from Fresh to History.
+    pub fn save_in_lane(
+        &self,
+        wallet: &str,
+        signature: &str,
+        slot: Option<u64>,
+        lane: &str,
+        observation: Option<&Value>,
+    ) -> Result<bool, SignatureStoreError> {
         Self::validate_wallet(wallet)?;
         Self::validate_signature(signature)?;
+        if !matches!(lane, "fresh" | "history") {
+            return Err(SignatureStoreError::InvalidInput(
+                "Signature queue lane must be fresh or history.".to_string(),
+            ));
+        }
         let slot = match slot {
             Some(value) if value > i64::MAX as u64 => {
                 return Err(SignatureStoreError::InvalidInput(
@@ -280,12 +300,24 @@ impl SignatureStore {
             Some(value) => Some(value as i64),
             None => None,
         };
+        let observation_json = observation.map(serde_json::to_string).transpose()?;
         let mut connection = self.connect()?;
         let transaction = Self::transaction(&mut connection)?;
         let inserted = transaction.execute(
-            "INSERT OR IGNORE INTO seen_signatures(wallet_address,signature,status,slot) VALUES(?1,?2,'pending',?3)",
-            params![wallet, signature, slot],
+            "INSERT OR IGNORE INTO seen_signatures(
+                wallet_address,signature,status,slot,queue_lane,signature_observation_json
+             ) VALUES(?1,?2,'pending',?3,?4,?5)",
+            params![wallet, signature, slot, lane, observation_json],
         )?;
+        if inserted == 0 {
+            transaction.execute(
+                "UPDATE seen_signatures
+                 SET signature_observation_json=COALESCE(?3,signature_observation_json),
+                     slot=COALESCE(?4,slot)
+                 WHERE wallet_address=?1 AND signature=?2",
+                params![wallet, signature, observation_json, slot],
+            )?;
+        }
         transaction.commit()?;
         Ok(inserted == 1)
     }
@@ -303,7 +335,7 @@ impl SignatureStore {
             let signature = signature.as_ref();
             Self::validate_signature(signature)?;
             inserted += transaction.execute(
-                "INSERT OR IGNORE INTO seen_signatures(wallet_address,signature,status) VALUES(?1,?2,'pending')",
+                "INSERT OR IGNORE INTO seen_signatures(wallet_address,signature,status,queue_lane) VALUES(?1,?2,'pending','fresh')",
                 params![wallet, signature],
             )?;
         }
@@ -695,6 +727,108 @@ impl SignatureStore {
         ).optional()?)
     }
 
+
+    pub fn pending_count_for_lane(
+        &self,
+        wallet: &str,
+        lane: &str,
+    ) -> Result<usize, SignatureStoreError> {
+        Self::validate_wallet(wallet)?;
+        if !matches!(lane, "fresh" | "history") {
+            return Err(SignatureStoreError::InvalidInput(
+                "Signature queue lane must be fresh or history.".to_string(),
+            ));
+        }
+        let connection = self.connect()?;
+        let count: i64 = connection.query_row(
+            "SELECT COUNT(*) FROM seen_signatures
+             WHERE wallet_address=?1 AND queue_lane=?2
+               AND status IN ('pending','processing')",
+            params![wallet, lane],
+            |row| row.get(0),
+        )?;
+        Ok(usize::try_from(count).unwrap_or(0))
+    }
+
+    pub fn pending_signatures_for_lane(
+        &self,
+        wallet: &str,
+        lane: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, SignatureStoreError> {
+        Self::validate_wallet(wallet)?;
+        if !matches!(lane, "fresh" | "history") || limit == 0 || limit > 10_000 {
+            return Err(SignatureStoreError::InvalidInput(
+                "Invalid queue lane or pending-signature limit.".to_string(),
+            ));
+        }
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT signature FROM seen_signatures
+             WHERE wallet_address=?1 AND queue_lane=?2
+               AND (status='pending'
+                    OR (status='processing' AND
+                        (claim_expires_at IS NULL OR
+                         claim_expires_at<=CAST(strftime('%s','now') AS INTEGER))))
+             ORDER BY first_seen_at ASC LIMIT ?3"
+        )?;
+        let rows = statement.query_map(params![wallet, lane, limit as i64], |row| row.get(0))?;
+        Ok(rows.collect::<Result<Vec<String>, _>>()?)
+    }
+
+    /// Restore signature-list metadata after a process restart so timestamp/finality
+    /// decisions are identical to the original discovery pass.
+    pub fn pending_signature_observations(
+        &self,
+        wallet: &str,
+        lane: &str,
+        limit: usize,
+    ) -> Result<Vec<Value>, SignatureStoreError> {
+        Self::validate_wallet(wallet)?;
+        if !matches!(lane, "fresh" | "history") || limit == 0 || limit > 10_000 {
+            return Err(SignatureStoreError::InvalidInput(
+                "Invalid queue lane or pending-signature limit.".to_string(),
+            ));
+        }
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT signature,slot,signature_observation_json
+             FROM seen_signatures
+             WHERE wallet_address=?1 AND queue_lane=?2
+               AND (status='pending'
+                    OR (status='processing' AND
+                        (claim_expires_at IS NULL OR
+                         claim_expires_at<=CAST(strftime('%s','now') AS INTEGER))))
+             ORDER BY first_seen_at ASC LIMIT ?3"
+        )?;
+        let rows = statement.query_map(params![wallet, lane, limit as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        })?;
+        let mut observations = Vec::new();
+        for row in rows {
+            let (signature, slot, encoded) = row?;
+            let mut observation = match encoded {
+                Some(encoded) => serde_json::from_str::<Value>(&encoded)?,
+                None => serde_json::json!({}),
+            };
+            if !observation.is_object() {
+                observation = serde_json::json!({});
+            }
+            observation["signature"] = Value::String(signature);
+            if observation.get("slot").is_none_or(Value::is_null) {
+                if let Some(slot) = slot {
+                    observation["slot"] = Value::from(slot);
+                }
+            }
+            observations.push(observation);
+        }
+        Ok(observations)
+    }
+
     pub fn pending_signatures(
         &self,
         wallet: &str,
@@ -844,6 +978,45 @@ mod tests {
             }
         }
         assert_eq!(claimed, 1);
+    }
+
+
+    #[test]
+    fn fresh_and_history_rows_are_separate_and_restart_keeps_signature_observation() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("lanes.db");
+        let store = SignatureStore::open(&path).unwrap();
+        let fresh = SIGNATURE;
+        let history = "1111111111111111111111111111111111111111111111111111111111111112";
+        let observation = serde_json::json!({
+            "signature": fresh,
+            "slot": 90,
+            "blockTime": 1_760_000_000,
+            "confirmationStatus": "finalized",
+            "err": null
+        });
+        assert!(store.save_in_lane(WALLET, fresh, Some(90), "fresh", Some(&observation)).unwrap());
+        assert!(store.save_in_lane(WALLET, history, Some(80), "history", None).unwrap());
+        assert_eq!(store.pending_signatures_for_lane(WALLET, "fresh", 10).unwrap(), vec![fresh.to_string()]);
+        assert_eq!(store.pending_signatures_for_lane(WALLET, "history", 10).unwrap(), vec![history.to_string()]);
+        assert_eq!(store.pending_count_for_lane(WALLET, "fresh").unwrap(), 1);
+        drop(store);
+
+        let restarted = SignatureStore::open(&path).unwrap();
+        let restored = restarted.pending_signature_observations(WALLET, "fresh", 10).unwrap();
+        assert_eq!(restored[0]["blockTime"], 1_760_000_000);
+        assert_eq!(restored[0]["confirmationStatus"], "finalized");
+        assert_eq!(restored[0]["slot"], 90);
+    }
+
+    #[test]
+    fn existing_fresh_assignment_is_not_demoted_by_history_discovery() {
+        let dir = tempdir().unwrap();
+        let store = SignatureStore::open(dir.path().join("lane-promotion.db")).unwrap();
+        assert!(store.save_in_lane(WALLET, SIGNATURE, Some(10), "fresh", None).unwrap());
+        assert!(!store.save_in_lane(WALLET, SIGNATURE, Some(10), "history", None).unwrap());
+        assert_eq!(store.pending_signatures_for_lane(WALLET, "fresh", 10).unwrap(), vec![SIGNATURE.to_string()]);
+        assert!(store.pending_signatures_for_lane(WALLET, "history", 10).unwrap().is_empty());
     }
 
     #[test]

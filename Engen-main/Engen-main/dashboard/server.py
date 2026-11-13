@@ -440,11 +440,17 @@ def load_profile_paper_simulation_report(profile_id):
                 if mint == "USD" or quantity == 0:
                     continue
                 market_price = fetch_market_price(mint)
-                if market_price is None or not market_price.is_fresh(max_age_seconds=60):
+                if market_price is None:
+                    unrealized_values.append(None)
+                    valuation_notes.append("price_unavailable:" + mint)
+                    continue
+                # Retain stale observations so the holdings view can distinguish
+                # stale data from a missing provider response without valuing it.
+                market_prices[mint] = market_price
+                if not market_price.is_fresh(max_age_seconds=60):
                     unrealized_values.append(None)
                     valuation_notes.append("price_unavailable_or_stale:" + mint)
                     continue
-                market_prices[mint] = market_price
                 ledger_position = ledger.snapshot(mint)
                 if Decimal(ledger_position["quantity"]) != quantity:
                     unrealized_values.append(None)

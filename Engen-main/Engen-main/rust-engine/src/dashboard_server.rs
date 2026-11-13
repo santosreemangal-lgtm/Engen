@@ -1815,6 +1815,21 @@ fn merge_legacy_profile_paper_report(mut report: Value, path: &Path) -> Result<V
         report["cash_balance_usd"] = legacy_cash.clone();
         report["available_balance_usd"] = legacy_cash.clone();
         report["available_balance"] = legacy_cash;
+    } else {
+        let simulator_cash = simulator_balances.get("USD").cloned().unwrap_or(Value::Null);
+        let available = report
+            .get("available_balance_usd")
+            .filter(|value| !value.is_null())
+            .cloned()
+            .or_else(|| {
+                report
+                    .get("available_balances")
+                    .and_then(|balances| balances.get("USD"))
+                    .cloned()
+            })
+            .unwrap_or(simulator_cash);
+        report["available_balance_usd"] = available.clone();
+        report["available_balance"] = available;
     }
 
     let mut orders = report

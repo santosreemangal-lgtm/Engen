@@ -252,7 +252,9 @@ impl SolanaRpcClient {
     /// Fetch a block timestamp from a public slot; null means the provider has no timestamp yet.
     pub fn get_block_time(&self, slot: u64) -> Result<Option<i64>, SolanaRpcError> {
         if slot > i64::MAX as u64 {
-            return Err(SolanaRpcError::InvalidInput("Slot is out of range.".to_string()));
+            return Err(SolanaRpcError::InvalidInput(
+                "Slot is out of range.".to_string(),
+            ));
         }
         let value = self.request(ReadOnlyMethod::GetBlockTime, json!([slot]), 7)?;
         parse_block_time(value)
@@ -481,10 +483,22 @@ mod tests {
     #[test]
     fn block_time_response_is_parsed_without_fabricating_missing_values() {
         assert_eq!(parse_block_time(Value::Null).unwrap(), None);
-        assert_eq!(parse_block_time(json!(1_760_000_000)).unwrap(), Some(1_760_000_000));
-        assert!(matches!(parse_block_time(json!(0)), Err(SolanaRpcError::InvalidResponse)));
-        assert!(matches!(parse_block_time(json!(-1)), Err(SolanaRpcError::InvalidResponse)));
-        assert!(matches!(parse_block_time(json!("1760000000")), Err(SolanaRpcError::InvalidResponse)));
+        assert_eq!(
+            parse_block_time(json!(1_760_000_000)).unwrap(),
+            Some(1_760_000_000)
+        );
+        assert!(matches!(
+            parse_block_time(json!(0)),
+            Err(SolanaRpcError::InvalidResponse)
+        ));
+        assert!(matches!(
+            parse_block_time(json!(-1)),
+            Err(SolanaRpcError::InvalidResponse)
+        ));
+        assert!(matches!(
+            parse_block_time(json!("1760000000")),
+            Err(SolanaRpcError::InvalidResponse)
+        ));
     }
 
     #[test]

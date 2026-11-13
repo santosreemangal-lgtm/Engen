@@ -453,8 +453,17 @@ pub fn process_new_signatures(
                         "trade_signal".to_string(),
                         unknown_signal("Source blockTime could not be recovered; no copy candidate is permitted."),
                     );
-                    object.insert("metadata_status".to_string(), Value::String("block_time_unavailable".to_string()));
-                    object.insert("error".to_string(), Value::String("Source blockTime is missing; retry or manual review is required.".to_string()));
+                    object.insert(
+                        "metadata_status".to_string(),
+                        Value::String("block_time_unavailable".to_string()),
+                    );
+                    object.insert(
+                        "error".to_string(),
+                        Value::String(
+                            "Source blockTime is missing; retry or manual review is required."
+                                .to_string(),
+                        ),
+                    );
                     object.insert("retryable".to_string(), Value::Bool(status == "pending"));
                     object.insert("processing_status".to_string(), Value::String(status));
                 }

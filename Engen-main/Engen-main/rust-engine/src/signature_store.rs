@@ -341,7 +341,6 @@ impl SignatureStore {
         Ok(changed == 1)
     }
 
-
     /// Atomically claim one pending signature. Expired leases are reclaimable after a crash.
     /// The injected timestamp makes lease expiry deterministic in tests.
     pub fn claim_signature(
@@ -772,37 +771,58 @@ mod tests {
     const WALLET: &str = "11111111111111111111111111111111";
     const SIGNATURE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 
-
     #[test]
     fn atomic_claim_prevents_duplicate_workers_and_recovers_expired_lease_after_restart() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("claims.db");
         let store = SignatureStore::open(&path).unwrap();
         store.save(WALLET, SIGNATURE, Some(22)).unwrap();
-        assert!(store.claim_signature(WALLET, SIGNATURE, "worker-a", 1_000, 30).unwrap());
-        assert!(!store.claim_signature(WALLET, SIGNATURE, "worker-b", 1_001, 30).unwrap());
-        assert!(store.release_signature_claim(WALLET, SIGNATURE, "worker-a").unwrap());
-        assert!(store.claim_signature(WALLET, SIGNATURE, "worker-b", 1_002, 30).unwrap());
-        assert!(!store.mark_claimed_processed(WALLET, SIGNATURE, "worker-a").unwrap());
-        assert!(store.mark_claimed_processed(WALLET, SIGNATURE, "worker-b").unwrap());
-        assert_eq!(store.get_status(WALLET, SIGNATURE).unwrap().as_deref(), Some("processed"));
+        assert!(store
+            .claim_signature(WALLET, SIGNATURE, "worker-a", 1_000, 30)
+            .unwrap());
+        assert!(!store
+            .claim_signature(WALLET, SIGNATURE, "worker-b", 1_001, 30)
+            .unwrap());
+        assert!(store
+            .release_signature_claim(WALLET, SIGNATURE, "worker-a")
+            .unwrap());
+        assert!(store
+            .claim_signature(WALLET, SIGNATURE, "worker-b", 1_002, 30)
+            .unwrap());
+        assert!(!store
+            .mark_claimed_processed(WALLET, SIGNATURE, "worker-a")
+            .unwrap());
+        assert!(store
+            .mark_claimed_processed(WALLET, SIGNATURE, "worker-b")
+            .unwrap());
+        assert_eq!(
+            store.get_status(WALLET, SIGNATURE).unwrap().as_deref(),
+            Some("processed")
+        );
 
         let recovery_signature = "1111111111111111111111111111111111111111111111111111111111111112";
         store.save(WALLET, recovery_signature, Some(23)).unwrap();
-        assert!(store.claim_signature(WALLET, recovery_signature, "crashed-worker", 1_000, 10).unwrap());
+        assert!(store
+            .claim_signature(WALLET, recovery_signature, "crashed-worker", 1_000, 10)
+            .unwrap());
         let restarted = SignatureStore::open(&path).unwrap();
         assert_eq!(
             restarted.pending_signatures(WALLET, 10).unwrap(),
             vec![recovery_signature.to_string()]
         );
-        assert!(restarted.claim_signature(WALLET, recovery_signature, "recovery-worker", 2_000, 30).unwrap());
+        assert!(restarted
+            .claim_signature(WALLET, recovery_signature, "recovery-worker", 2_000, 30)
+            .unwrap());
     }
 
     #[test]
     fn concurrent_connections_claim_one_signature_exactly_once() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("concurrent-claims.db");
-        SignatureStore::open(&path).unwrap().save(WALLET, SIGNATURE, Some(33)).unwrap();
+        SignatureStore::open(&path)
+            .unwrap()
+            .save(WALLET, SIGNATURE, Some(33))
+            .unwrap();
         let barrier = Arc::new(Barrier::new(3));
         let mut workers = Vec::new();
         for owner in ["worker-a", "worker-b"] {
@@ -811,7 +831,9 @@ mod tests {
             workers.push(thread::spawn(move || {
                 let store = SignatureStore::open(path).unwrap();
                 barrier.wait();
-                store.claim_signature(WALLET, SIGNATURE, owner, 5_000, 30).unwrap()
+                store
+                    .claim_signature(WALLET, SIGNATURE, owner, 5_000, 30)
+                    .unwrap()
             }));
         }
         barrier.wait();

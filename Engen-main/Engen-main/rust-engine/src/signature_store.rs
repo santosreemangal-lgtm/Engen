@@ -902,7 +902,7 @@ impl SignatureStore {
             params![
                 wallet,
                 cursor_signature,
-                i64::from(cursor_signature.is_none())
+                if cursor_signature.is_none() { 1_i64 } else { 0_i64 }
             ],
         )?;
         Ok(changed == 1)
@@ -944,7 +944,7 @@ impl SignatureStore {
                 wallet,
                 cursor_signature,
                 scanned_count,
-                i64::from(completed)
+                if completed { 1_i64 } else { 0_i64 }
             ],
         )?;
         if changed != 1 {

@@ -242,19 +242,26 @@ impl CopySettings {
                 "trading_fee_bps must be an integer from 0 to 10000.".to_string(),
             ));
         }
-        for (name, value) in [
-            ("Base network fee", self.network_fee_usd.as_deref()),
-            ("Priority fee", self.priority_fee_usd.as_deref()),
-        ] {
-            if let Some(raw) = value {
-                let amount = decimal(raw, name)?;
-                if amount < 0 || amount > decimal("1000", "Fee limit")? {
-                    return Err(PaperCopyError::InvalidInput(
-                        "Network and priority fee overrides must be between 0 and 1000 USD per paper fill."
-                            .to_string(),
-                    ));
-                }
-            }
+        let base_network_fee = self
+            .network_fee_usd
+            .as_deref()
+            .map(|raw| decimal(raw, "Base network fee"))
+            .transpose()?
+            .unwrap_or_else(BigDecimal::zero);
+        let priority_fee = self
+            .priority_fee_usd
+            .as_deref()
+            .map(|raw| decimal(raw, "Priority fee"))
+            .transpose()?
+            .unwrap_or_else(BigDecimal::zero);
+        if base_network_fee < 0
+            || priority_fee < 0
+            || base_network_fee + priority_fee > decimal("1000", "Fee limit")?
+        {
+            return Err(PaperCopyError::InvalidInput(
+                "Combined network and priority fee overrides must be between 0 and 1000 USD per paper fill."
+                    .to_string(),
+            ));
         }
         Ok(())
     }

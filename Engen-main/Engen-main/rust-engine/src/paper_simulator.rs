@@ -1908,11 +1908,7 @@ impl PaperSimulator {
                 json!(self.available_balance(mint).to_string()),
             );
         }
-        let pnl = self.pnl_summary_with_market_prices(
-            market_prices,
-            max_price_age_seconds,
-            now,
-        )?;
+        let pnl = self.pnl_summary_with_market_prices(market_prices, max_price_age_seconds, now)?;
         let cash_balance = self
             .balances
             .get("USD")
@@ -3091,10 +3087,7 @@ mod tests {
             ("TOKEN_B".to_string(), "3".to_string()),
         ]);
         let sim = PaperSimulator::in_memory(&balances).unwrap();
-        let prices = BTreeMap::from([(
-            "TOKEN_A".to_string(),
-            mark_price("TOKEN_A", "12", now()),
-        )]);
+        let prices = BTreeMap::from([("TOKEN_A".to_string(), mark_price("TOKEN_A", "12", now()))]);
         let report = sim
             .report_with_market_prices(&prices, 60, Some(now()))
             .unwrap();
@@ -3103,7 +3096,10 @@ mod tests {
         assert_eq!(report["token_holdings"].as_array().unwrap().len(), 2);
         assert_eq!(report["token_holdings_value_usd"], Value::Null);
         assert_eq!(report["portfolio_value_usd"], Value::Null);
-        assert_eq!(report["portfolio_value_status"], "incomplete_market_valuation");
+        assert_eq!(
+            report["portfolio_value_status"],
+            "incomplete_market_valuation"
+        );
         assert_eq!(report["token_holdings"][0]["market_value_usd"], "24");
         assert_eq!(report["token_holdings"][1]["market_value_usd"], Value::Null);
         assert_eq!(report["token_holdings"][1]["status"], "price_unavailable");

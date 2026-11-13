@@ -498,11 +498,9 @@ pub fn queue_paper_orders_at(
             ) else {
                 continue;
             };
-            let unit_factor = BigDecimal::from_str(&format!(
-                "1{}",
-                "0".repeat(asset_change.decimals as usize)
-            ))
-            .unwrap_or_else(|_| BigDecimal::from(1));
+            let unit_factor =
+                BigDecimal::from_str(&format!("1{}", "0".repeat(asset_change.decimals as usize)))
+                    .unwrap_or_else(|_| BigDecimal::from(1));
             let pre_source = &pre_source_raw / &unit_factor;
             let post_source = &post_source_raw / &unit_factor;
 

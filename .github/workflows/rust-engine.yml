@@ -13,6 +13,7 @@ on:
       - ".github/workflows/rust-engine.yml"
       - "docs/RUST_ONLY_RUNTIME_MIGRATION.md"
       - "scripts/audit_rust_runtime_migration.sh"
+      - "scripts/run_engen_rust_dashboard.sh"
   push:
     branches:
       - "rewrite/rust-backend-20261109"
@@ -113,6 +114,18 @@ jobs:
           Path("/tmp/engen-dashboard.js").write_text(scripts[0], encoding="utf-8")
           PY
           node --check /tmp/engen-dashboard.js
+      - name: Rust-native dashboard launcher smoke test (no Python invocation)
+        working-directory: .
+        run: |
+          bash -n scripts/run_engen_rust_dashboard.sh
+          if grep -Eq '(^|[[:space:]])python(3)?([[:space:]]|$)' scripts/run_engen_rust_dashboard.sh; then
+            echo "Rust dashboard launcher must not invoke Python."
+            exit 1
+          fi
+          cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- --help | grep -F "engen-engine serve-dashboard"
+          cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- check-config > /tmp/engen-rust-config.json
+          grep -F '"live_trading_enabled": false' /tmp/engen-rust-config.json
+          grep -F '"signing_available": false' /tmp/engen-rust-config.json
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 

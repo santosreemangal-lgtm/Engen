@@ -3,6 +3,7 @@
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
+use bigdecimal::rounding::RoundingMode;
 use bigdecimal::BigDecimal;
 use chrono::{SecondsFormat, Utc};
 use num_traits::Zero;
@@ -349,7 +350,41 @@ pub fn queue_paper_orders_at(
     let started = Instant::now();
     let mut queued = Vec::new();
 
-    for result in results {
+    // Reserve in source chronology, not input or random-order-ID order. This is
+    // especially important when several partial SELLs are discovered in one scan.
+    let mut ordered_results: Vec<&Value> = results.iter().collect();
+    ordered_results.sort_by(|left, right| {
+        let left_slot = left
+            .get("signature_observation")
+            .and_then(|value| value.get("slot"))
+            .and_then(Value::as_u64)
+            .unwrap_or(u64::MAX);
+        let right_slot = right
+            .get("signature_observation")
+            .and_then(|value| value.get("slot"))
+            .and_then(Value::as_u64)
+            .unwrap_or(u64::MAX);
+        let left_time = left
+            .get("signature_observation")
+            .and_then(|value| value.get("block_time"))
+            .and_then(Value::as_i64)
+            .unwrap_or(i64::MAX);
+        let right_time = right
+            .get("signature_observation")
+            .and_then(|value| value.get("block_time"))
+            .and_then(Value::as_i64)
+            .unwrap_or(i64::MAX);
+        left_slot
+            .cmp(&right_slot)
+            .then_with(|| left_time.cmp(&right_time))
+            .then_with(|| {
+                left.get("signature")
+                    .and_then(Value::as_str)
+                    .cmp(&right.get("signature").and_then(Value::as_str))
+            })
+    });
+
+    for result in ordered_results {
         if !result.is_object() {
             continue;
         }
@@ -448,13 +483,10 @@ pub fn queue_paper_orders_at(
         let source_quantity = asset_amount.abs();
         let mut target_notional_usd: Option<BigDecimal> = None;
         let mut source_before: Option<BigDecimal> = None;
+        let mut sell_reservation_quantity: Option<BigDecimal> = None;
         let order_quantity;
         if side == "BUY" {
-            let virtual_usd = simulator
-                .balances()
-                .get("USD")
-                .cloned()
-                .unwrap_or_else(BigDecimal::zero);
+            let virtual_usd = simulator.available_balance("USD");
             if virtual_usd <= 0 {
                 continue;
             }
@@ -517,8 +549,24 @@ pub fn queue_paper_orders_at(
             if fraction <= 0 || fraction > 1 {
                 continue;
             }
+            let paper_available = simulator.available_balance(asset_mint);
+            if paper_available <= 0 {
+                continue;
+            }
+            let quantity_step = decimal(
+                &minimum_quantity_for_decimals(asset_change.decimals)?,
+                "Token quantity step",
+            )?;
+            let requested_quantity = paper_available * &fraction;
+            let whole_steps =
+                (&requested_quantity / &quantity_step).with_scale_round(0, RoundingMode::Down);
+            let reserved_quantity = whole_steps * &quantity_step;
+            if reserved_quantity < quantity_step {
+                continue;
+            }
             source_before = Some(pre_source);
-            order_quantity = "1".to_string();
+            order_quantity = raw_to_string(&reserved_quantity);
+            sell_reservation_quantity = Some(reserved_quantity);
         }
 
         let signal_id = format!("wallet-copy:{wallet_address}:{signature}");
@@ -530,6 +578,13 @@ pub fn queue_paper_orders_at(
         } else {
             None
         };
+        let reservation_amount = if side == "BUY" {
+            target_notional_usd.clone()
+        } else {
+            sell_reservation_quantity.clone()
+        };
+        let reservation_mint = if side == "BUY" { "USD" } else { asset_mint };
+
         let order = simulator.create_order(CreateOrderRequest {
             signal_id: &signal_id,
             side,
@@ -543,6 +598,8 @@ pub fn queue_paper_orders_at(
                 "target_notional_usd": target_notional_usd.as_ref().map(raw_to_string),
                 "target_budget_usd": target_notional_usd.as_ref().map(raw_to_string),
                 "target_budget_semantics":"ALL_IN_USD_BUDGET_INCLUDING_SLIPPAGE_FEES_AND_NETWORK_COST",
+                "reservation_mint":reservation_amount.as_ref().map(|_| reservation_mint),
+                "reservation_amount":reservation_amount.as_ref().map(raw_to_string),
                 "max_buy_usd": settings.max_buy_usd,
                 "asset_decimals": asset_change.decimals,
                 "minimum_order_quantity": minimum_quantity_for_decimals(asset_change.decimals)?,
@@ -564,7 +621,7 @@ pub fn queue_paper_orders_at(
                 "transaction_broadcast":false
             })),
         })?;
-        if result_status(&order) == "DUPLICATE" {
+        if result_status(&order) != "CREATED" {
             continue;
         }
         queued.push(json!({
@@ -680,52 +737,9 @@ where
             ));
             continue;
         }
-        if order.side == "SELL" {
-            let fraction = details
-                .get("source_sell_fraction")
-                .and_then(Value::as_str)
-                .and_then(|raw| BigDecimal::from_str(raw).ok());
-            let owned = simulator
-                .balances()
-                .get(&order.asset_mint)
-                .cloned()
-                .unwrap_or_else(BigDecimal::zero);
-            let Some(fraction) = fraction.filter(|value| *value > 0 && *value <= 1) else {
-                outcomes.push(outcome(
-                    Some(&order.order_id),
-                    signal_id,
-                    "WAITING_FOR_POSITION",
-                    Some("Source sell fraction is unavailable or invalid; no paper sell was executed."),
-                    started.elapsed().as_secs_f64() * 1_000.0,
-                ));
-                continue;
-            };
-            if owned <= 0 {
-                outcomes.push(outcome(
-                    Some(&order.order_id),
-                    signal_id,
-                    "WAITING_FOR_POSITION",
-                    Some("No copied token position is currently held; sell remains queued."),
-                    started.elapsed().as_secs_f64() * 1_000.0,
-                ));
-                continue;
-            }
-            let quantity = owned * fraction;
-            if simulator
-                .set_order_quantity(&order.order_id, &raw_to_string(&quantity))
-                .is_err()
-            {
-                outcomes.push(outcome(
-                    Some(&order.order_id),
-                    signal_id,
-                    "EXECUTION_ERROR",
-                    Some("Paper order quantity could not be updated."),
-                    started.elapsed().as_secs_f64() * 1_000.0,
-                ));
-                continue;
-            }
-        }
-
+        // SELL quantity is fixed at queue time and protected by its token
+        // reservation. Do not recalculate against a balance already reserved
+        // for other pending orders.
         let market_price = price_provider(&order.asset_mint);
         let Some(market_price) = market_price else {
             outcomes.push(outcome(

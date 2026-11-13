@@ -1383,13 +1383,13 @@ impl DashboardApp {
                 }
             };
             return match report_with_verified_market_prices(&simulator, Duration::from_secs(5)) {
-                Ok(report) => match merge_legacy_profile_paper_report(
-                    enrich_paper_report(report, &id),
-                    &path,
-                ) {
-                    Ok(report) => HttpResponse::json(200, report),
-                    Err(error) => HttpResponse::json(503, json!({"error":error})),
-                },
+                Ok(report) => {
+                    match merge_legacy_profile_paper_report(enrich_paper_report(report, &id), &path)
+                    {
+                        Ok(report) => HttpResponse::json(200, report),
+                        Err(error) => HttpResponse::json(503, json!({"error":error})),
+                    }
+                }
                 Err(_) => HttpResponse::json(503, json!({"error":"Paper report unavailable."})),
             };
         }
@@ -1783,9 +1783,8 @@ fn read_legacy_profile_paper_data(
             })
             .map_err(|_| "Legacy paper trades could not be read.".to_string())?;
         for row in rows {
-            orders.push(
-                row.map_err(|_| "Legacy paper trades contain an invalid row.".to_string())?,
-            );
+            orders
+                .push(row.map_err(|_| "Legacy paper trades contain an invalid row.".to_string())?);
         }
     }
     Ok((balances, orders))
@@ -1793,10 +1792,7 @@ fn read_legacy_profile_paper_data(
 
 /// Merge legacy PaperTrader history for display only. Legacy token balances without
 /// Rust-ledger basis/marks remain visible but force portfolio value to unavailable.
-fn merge_legacy_profile_paper_report(
-    mut report: Value,
-    path: &Path,
-) -> Result<Value, String> {
+fn merge_legacy_profile_paper_report(mut report: Value, path: &Path) -> Result<Value, String> {
     let (legacy_balances, legacy_orders) = read_legacy_profile_paper_data(path)?;
     let simulator_balances = report
         .get("balances")
@@ -1812,7 +1808,10 @@ fn merge_legacy_profile_paper_report(
     report["balances"] = Value::Object(merged_balances);
 
     if !simulator_has_usd {
-        let legacy_cash = legacy_balances.get("USD").cloned().unwrap_or_else(|| json!("0"));
+        let legacy_cash = legacy_balances
+            .get("USD")
+            .cloned()
+            .unwrap_or_else(|| json!("0"));
         report["cash_balance_usd"] = legacy_cash.clone();
         report["available_balance_usd"] = legacy_cash.clone();
         report["available_balance"] = legacy_cash;
@@ -1826,7 +1825,10 @@ fn merge_legacy_profile_paper_report(
     orders.extend(legacy_orders);
     orders.sort_by(|left, right| {
         let left_time = left.get("created_at").and_then(Value::as_str).unwrap_or("");
-        let right_time = right.get("created_at").and_then(Value::as_str).unwrap_or("");
+        let right_time = right
+            .get("created_at")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         right_time.cmp(left_time)
     });
     orders.truncate(100);

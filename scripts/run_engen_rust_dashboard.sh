@@ -5,7 +5,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_ROOT="$REPO_ROOT/Engen-main/Engen-main"
 MANIFEST="$APP_ROOT/rust-engine/Cargo.toml"
-RUST_BIN="$APP_ROOT/rust-engine/target/release/engen-engine"
+RUST_BIN="${ENGEN_RUST_BINARY:-$APP_ROOT/rust-engine/target/release/engen-engine}"
 
 if [[ ! -f "$MANIFEST" ]]; then
   printf 'Rust engine manifest not found: %s\n' "$MANIFEST" >&2

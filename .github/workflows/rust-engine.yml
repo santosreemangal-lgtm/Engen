@@ -127,6 +127,40 @@ jobs:
           cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- check-config > /tmp/engen-rust-config.json
           grep -F '"live_trading_enabled": false' /tmp/engen-rust-config.json
           grep -F '"signing_available": false' /tmp/engen-rust-config.json
+      - name: Rust dashboard launcher process E2E (localhost only)
+        working-directory: .
+        run: |
+          set -euo pipefail
+          TEMP_DATA="$(mktemp -d)"
+          export ENGEN_APP_ROOT="$GITHUB_WORKSPACE/Engen-main/Engen-main"
+          export PROFILE_STORE_DB="$TEMP_DATA/profiles.db"
+          export SIGNATURE_DB="$TEMP_DATA/signatures.db"
+          export PAPER_SIMULATOR_DB="$TEMP_DATA/paper_simulator.db"
+          export WALLETS_FILE="$TEMP_DATA/wallets.json"
+          export MONITOR_STATE_FILE="$TEMP_DATA/monitoring_state.json"
+          export PORT=18763
+          bash scripts/run_engen_rust_dashboard.sh >"$TEMP_DATA/server.log" 2>&1 &
+          SERVER_PID=$!
+          cleanup() {
+            kill "$SERVER_PID" 2>/dev/null || true
+            wait "$SERVER_PID" 2>/dev/null || true
+            rm -rf "$TEMP_DATA"
+          }
+          trap cleanup EXIT
+          READY=0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent "http://127.0.0.1:\${PORT}/" -o "$TEMP_DATA/index.html"; then
+              READY=1
+              break
+            fi
+            sleep 0.5
+          done
+          test "$READY" = "1"
+          grep -F "<html" "$TEMP_DATA/index.html"
+          curl --fail --silent "http://127.0.0.1:\${PORT}/api/wallets" > "$TEMP_DATA/wallets.json"
+          grep -F '"wallets":[]' "$TEMP_DATA/wallets.json"
+          curl --silent --show-error -D "$TEMP_DATA/headers.txt" -o /dev/null "http://127.0.0.1:\${PORT}/api/wallets"
+          grep -iF "Content-Security-Policy:" "$TEMP_DATA/headers.txt"
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 

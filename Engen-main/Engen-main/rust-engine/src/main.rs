@@ -186,6 +186,10 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 "rpc_configured": config.rpc_url.is_some(),
                 "rpc_timeout_seconds": config.rpc_timeout_seconds,
                 "rpc_retries": config.rpc_retries,
+                "paper_trading_fee_bps": config.paper_trading_fee_bps,
+                "paper_network_fee_usd": config.paper_network_fee_usd,
+                "paper_priority_fee_usd": config.paper_priority_fee_usd,
+                "paper_fee_currency": "USD",
                 "live_trading_enabled": false,
                 "signing_available": false,
                 "broadcast_available": false

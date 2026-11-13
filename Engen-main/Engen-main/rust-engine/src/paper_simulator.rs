@@ -1805,18 +1805,12 @@ mod tests {
                 BigDecimal::from_str(&fill.net_quote).unwrap(),
                 BigDecimal::from_str("21.2005").unwrap()
             );
-            assert_eq!(
-                sim.orders()[&order_id].details["trading_fee_bps"],
-                50
-            );
+            assert_eq!(sim.orders()[&order_id].details["trading_fee_bps"], 50);
             assert_eq!(
                 sim.orders()[&order_id].details["base_network_fee_usd"],
                 "0.25"
             );
-            assert_eq!(
-                sim.orders()[&order_id].details["priority_fee_usd"],
-                "0.75"
-            );
+            assert_eq!(sim.orders()[&order_id].details["priority_fee_usd"], "0.75");
         }
 
         let recovered = PaperSimulator::open(&path, &BTreeMap::new()).unwrap();
@@ -1843,10 +1837,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(result["status"], "REJECTED");
-        assert!(result["reason"]
-            .as_str()
-            .unwrap()
-            .contains("priority fee"));
+        assert!(result["reason"].as_str().unwrap().contains("priority fee"));
         assert_eq!(sim.reserved_balance("USD"), BigDecimal::zero());
         assert_eq!(sim.available_balance("USD"), BigDecimal::from(100));
         assert!(sim.fills().is_empty());

@@ -22,21 +22,47 @@ report_note() {
 printf '%s\n' 'Rust-only production runtime audit'
 printf 'Repository root: %s\n' "$ROOT"
 
-SERVER="$APP/dashboard/server.py"
-if [[ -f "$SERVER" ]]; then
-  report_blocker "Python dashboard server still exists at Engen-main/Engen-main/dashboard/server.py."
-  if grep -nE '^from dashboard\.(monitor_bridge|monitor_service)|^from engine\.(paper_copy_runner|paper_simulator|pnl|solana_public|market_data)' "$SERVER"; then
-    report_note "The dashboard entry point imports Python monitoring, paper-execution, P&L, RPC or market-data components."
+# Every known Python entry point or module still reached by the legacy
+# dashboard/Telegram/health-check runtime is a production blocker until
+# migrated or moved to an isolated reference-only location.
+PYTHON_PRODUCTION_PATHS=(
+  "main.py"
+  "Engen-main/Engen-main/main.py"
+  "Engen-main/Engen-main/dashboard/server.py"
+  "Engen-main/Engen-main/dashboard/monitor_bridge.py"
+  "Engen-main/Engen-main/dashboard/monitor_service.py"
+  "Engen-main/Engen-main/engine/telegram_bot.py"
+  "Engen-main/Engen-main/engine/paper_trading.py"
+  "Engen-main/Engen-main/engine/paper_simulator.py"
+  "Engen-main/Engen-main/engine/paper_copy_runner.py"
+  "Engen-main/Engen-main/engine/profile_store.py"
+  "Engen-main/Engen-main/engine/pnl.py"
+  "Engen-main/Engen-main/engine/market_data.py"
+  "Engen-main/Engen-main/engine/solana_public.py"
+  "Engen-main/Engen-main/engine/rpc_policy.py"
+  "Engen-main/Engen-main/engine/signature_store.py"
+  "Engen-main/Engen-main/engine/solana_validation.py"
+  "Engen-main/Engen-main/engine/transaction_analysis.py"
+  "Engen-main/Engen-main/engine/transaction_monitor.py"
+  "Engen-main/Engen-main/engine/transaction_processor.py"
+  "Engen-main/Engen-main/engine/wallet_monitor.py"
+  "Engen-main/Engen-main/engine/config.py"
+  "Engen-main/Engen-main/engine/health.py"
+  "Engen-main/Engen-main/engine/logger.py"
+)
+
+for relative in "\${PYTHON_PRODUCTION_PATHS[@]}"; do
+  absolute="$ROOT/$relative"
+  if [[ -f "$absolute" ]]; then
+    report_blocker "Python production path remains: $relative."
   fi
-else
-  report_note "Python dashboard server file is absent."
-fi
+done
 
 README="$APP/README.md"
 ROOT_README="$ROOT/README.md"
 for file in "$README" "$ROOT_README"; do
-  if [[ -f "$file" ]] && grep -nE 'python -m dashboard\.server|python[^[:alnum:]]+dashboard/server\.py' "$file"; then
-    report_blocker "A user-facing README still documents Python as the dashboard launcher: ${file#"$ROOT"/}."
+  if [[ -f "$file" ]] && grep -nE 'python -m dashboard\.server|python[^[:alnum:]]+dashboard/server\.py|python[^[:alnum:]]+main\.py|python[^[:alnum:]]+engine\.telegram_bot' "$file"; then
+    report_blocker "A user-facing README still documents a Python production launcher: \${file#"$ROOT"/}."
   fi
 done
 
@@ -58,15 +84,9 @@ if [[ ! -f "$LIB" ]] || ! grep -q 'pub mod dashboard_server' "$LIB"; then
   report_blocker "Rust library does not expose an integrated dashboard-server module."
 fi
 
-for module in \
-  "$APP/dashboard/monitor_bridge.py" \
-  "$APP/dashboard/monitor_service.py" \
-  "$APP/engine/paper_simulator.py" \
-  "$APP/engine/paper_copy_runner.py"; do
-  if [[ -f "$module" ]]; then
-    report_note "Python source still present (must be proven reference-only or removed after parity): ${module#"$ROOT"/}."
-  fi
-done
+if [[ -f "$APP/requirements.txt" ]]; then
+  report_note "Python requirements.txt remains; remove or split it only after all Python production consumers are migrated."
+fi
 
 printf '\nBlockers: %s | Notes: %s\n' "$blockers" "$notes"
 if (( blockers == 0 )); then

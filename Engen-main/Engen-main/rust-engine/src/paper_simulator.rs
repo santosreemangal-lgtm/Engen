@@ -1625,9 +1625,11 @@ impl PaperSimulator {
                         &fill.network_cost,
                         Some(&fill.created_at),
                     )?;
-                    let entry = realized
-                        .entry(fill.asset_mint.clone())
-                        .or_insert((BigDecimal::zero(), BigDecimal::zero(), true));
+                    let entry = realized.entry(fill.asset_mint.clone()).or_insert((
+                        BigDecimal::zero(),
+                        BigDecimal::zero(),
+                        true,
+                    ));
                     match (event.realized_pnl, event.allocated_cost_basis) {
                         (Some(value), Some(allocated_basis)) => {
                             entry.0 += BigDecimal::from_str(&value).map_err(|_| {
@@ -1843,14 +1845,12 @@ impl PaperSimulator {
         } else {
             None
         };
-        let unrealized_roi_pct = if has_open_positions
-            && all_pnl_calculated
-            && all_cost_basis_available
-        {
-            crate::pnl::roi_percentage(&total_pnl, &total_cost_basis)
-        } else {
-            None
-        };
+        let unrealized_roi_pct =
+            if has_open_positions && all_pnl_calculated && all_cost_basis_available {
+                crate::pnl::roi_percentage(&total_pnl, &total_cost_basis)
+            } else {
+                None
+            };
         let unrealized_status = if !has_open_positions {
             "no_open_positions"
         } else if all_pnl_calculated {

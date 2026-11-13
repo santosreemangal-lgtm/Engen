@@ -10,6 +10,7 @@ use reqwest::header::RETRY_AFTER;
 use serde_json::{json, Value};
 use thiserror::Error;
 
+use crate::monitor_scheduler::RateLimitBackoff;
 use crate::rpc_policy::{validate_rpc_timeout, validate_rpc_url, MAX_RPC_RETRIES};
 use crate::solana_validation::{
     is_valid_transaction_signature, require_solana_address, require_transaction_signature,
@@ -106,9 +107,16 @@ impl RpcConfig {
     }
 }
 
+#[derive(Debug, Default)]
+struct RpcRateLimitState {
+    backoff: RateLimitBackoff,
+    blocked_until: Option<Instant>,
+}
+
 pub struct SolanaRpcClient {
     config: RpcConfig,
     client: Client,
+    rate_limit_state: Mutex<RpcRateLimitState>,
 }
 
 impl SolanaRpcClient {
@@ -118,7 +126,11 @@ impl SolanaRpcClient {
             .timeout(config.timeout)
             .build()
             .map_err(|_| SolanaRpcError::Transport)?;
-        Ok(Self { config, client })
+        Ok(Self {
+            config,
+            client,
+            rate_limit_state: Mutex::new(RpcRateLimitState::default()),
+        })
     }
 
     pub fn request(
@@ -135,6 +147,7 @@ impl SolanaRpcClient {
         });
 
         for attempt in 0..=self.config.retries {
+            self.wait_for_rate_limit_cooldown();
             self.pace();
             let response = self
                 .client
@@ -151,11 +164,18 @@ impl SolanaRpcClient {
                             .get(RETRY_AFTER)
                             .and_then(|value| value.to_str().ok())
                             .and_then(parse_retry_after);
-                        let retryable = status.as_u16() == 429 || status.is_server_error();
-                        if !retryable || attempt >= self.config.retries {
+                        if status.as_u16() == 429 {
+                            // Keep the 429 cooldown active across separate calls on this client.
+                            self.register_rate_limit(retry_after);
+                            if attempt >= self.config.retries {
+                                return Err(SolanaRpcError::Http(429));
+                            }
+                            continue;
+                        }
+                        if !status.is_server_error() || attempt >= self.config.retries {
                             return Err(SolanaRpcError::Http(status.as_u16()));
                         }
-                        self.wait_before_retry(attempt, retry_after);
+                        self.wait_before_retry(attempt);
                         continue;
                     }
 
@@ -163,12 +183,16 @@ impl SolanaRpcClient {
                     let body = read_limited_body(response, content_length)?;
                     let retryable_provider_error = provider_error_is_retryable(&body);
                     match validate_response(body, request_id) {
-                        Ok(value) => return Ok(value),
-                        Err(SolanaRpcError::Provider(_code))
-                            if retryable_provider_error && attempt < self.config.retries =>
-                        {
-                            self.wait_before_retry(attempt, None);
-                            continue;
+                        Ok(value) => {
+                            self.reset_rate_limit();
+                            return Ok(value);
+                        }
+                        Err(SolanaRpcError::Provider(code)) if retryable_provider_error => {
+                            self.register_rate_limit(None);
+                            if attempt < self.config.retries {
+                                continue;
+                            }
+                            return Err(SolanaRpcError::Provider(code));
                         }
                         Err(error) => return Err(error),
                     }
@@ -178,7 +202,7 @@ impl SolanaRpcClient {
                     if !retryable || attempt >= self.config.retries {
                         return Err(SolanaRpcError::Transport);
                     }
-                    self.wait_before_retry(attempt, None);
+                    self.wait_before_retry(attempt);
                 }
             }
         }
@@ -332,20 +356,55 @@ impl SolanaRpcClient {
         *last = Some(Instant::now());
     }
 
-    fn wait_before_retry(&self, attempt: u8, retry_after: Option<Duration>) {
+    fn wait_before_retry(&self, attempt: u8) {
         let exponent = u32::from(attempt.min(16));
         let factor = 1_u32.checked_shl(exponent).unwrap_or(u32::MAX);
-        let backoff = self
+        let delay = self
             .config
             .backoff
             .saturating_mul(factor)
             .min(Duration::from_secs(MAX_BACKOFF_SECONDS));
-        let delay = retry_after
-            .unwrap_or(backoff)
-            .min(Duration::from_secs(MAX_BACKOFF_SECONDS));
         if !delay.is_zero() {
             thread::sleep(delay);
         }
+    }
+
+    fn register_rate_limit(&self, retry_after: Option<Duration>) -> Duration {
+        let mut state = self
+            .rate_limit_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let delay = state.backoff.on_rate_limited(retry_after);
+        state.blocked_until = Some(Instant::now() + delay);
+        delay
+    }
+
+    fn wait_for_rate_limit_cooldown(&self) {
+        loop {
+            let delay = {
+                let state = self
+                    .rate_limit_state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                state
+                    .blocked_until
+                    .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+                    .unwrap_or(Duration::ZERO)
+            };
+            if delay.is_zero() {
+                return;
+            }
+            thread::sleep(delay);
+        }
+    }
+
+    fn reset_rate_limit(&self) {
+        let mut state = self
+            .rate_limit_state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.backoff.on_success();
+        state.blocked_until = None;
     }
 }
 
@@ -499,6 +558,34 @@ mod tests {
             parse_block_time(json!("1760000000")),
             Err(SolanaRpcError::InvalidResponse)
         ));
+    }
+
+
+    #[test]
+    fn client_keeps_429_cooldown_across_requests_and_honors_retry_after() {
+        let client = SolanaRpcClient::new(RpcConfig {
+            endpoint: DEFAULT_RPC_URL.to_string(),
+            timeout: Duration::from_secs(1),
+            retries: 0,
+            backoff: Duration::from_millis(1),
+            min_interval: Duration::ZERO,
+        })
+        .unwrap();
+
+        assert_eq!(client.register_rate_limit(None), Duration::from_secs(30));
+        assert_eq!(
+            client.register_rate_limit(Some(Duration::from_secs(90))),
+            Duration::from_secs(90)
+        );
+        {
+            let state = client.rate_limit_state.lock().unwrap();
+            assert_eq!(state.backoff.current(), Duration::from_secs(90));
+            assert!(state.blocked_until.is_some());
+        }
+        client.reset_rate_limit();
+        let state = client.rate_limit_state.lock().unwrap();
+        assert_eq!(state.backoff.current(), Duration::ZERO);
+        assert!(state.blocked_until.is_none());
     }
 
     #[test]

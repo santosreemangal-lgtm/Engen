@@ -197,10 +197,8 @@ impl CopySettings {
                 Some(parsed)
             }
         };
-        let network_fee_usd =
-            optional_fee_usd(settings, "network_fee_usd", "Base network fee")?;
-        let priority_fee_usd =
-            optional_fee_usd(settings, "priority_fee_usd", "Priority fee")?;
+        let network_fee_usd = optional_fee_usd(settings, "network_fee_usd", "Base network fee")?;
+        let priority_fee_usd = optional_fee_usd(settings, "priority_fee_usd", "Priority fee")?;
 
         let parsed = Self {
             sizing_mode,

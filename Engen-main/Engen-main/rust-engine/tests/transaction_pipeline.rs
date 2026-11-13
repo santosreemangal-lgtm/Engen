@@ -79,7 +79,6 @@ fn shared_phase2_golden_corpus_matches_transaction_type_contract() {
     }
 }
 
-
 #[test]
 fn pending_fresh_signature_blocks_history_processing_in_the_same_monitor_cycle() {
     const HISTORY_SIGNATURE: &str =
@@ -122,7 +121,9 @@ fn pending_fresh_signature_blocks_history_processing_in_the_same_monitor_cycle()
     let directory = tempfile::tempdir().expect("create disposable DB directory");
     let database_path = directory.path().join("fresh-history.db");
     let store = SignatureStore::open(&database_path).expect("open disposable store");
-    store.mark_baseline(WALLET).expect("initialize source baseline");
+    store
+        .mark_baseline(WALLET)
+        .expect("initialize source baseline");
     store
         .save(WALLET, OLD_SIGNATURE, Some(100))
         .expect("save processed anchor");
@@ -141,7 +142,10 @@ fn pending_fresh_signature_blocks_history_processing_in_the_same_monitor_cycle()
         Some("pending")
     );
     assert_eq!(
-        store.get_status(WALLET, HISTORY_SIGNATURE).unwrap().as_deref(),
+        store
+            .get_status(WALLET, HISTORY_SIGNATURE)
+            .unwrap()
+            .as_deref(),
         Some("pending")
     );
     assert_eq!(

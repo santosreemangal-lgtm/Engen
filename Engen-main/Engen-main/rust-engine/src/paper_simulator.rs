@@ -1695,6 +1695,11 @@ impl PaperSimulator {
         self.pnl_summary_with_market_prices(&BTreeMap::new(), 60, None)
     }
 
+    /// Mark every open virtual token position to market using caller-supplied USD snapshots.
+    ///
+    /// Missing, stale, future-dated, mismatched, or basis-incomplete inputs are
+    /// represented with explicit per-mint statuses; portfolio P&L is null unless
+    /// every open position can be valued with a complete average-cost basis.
     pub fn pnl_summary_with_market_prices(
         &self,
         market_prices: &BTreeMap<String, MarketPrice>,

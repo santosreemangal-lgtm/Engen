@@ -127,10 +127,11 @@ def portfolio_valuation_usd(balances, market_prices, *, max_age_seconds=60, now=
             continue
 
         price = market_prices.get(mint)
+        matched_price = isinstance(price, MarketPrice) and price.mint == mint
         status = "calculated"
         price_age = None
         market_value = None
-        if not isinstance(price, MarketPrice) or price.mint != mint:
+        if not matched_price:
             status = "price_unavailable" if price is None else "invalid_or_mismatched_price"
         else:
             current = now or datetime.now(timezone.utc)
@@ -139,7 +140,7 @@ def portfolio_valuation_usd(balances, market_prices, *, max_age_seconds=60, now=
             if not isinstance(current, datetime) or current.tzinfo is None:
                 raise ValueError("now must be a timezone-aware datetime or ISO-8601 string.")
             age = (current.astimezone(timezone.utc) - parse_timestamp(price.observed_at)).total_seconds()
-            price_age = max(0, int(age))
+            price_age = int(age) if age >= 0 else None
             if age < 0:
                 status = "future_price"
             elif age > max_age_seconds:
@@ -152,11 +153,11 @@ def portfolio_valuation_usd(balances, market_prices, *, max_age_seconds=60, now=
             "mint": mint,
             "quantity": format(quantity, "f"),
             "currency": PORTFOLIO_CURRENCY,
-            "price_usd": format(price.price, "f") if market_value is not None else None,
+            "price_usd": format(price.price, "f") if matched_price else None,
             "market_value_usd": format(market_value, "f") if market_value is not None else None,
             "status": status,
-            "price_source": price.source if isinstance(price, MarketPrice) else None,
-            "price_timestamp": price.observed_at if isinstance(price, MarketPrice) else None,
+            "price_source": price.source if matched_price else None,
+            "price_timestamp": price.observed_at if matched_price else None,
             "price_age_seconds": price_age,
         })
         if market_value is None:

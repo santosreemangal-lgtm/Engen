@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use bigdecimal::BigDecimal;
 use chrono::{SecondsFormat, Utc};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -691,7 +691,7 @@ impl DashboardApp {
             let body: Value = if request.body.is_empty() {
                 json!({})
             } else {
-                match serde_json::from_slice(&request.body) {
+                match serde_json::from_slice::<Value>(&request.body) {
                     Ok(value) if value.is_object() => value,
                     _ => {
                         return HttpResponse::json(

@@ -1849,7 +1849,7 @@ fn merge_legacy_profile_paper_report(mut report: Value, path: &Path) -> Result<V
             .ok_or_else(|| "Legacy token balance is not stored as text.".to_string())?;
         let quantity = BigDecimal::from_str(raw)
             .map_err(|_| "Legacy token balance contains an invalid decimal amount.".to_string())?;
-        if quantity <= BigDecimal::from(0) {
+        if quantity <= 0 {
             continue;
         }
         has_unpriced_legacy_holding = true;

@@ -1678,6 +1678,198 @@ fn empty_paper_report(profile_id: &str, initialized: bool) -> Value {
     })
 }
 
+/// Read the old profile PaperTrader tables without changing or migrating the database.
+fn read_legacy_profile_paper_data(
+    path: &Path,
+) -> Result<(serde_json::Map<String, Value>, Vec<Value>), String> {
+    let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .map_err(|_| "Legacy profile paper ledger could not be opened read-only.".to_string())?;
+    connection
+        .busy_timeout(Duration::from_secs(10))
+        .map_err(|_| "Legacy profile paper ledger is busy.".to_string())?;
+
+    let mut balances = serde_json::Map::new();
+    let has_balances: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_balances')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Legacy paper-balance schema could not be inspected.".to_string())?;
+    if has_balances {
+        let mut statement = connection
+            .prepare("SELECT mint,amount FROM paper_balances ORDER BY mint")
+            .map_err(|_| "Legacy paper balances could not be read.".to_string())?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|_| "Legacy paper balances could not be read.".to_string())?;
+        for row in rows {
+            let (mint, amount) =
+                row.map_err(|_| "Legacy paper balances contain an invalid row.".to_string())?;
+            balances.insert(mint, json!(amount));
+        }
+    }
+
+    let mut orders = Vec::new();
+    let has_trades: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_trades')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| "Legacy paper-trade schema could not be inspected.".to_string())?;
+    if has_trades {
+        let mut columns_statement = connection
+            .prepare("PRAGMA table_info(paper_trades)")
+            .map_err(|_| "Legacy paper-trade columns could not be inspected.".to_string())?;
+        let columns = columns_statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|_| "Legacy paper-trade columns could not be inspected.".to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| "Legacy paper-trade columns could not be read.".to_string())?;
+        drop(columns_statement);
+        let quote_amount_column = if columns.iter().any(|column| column == "quote_amount") {
+            "quote_amount"
+        } else {
+            "NULL"
+        };
+        let query = format!(
+            "SELECT id,signature,side,asset_mint,asset_amount,quote_mint,{quote_amount_column},status,created_at \
+             FROM paper_trades ORDER BY id DESC LIMIT 100"
+        );
+        let mut statement = connection
+            .prepare(&query)
+            .map_err(|_| "Legacy paper trades could not be read.".to_string())?;
+        let rows = statement
+            .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let signature: String = row.get(1)?;
+                let side: String = row.get(2)?;
+                let asset_mint: String = row.get(3)?;
+                let quantity: String = row.get(4)?;
+                let quote_mint: String = row.get(5)?;
+                let quote_amount: Option<String> = row.get(6)?;
+                let status: String = row.get(7)?;
+                let created_at: String = row.get(8)?;
+                Ok(json!({
+                    "order_id":format!("legacy-paper-{id}"),
+                    "signal_id":signature,
+                    "side":side,
+                    "asset_mint":asset_mint,
+                    "quantity":quantity,
+                    "quote_mint":quote_mint,
+                    "quote_amount":quote_amount,
+                    "status":status,
+                    "reason":null,
+                    "created_at":created_at,
+                    "details":{
+                        "origin":"LEGACY_PAPER_TRADER",
+                        "real_trading":false,
+                        "transaction_broadcast":false
+                    },
+                    "history_source":"LEGACY_PAPER_TRADER",
+                    "simulated":true,
+                    "real_trading":false,
+                    "transaction_broadcast":false
+                }))
+            })
+            .map_err(|_| "Legacy paper trades could not be read.".to_string())?;
+        for row in rows {
+            orders.push(
+                row.map_err(|_| "Legacy paper trades contain an invalid row.".to_string())?,
+            );
+        }
+    }
+    Ok((balances, orders))
+}
+
+/// Merge legacy PaperTrader history for display only. Legacy token balances without
+/// Rust-ledger basis/marks remain visible but force portfolio value to unavailable.
+fn merge_legacy_profile_paper_report(
+    mut report: Value,
+    path: &Path,
+) -> Result<Value, String> {
+    let (legacy_balances, legacy_orders) = read_legacy_profile_paper_data(path)?;
+    let simulator_balances = report
+        .get("balances")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let simulator_has_usd = simulator_balances.contains_key("USD");
+
+    let mut merged_balances = legacy_balances.clone();
+    for (mint, amount) in &simulator_balances {
+        merged_balances.insert(mint.clone(), amount.clone());
+    }
+    report["balances"] = Value::Object(merged_balances);
+
+    if !simulator_has_usd {
+        let legacy_cash = legacy_balances.get("USD").cloned().unwrap_or_else(|| json!("0"));
+        report["cash_balance_usd"] = legacy_cash.clone();
+        report["available_balance_usd"] = legacy_cash.clone();
+        report["available_balance"] = legacy_cash;
+    }
+
+    let mut orders = report
+        .get("orders")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    orders.extend(legacy_orders);
+    orders.sort_by(|left, right| {
+        let left_time = left.get("created_at").and_then(Value::as_str).unwrap_or("");
+        let right_time = right.get("created_at").and_then(Value::as_str).unwrap_or("");
+        right_time.cmp(left_time)
+    });
+    orders.truncate(100);
+    report["orders"] = Value::Array(orders);
+
+    let mut holdings = report
+        .get("token_holdings")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut has_unpriced_legacy_holding = false;
+    for (mint, raw_amount) in &legacy_balances {
+        if mint == "USD" || simulator_balances.contains_key(mint) {
+            continue;
+        }
+        let raw = raw_amount
+            .as_str()
+            .ok_or_else(|| "Legacy token balance is not stored as text.".to_string())?;
+        let quantity = BigDecimal::from_str(raw)
+            .map_err(|_| "Legacy token balance contains an invalid decimal amount.".to_string())?;
+        if quantity <= BigDecimal::from(0) {
+            continue;
+        }
+        has_unpriced_legacy_holding = true;
+        holdings.push(json!({
+            "mint":mint,
+            "quantity":quantity.normalized().to_plain_string(),
+            "currency":"USD",
+            "price_usd":null,
+            "market_value_usd":null,
+            "status":"legacy_balance_unpriced",
+            "price_source":null,
+            "price_timestamp":null,
+            "price_age_seconds":null
+        }));
+    }
+    report["token_holdings"] = Value::Array(holdings);
+    if has_unpriced_legacy_holding {
+        report["token_holdings_value_usd"] = Value::Null;
+        report["portfolio_value_usd"] = Value::Null;
+        report["total_portfolio_value_usd"] = Value::Null;
+        report["portfolio_value_status"] = json!("incomplete_legacy_market_valuation");
+        report["portfolio_value_note"] = json!(
+            "A legacy token balance is retained for display but has no verified current Rust-ledger market valuation."
+        );
+    }
+    Ok(report)
+}
+
 fn enrich_paper_report(mut report: Value, profile_id: &str) -> Value {
     if !report.is_object() {
         report = json!({});

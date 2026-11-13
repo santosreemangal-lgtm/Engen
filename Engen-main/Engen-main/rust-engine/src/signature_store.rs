@@ -727,7 +727,6 @@ impl SignatureStore {
         ).optional()?)
     }
 
-
     pub fn pending_count_for_lane(
         &self,
         wallet: &str,
@@ -770,7 +769,7 @@ impl SignatureStore {
                     OR (status='processing' AND
                         (claim_expires_at IS NULL OR
                          claim_expires_at<=CAST(strftime('%s','now') AS INTEGER))))
-             ORDER BY first_seen_at ASC LIMIT ?3"
+             ORDER BY first_seen_at ASC LIMIT ?3",
         )?;
         let rows = statement.query_map(params![wallet, lane, limit as i64], |row| row.get(0))?;
         Ok(rows.collect::<Result<Vec<String>, _>>()?)
@@ -799,7 +798,7 @@ impl SignatureStore {
                     OR (status='processing' AND
                         (claim_expires_at IS NULL OR
                          claim_expires_at<=CAST(strftime('%s','now') AS INTEGER))))
-             ORDER BY first_seen_at ASC LIMIT ?3"
+             ORDER BY first_seen_at ASC LIMIT ?3",
         )?;
         let rows = statement.query_map(params![wallet, lane, limit as i64], |row| {
             Ok((
@@ -980,7 +979,6 @@ mod tests {
         assert_eq!(claimed, 1);
     }
 
-
     #[test]
     fn fresh_and_history_rows_are_separate_and_restart_keeps_signature_observation() {
         let dir = tempdir().unwrap();
@@ -995,15 +993,31 @@ mod tests {
             "confirmationStatus": "finalized",
             "err": null
         });
-        assert!(store.save_in_lane(WALLET, fresh, Some(90), "fresh", Some(&observation)).unwrap());
-        assert!(store.save_in_lane(WALLET, history, Some(80), "history", None).unwrap());
-        assert_eq!(store.pending_signatures_for_lane(WALLET, "fresh", 10).unwrap(), vec![fresh.to_string()]);
-        assert_eq!(store.pending_signatures_for_lane(WALLET, "history", 10).unwrap(), vec![history.to_string()]);
+        assert!(store
+            .save_in_lane(WALLET, fresh, Some(90), "fresh", Some(&observation))
+            .unwrap());
+        assert!(store
+            .save_in_lane(WALLET, history, Some(80), "history", None)
+            .unwrap());
+        assert_eq!(
+            store
+                .pending_signatures_for_lane(WALLET, "fresh", 10)
+                .unwrap(),
+            vec![fresh.to_string()]
+        );
+        assert_eq!(
+            store
+                .pending_signatures_for_lane(WALLET, "history", 10)
+                .unwrap(),
+            vec![history.to_string()]
+        );
         assert_eq!(store.pending_count_for_lane(WALLET, "fresh").unwrap(), 1);
         drop(store);
 
         let restarted = SignatureStore::open(&path).unwrap();
-        let restored = restarted.pending_signature_observations(WALLET, "fresh", 10).unwrap();
+        let restored = restarted
+            .pending_signature_observations(WALLET, "fresh", 10)
+            .unwrap();
         assert_eq!(restored[0]["blockTime"], 1_760_000_000);
         assert_eq!(restored[0]["confirmationStatus"], "finalized");
         assert_eq!(restored[0]["slot"], 90);
@@ -1013,10 +1027,22 @@ mod tests {
     fn existing_fresh_assignment_is_not_demoted_by_history_discovery() {
         let dir = tempdir().unwrap();
         let store = SignatureStore::open(dir.path().join("lane-promotion.db")).unwrap();
-        assert!(store.save_in_lane(WALLET, SIGNATURE, Some(10), "fresh", None).unwrap());
-        assert!(!store.save_in_lane(WALLET, SIGNATURE, Some(10), "history", None).unwrap());
-        assert_eq!(store.pending_signatures_for_lane(WALLET, "fresh", 10).unwrap(), vec![SIGNATURE.to_string()]);
-        assert!(store.pending_signatures_for_lane(WALLET, "history", 10).unwrap().is_empty());
+        assert!(store
+            .save_in_lane(WALLET, SIGNATURE, Some(10), "fresh", None)
+            .unwrap());
+        assert!(!store
+            .save_in_lane(WALLET, SIGNATURE, Some(10), "history", None)
+            .unwrap());
+        assert_eq!(
+            store
+                .pending_signatures_for_lane(WALLET, "fresh", 10)
+                .unwrap(),
+            vec![SIGNATURE.to_string()]
+        );
+        assert!(store
+            .pending_signatures_for_lane(WALLET, "history", 10)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

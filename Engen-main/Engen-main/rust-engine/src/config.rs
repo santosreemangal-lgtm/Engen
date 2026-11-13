@@ -3,11 +3,18 @@
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt;
+use std::str::FromStr;
 
+use bigdecimal::BigDecimal;
+use num_traits::Zero;
+
+use crate::paper_simulator::ExecutionPolicy;
 use crate::rpc_policy::validate_rpc_url;
 
 const LIVE_OFF_VALUES: &[&str] = &["", "false", "0", "no", "off"];
 const MAX_RPC_RETRIES: u8 = 5;
+const MAX_PAPER_FEE_BPS: u16 = 10_000;
+const MAX_PAPER_NETWORK_FEE_USD: &str = "1000";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogLevel {
@@ -40,6 +47,12 @@ pub struct Config {
     pub rpc_retries: u8,
     pub rpc_backoff_seconds: f64,
     pub rpc_min_interval_seconds: f64,
+    /// Simulated exchange/trading fee, in basis points (100 bps = 1%).
+    pub paper_trading_fee_bps: u16,
+    /// Fixed simulated base network fee, in USD per fill.
+    pub paper_network_fee_usd: String,
+    /// Fixed simulated priority-fee estimate, in USD per fill.
+    pub paper_priority_fee_usd: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,6 +149,25 @@ impl Config {
             &mut problems,
         );
 
+        let paper_trading_fee_bps = parse_bps(
+            values,
+            "ENGEN_PAPER_TRADING_FEE_BPS",
+            10,
+            &mut problems,
+        );
+        let paper_network_fee_usd = parse_fee_usd(
+            values,
+            "ENGEN_PAPER_NETWORK_FEE_USD",
+            "0",
+            &mut problems,
+        );
+        let paper_priority_fee_usd = parse_fee_usd(
+            values,
+            "ENGEN_PAPER_PRIORITY_FEE_USD",
+            "0",
+            &mut problems,
+        );
+
         let rpc_retries = match values.get("ENGEN_RPC_RETRIES") {
             None => 2,
             Some(raw) => match raw.trim().parse::<u64>() {
@@ -160,7 +192,68 @@ impl Config {
             rpc_retries,
             rpc_backoff_seconds,
             rpc_min_interval_seconds,
+            paper_trading_fee_bps,
+            paper_network_fee_usd,
+            paper_priority_fee_usd,
         })
+    }
+
+    /// Build the base paper execution policy. Per-profile settings may override
+    /// these three fee values on the individual persisted copy order.
+    pub fn paper_execution_policy(&self) -> ExecutionPolicy {
+        ExecutionPolicy {
+            fee_bps: self.paper_trading_fee_bps,
+            network_cost: self.paper_network_fee_usd.clone(),
+            priority_fee_usd: self.paper_priority_fee_usd.clone(),
+            ..ExecutionPolicy::default()
+        }
+    }
+}
+
+fn parse_bps(
+    values: &BTreeMap<String, String>,
+    name: &str,
+    default: u16,
+    problems: &mut Vec<String>,
+) -> u16 {
+    let Some(raw) = values.get(name) else {
+        return default;
+    };
+
+    match raw.trim().parse::<u16>() {
+        Ok(value) if value <= MAX_PAPER_FEE_BPS => value,
+        _ => {
+            problems.push(format!(
+                "{name} must be an integer between 0 and {MAX_PAPER_FEE_BPS} basis points."
+            ));
+            default
+        }
+    }
+}
+
+fn parse_fee_usd(
+    values: &BTreeMap<String, String>,
+    name: &str,
+    default: &str,
+    problems: &mut Vec<String>,
+) -> String {
+    let Some(raw) = values.get(name) else {
+        return default.to_string();
+    };
+
+    match BigDecimal::from_str(raw.trim()) {
+        Ok(value)
+            if value >= BigDecimal::zero()
+                && value <= BigDecimal::from_str(MAX_PAPER_NETWORK_FEE_USD).unwrap() =>
+        {
+            value.normalized().to_plain_string()
+        }
+        _ => {
+            problems.push(format!(
+                "{name} must be a non-negative decimal no greater than 1000 USD per paper fill."
+            ));
+            default.to_string()
+        }
     }
 }
 
@@ -258,5 +351,53 @@ mod tests {
     fn rejects_invalid_timeout() {
         let values = map(&[("ENGEN_RPC_TIMEOUT_SECONDS", "NaN")]);
         assert!(Config::from_map(&values).is_err());
+    }
+
+    #[test]
+    fn paper_fee_config_defaults_and_builds_execution_policy() {
+        let config = Config::from_map(&BTreeMap::new()).unwrap();
+        assert_eq!(config.paper_trading_fee_bps, 10);
+        assert_eq!(config.paper_network_fee_usd, "0");
+        assert_eq!(config.paper_priority_fee_usd, "0");
+
+        let policy = config.paper_execution_policy();
+        assert_eq!(policy.fee_bps, 10);
+        assert_eq!(policy.network_cost, "0");
+        assert_eq!(policy.priority_fee_usd, "0");
+    }
+
+    #[test]
+    fn paper_fee_config_accepts_explicit_global_values() {
+        let config = Config::from_map(&map(&[
+            ("ENGEN_PAPER_TRADING_FEE_BPS", "35"),
+            ("ENGEN_PAPER_NETWORK_FEE_USD", "0.00075"),
+            ("ENGEN_PAPER_PRIORITY_FEE_USD", "0.00425"),
+        ]))
+        .unwrap();
+
+        let policy = config.paper_execution_policy();
+        assert_eq!(policy.fee_bps, 35);
+        assert_eq!(policy.network_cost, "0.00075");
+        assert_eq!(policy.priority_fee_usd, "0.00425");
+    }
+
+    #[test]
+    fn invalid_paper_fee_config_is_rejected() {
+        for raw in ["-1", "10001", "10.5", "NaN", "not-an-integer"] {
+            assert!(
+                Config::from_map(&map(&[("ENGEN_PAPER_TRADING_FEE_BPS", raw)])).is_err(),
+                "accepted invalid trading fee bps {raw}"
+            );
+        }
+        for raw in ["-0.01", "1000.01", "NaN", "inf", "not-a-decimal"] {
+            assert!(
+                Config::from_map(&map(&[("ENGEN_PAPER_NETWORK_FEE_USD", raw)])).is_err(),
+                "accepted invalid network fee {raw}"
+            );
+            assert!(
+                Config::from_map(&map(&[("ENGEN_PAPER_PRIORITY_FEE_USD", raw)])).is_err(),
+                "accepted invalid priority fee {raw}"
+            );
+        }
     }
 }

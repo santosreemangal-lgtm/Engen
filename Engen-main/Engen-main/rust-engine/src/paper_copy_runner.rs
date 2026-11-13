@@ -1098,7 +1098,7 @@ mod tests {
             &observed,
             Some("25000"),
             Some("test-fixture".to_string()),
-            Some(observed),
+            Some(observed.clone()),
         )
         .unwrap();
         let outcomes = execute_pending_paper_orders_with(

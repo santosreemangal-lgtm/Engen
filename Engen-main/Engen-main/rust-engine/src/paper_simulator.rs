@@ -1259,25 +1259,16 @@ impl PaperSimulator {
         };
         let fee_rate = BigDecimal::from(i64::from(policy.fee_bps)) / BigDecimal::from(10_000_i64);
         let fee_multiplier = BigDecimal::from(1) + &fee_rate;
-        let base_network_fee = match decimal_value(
-            &policy.network_cost,
-            "Base network fee USD",
-            true,
-        ) {
+        let base_network_fee =
+            match decimal_value(&policy.network_cost, "Base network fee USD", true) {
+                Ok(value) => value,
+                Err(_) => {
+                    return self.reject_order(&mut order, "Configured base network fee is invalid.")
+                }
+            };
+        let priority_fee = match decimal_value(&policy.priority_fee_usd, "Priority fee USD", true) {
             Ok(value) => value,
-            Err(_) => {
-                return self.reject_order(&mut order, "Configured base network fee is invalid.")
-            }
-        };
-        let priority_fee = match decimal_value(
-            &policy.priority_fee_usd,
-            "Priority fee USD",
-            true,
-        ) {
-            Ok(value) => value,
-            Err(_) => {
-                return self.reject_order(&mut order, "Configured priority fee is invalid.")
-            }
+            Err(_) => return self.reject_order(&mut order, "Configured priority fee is invalid."),
         };
         let network = &base_network_fee + &priority_fee;
         if network > BigDecimal::from(1_000) {
@@ -1496,11 +1487,7 @@ impl PaperSimulator {
             json!(execution_price.to_string()),
         );
         set_detail(&mut order.details, "fee", json!(fee.to_string()));
-        set_detail(
-            &mut order.details,
-            "trading_fee_bps",
-            json!(policy.fee_bps),
-        );
+        set_detail(&mut order.details, "trading_fee_bps", json!(policy.fee_bps));
         set_detail(
             &mut order.details,
             "base_network_fee_usd",

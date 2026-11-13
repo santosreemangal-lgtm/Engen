@@ -303,7 +303,7 @@ impl ScanContext {
                     let (Some(mint), Some(decimals), Some(delta)) = (mint, decimals, delta) else {
                         continue;
                     };
-                    if decimals < 0 || decimals > 30 || delta.is_empty() {
+                    if !(0..=30).contains(&decimals) || delta.is_empty() {
                         continue;
                     }
                     let magnitude = delta.trim_start_matches('-');
@@ -1108,7 +1108,7 @@ impl DashboardApp {
                 "page":page,
                 "page_size":page_size,
                 "total":total,
-                "pages":if total==0 {0} else {(total+page_size-1)/page_size}
+                "pages":total.div_ceil(page_size)
             }),
         )
     }
@@ -1439,7 +1439,7 @@ impl DashboardApp {
             };
             let value = match BigDecimal::from_str(&amount) {
                 Ok(value)
-                    if value > BigDecimal::from(0) && value <= BigDecimal::from(1_000_000_000) =>
+                    if value > 0 && value <= 1_000_000_000 =>
                 {
                     value
                 }
@@ -1639,10 +1639,12 @@ impl DashboardApp {
             Ok(value) => value,
             Err(error) => return HttpResponse::json(400, json!({"error":error.to_string()})),
         };
-        let mut policy = ExecutionPolicy::default();
-        policy.fee_bps = self.context.execution_policy.fee_bps;
-        policy.network_cost = self.context.execution_policy.network_cost.clone();
-        policy.priority_fee_usd = self.context.execution_policy.priority_fee_usd.clone();
+        let policy = ExecutionPolicy {
+            fee_bps: self.context.execution_policy.fee_bps,
+            network_cost: self.context.execution_policy.network_cost.clone(),
+            priority_fee_usd: self.context.execution_policy.priority_fee_usd.clone(),
+            ..ExecutionPolicy::default()
+        };
         let result = match simulator.execute_order(order_id, Some(&market), &now, &policy, true) {
             Ok(value) => value,
             Err(error) => return HttpResponse::json(400, json!({"error":error.to_string()})),

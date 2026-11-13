@@ -149,24 +149,12 @@ impl Config {
             &mut problems,
         );
 
-        let paper_trading_fee_bps = parse_bps(
-            values,
-            "ENGEN_PAPER_TRADING_FEE_BPS",
-            10,
-            &mut problems,
-        );
-        let paper_network_fee_usd = parse_fee_usd(
-            values,
-            "ENGEN_PAPER_NETWORK_FEE_USD",
-            "0",
-            &mut problems,
-        );
-        let paper_priority_fee_usd = parse_fee_usd(
-            values,
-            "ENGEN_PAPER_PRIORITY_FEE_USD",
-            "0",
-            &mut problems,
-        );
+        let paper_trading_fee_bps =
+            parse_bps(values, "ENGEN_PAPER_TRADING_FEE_BPS", 10, &mut problems);
+        let paper_network_fee_usd =
+            parse_fee_usd(values, "ENGEN_PAPER_NETWORK_FEE_USD", "0", &mut problems);
+        let paper_priority_fee_usd =
+            parse_fee_usd(values, "ENGEN_PAPER_PRIORITY_FEE_USD", "0", &mut problems);
 
         let rpc_retries = match values.get("ENGEN_RPC_RETRIES") {
             None => 2,

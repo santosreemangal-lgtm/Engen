@@ -22,6 +22,8 @@ on:
       - "Engen-main/Engen-main/engine/**"
       - "Engen-main/Engen-main/dashboard/**"
       - ".github/workflows/rust-engine.yml"
+      - "docs/RUST_ONLY_RUNTIME_MIGRATION.md"
+      - "scripts/audit_rust_runtime_migration.sh"
   workflow_dispatch:
 
 permissions:

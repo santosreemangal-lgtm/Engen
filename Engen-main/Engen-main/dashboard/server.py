@@ -28,7 +28,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from dashboard.monitor_bridge import create_scan_function
 from dashboard.monitor_service import MonitorService
 from engine.logger import redact
-from engine.pnl import MarketPrice, realized_pnl_from_fills, roi_percentage
+from engine.pnl import MarketPrice, portfolio_valuation_usd, realized_pnl_from_fills, roi_percentage
 from engine.market_data import fetch_market_price
 from engine.paper_copy_runner import get_paper_simulator, PAPER_SIMULATOR_LOCK as paper_simulator_lock
 from engine.paper_simulator import PaperSimulator
@@ -336,7 +336,10 @@ def load_profile_paper_simulation_report(profile_id):
         "transaction_broadcast": False, "profile_id": profile_id,
         "database_available": False, "balances": {}, "orders": [], "fills": [],
         "available_balance": None, "available_balance_usd": None,
-        "initial_balance": None, "portfolio_value_usd": None,
+        "initial_balance": None, "cash_balance_usd": None,
+        "token_holdings_value_usd": None, "token_holdings": [],
+        "portfolio_value_usd": None, "total_portfolio_value_usd": None,
+        "portfolio_value_status": "not_initialized",
         "realized_pnl_usd": None, "unrealized_pnl_usd": None,
         "realized_roi_pct": None, "unrealized_roi_pct": None,
         "pnl": {"cost_basis_method": "average_cost", "currency": "USD",
@@ -424,7 +427,7 @@ def load_profile_paper_simulation_report(profile_id):
         # Value non-cash holdings only from verified, fresh public market snapshots.
         # Portfolio value may be known even when cost basis is unknown; in that
         # case unrealized P&L stays unavailable rather than being guessed.
-        token_values = []
+        market_prices = {}
         unrealized_values = []
         unrealized_cost_bases = []
         unrealized_by_mint = {}
@@ -438,11 +441,10 @@ def load_profile_paper_simulation_report(profile_id):
                     continue
                 market_price = fetch_market_price(mint)
                 if market_price is None or not market_price.is_fresh(max_age_seconds=60):
-                    token_values.append(None)
                     unrealized_values.append(None)
                     valuation_notes.append("price_unavailable_or_stale:" + mint)
                     continue
-                token_values.append(quantity * market_price.price)
+                market_prices[mint] = market_price
                 ledger_position = ledger.snapshot(mint)
                 if Decimal(ledger_position["quantity"]) != quantity:
                     unrealized_values.append(None)
@@ -460,11 +462,13 @@ def load_profile_paper_simulation_report(profile_id):
                 )
                 if pnl.get("status") != "calculated":
                     valuation_notes.append(str(pnl.get("status")) + ":" + mint)
-        cash_value = Decimal(str(base["available_balance"] or "0"))
-        if all(value is not None for value in token_values):
-            base["portfolio_value_usd"] = format(cash_value + sum(token_values, Decimal("0")), "f")
-        else:
-            base["portfolio_value_usd"] = None
+
+        # The aggregate valuation is independent of cost basis. Every holding is
+        # exposed with its own mark/status; total value is withheld if any mark is
+        # missing, stale, future-dated, or not for the exact mint.
+        base.update(portfolio_valuation_usd(
+            base["balances"], market_prices, max_age_seconds=60
+        ))
         base["pnl"]["unrealized_by_mint"] = unrealized_by_mint
         if not unrealized_values:
             base["unrealized_pnl_usd"] = "0"
@@ -507,6 +511,12 @@ def load_paper_simulation_report(profile_id=None):
         "balances": {},
         "orders": [],
         "fills": [],
+        "cash_balance_usd": None,
+        "token_holdings_value_usd": None,
+        "token_holdings": [],
+        "portfolio_value_usd": None,
+        "total_portfolio_value_usd": None,
+        "portfolio_value_status": "unavailable_market_data_not_loaded",
         "pnl": {
             "cost_basis_method": "average_cost",
             "currency": "USD",

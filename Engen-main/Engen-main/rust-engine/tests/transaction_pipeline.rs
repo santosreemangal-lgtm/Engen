@@ -70,28 +70,42 @@ fn shared_phase2_golden_corpus_matches_transaction_type_contract() {
         );
         if let Some(expected_analysis) = case.get("expected_analysis") {
             let summary = analyze_transaction(transaction).expect("analyze differential fixture");
-            for field in ["status", "slot", "fee", "account_count", "signers", "program_ids"] {
-                assert_eq!(summary[field], expected_analysis[field], "{field} mismatch for {name}");
+            for field in [
+                "status",
+                "slot",
+                "fee",
+                "account_count",
+                "signers",
+                "program_ids",
+            ] {
+                assert_eq!(
+                    summary[field], expected_analysis[field],
+                    "{field} mismatch for {name}"
+                );
             }
             let projected: Vec<Value> = summary["instructions"]
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|instruction| json!({
-                    "source": instruction["source"],
-                    "program_id": instruction["program_id"],
-                    "parsed_type": instruction["parsed_type"]
-                }))
+                .map(|instruction| {
+                    json!({
+                        "source": instruction["source"],
+                        "program_id": instruction["program_id"],
+                        "parsed_type": instruction["parsed_type"]
+                    })
+                })
                 .collect();
             assert_eq!(
-                projected,
-                expected_analysis["instructions"],
+                projected, expected_analysis["instructions"],
                 "instruction normalization mismatch for {name}"
             );
         }
         if let Some(expected_token_changes) = case.get("expected_token_balance_changes") {
             let actual = analyze_token_balance_changes(&transaction["meta"]);
-            assert_eq!(actual, *expected_token_changes, "token balance delta mismatch for {name}");
+            assert_eq!(
+                actual, *expected_token_changes,
+                "token balance delta mismatch for {name}"
+            );
         }
         if let Some(program_id) = case
             .get("expected_outer_program_id")

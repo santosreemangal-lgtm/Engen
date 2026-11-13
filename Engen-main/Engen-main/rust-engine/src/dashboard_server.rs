@@ -2120,6 +2120,76 @@ mod tests {
     }
 
     #[test]
+    fn legacy_profile_paper_reader_preserves_balance_and_trades_without_quote_amount() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("legacy-paper.db");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE paper_balances(mint TEXT PRIMARY KEY, amount TEXT NOT NULL);
+                 INSERT INTO paper_balances VALUES('USD','25.50');
+                 INSERT INTO paper_balances VALUES('OLD_TOKEN','123.45');
+                 CREATE TABLE paper_trades(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    signature TEXT NOT NULL UNIQUE, side TEXT NOT NULL,
+                    asset_mint TEXT NOT NULL, asset_amount TEXT NOT NULL,
+                    quote_mint TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL
+                 );
+                 INSERT INTO paper_trades(signature,side,asset_mint,asset_amount,quote_mint,status,created_at)
+                 VALUES('legacy-sig','BUY','OLD_TOKEN','2','USD','FILLED','2026-11-01T00:00:00Z');",
+            )
+            .unwrap();
+        drop(connection);
+
+        let (balances, orders) = read_legacy_profile_paper_data(&path).unwrap();
+        assert_eq!(balances["USD"], "25.50");
+        assert_eq!(balances["OLD_TOKEN"], "123.45");
+        assert_eq!(orders.len(), 1);
+        assert_eq!(orders[0]["signal_id"], "legacy-sig");
+        assert_eq!(orders[0]["quote_amount"], Value::Null);
+        assert_eq!(orders[0]["history_source"], "LEGACY_PAPER_TRADER");
+        assert_eq!(orders[0]["transaction_broadcast"], false);
+    }
+
+    #[test]
+    fn merge_legacy_profile_balances_keeps_unpriced_tokens_visible_and_withholds_total() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("legacy-paper.db");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE paper_balances(mint TEXT PRIMARY KEY, amount TEXT NOT NULL);
+                 INSERT INTO paper_balances VALUES('USD','40');
+                 INSERT INTO paper_balances VALUES('OLD_TOKEN','3.5');",
+            )
+            .unwrap();
+        drop(connection);
+
+        let report = json!({
+            "balances":{"USD":"10"},
+            "available_balances":{"USD":"10"},
+            "cash_balance_usd":"10",
+            "token_holdings":[],
+            "token_holdings_value_usd":"0",
+            "portfolio_value_usd":"10",
+            "total_portfolio_value_usd":"10",
+            "orders":[],
+            "fills":[]
+        });
+        let merged = merge_legacy_profile_paper_report(report, &path).unwrap();
+        assert_eq!(merged["balances"]["USD"], "10");
+        assert_eq!(merged["balances"]["OLD_TOKEN"], "3.5");
+        assert_eq!(merged["available_balance_usd"], "10");
+        assert_eq!(merged["token_holdings"][0]["mint"], "OLD_TOKEN");
+        assert_eq!(
+            merged["token_holdings"][0]["status"],
+            "legacy_balance_unpriced"
+        );
+        assert!(merged["portfolio_value_usd"].is_null());
+        assert!(merged["total_portfolio_value_usd"].is_null());
+    }
+
+    #[test]
     fn paper_report_is_never_marked_as_real_trading() {
         let report = enrich_paper_report(json!({"balances":{}}), "profile-id");
         assert_eq!(report["real_trading"], false);

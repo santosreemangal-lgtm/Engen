@@ -2173,6 +2173,57 @@ mod tests {
     }
 
     #[test]
+    fn monitor_stop_persists_opt_out_for_global_and_profile_services() {
+        let (_directory, app) = dashboard_app_fixture();
+        fs::write(
+            &app.monitor_state_file,
+            serde_json::to_vec(&json!({"global_enabled":true,"profile_ids":[]})).unwrap(),
+        )
+        .unwrap();
+
+        let stopped = app.handle(api_request(
+            "POST",
+            "/api/monitor",
+            json!({"action":"stop"}),
+        ));
+        assert_eq!(stopped.status, 200);
+        let state: Value =
+            serde_json::from_slice(&fs::read(&app.monitor_state_file).unwrap()).unwrap();
+        assert_eq!(state["global_enabled"], false);
+
+        let created = app.handle(api_request(
+            "POST",
+            "/api/profiles",
+            json!({"action":"create","name":"Stop persistence profile"}),
+        ));
+        assert_eq!(created.status, 201);
+        let profile_id = response_json(created)["profile"]["profile_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        fs::write(
+            &app.monitor_state_file,
+            serde_json::to_vec(&json!({
+                "global_enabled":false,
+                "profile_ids":[profile_id]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let stopped = app.handle(api_request(
+            "POST",
+            "/api/profile-monitor",
+            json!({"action":"stop","profile_id":profile_id}),
+        ));
+        assert_eq!(stopped.status, 200);
+        let state: Value =
+            serde_json::from_slice(&fs::read(&app.monitor_state_file).unwrap()).unwrap();
+        assert_eq!(state["global_enabled"], false);
+        assert!(state["profile_ids"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
     fn dashboard_api_profile_wallet_and_paper_cash_flow_runs_without_network_or_python() {
         let (_directory, app) = dashboard_app_fixture();
 

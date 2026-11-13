@@ -201,7 +201,6 @@ where
         .collect())
 }
 
-
 /// Resume the one-time History backfill from its persisted cursor.
 /// A fetched page is committed atomically at the page boundary; on RPC failure,
 /// the cursor stays unchanged and the next process can safely retry that page.
@@ -251,12 +250,7 @@ where
         || page.len() < page_limit
         || scanned == 0
         || already_scanned.saturating_add(scanned) >= MAX_BACKFILL_SIGNATURES;
-    store.advance_history_backfill(
-        wallet_address,
-        next_cursor.as_deref(),
-        scanned,
-        completed,
-    )?;
+    store.advance_history_backfill(wallet_address, next_cursor.as_deref(), scanned, completed)?;
     Ok(scanned)
 }
 
@@ -267,13 +261,7 @@ fn resume_history_backfill(
     latency_recorder: Option<&LatencyRecorder>,
 ) -> Result<usize, WalletMonitorError> {
     resume_history_backfill_with(store, wallet_address, |limit, before| {
-        get_wallet_signatures(
-            client,
-            wallet_address,
-            limit,
-            before,
-            latency_recorder,
-        )
+        get_wallet_signatures(client, wallet_address, limit, before, latency_recorder)
     })
 }
 
@@ -387,33 +375,28 @@ mod tests {
         );
     }
 
-
     #[test]
     fn history_backfill_persists_cursor_and_observations_for_restart_recovery() {
         let (_directory, store) = store();
         store.start_history_backfill(WALLET, Some(ANCHOR)).unwrap();
         let mut requested = Vec::new();
-        let scanned = resume_history_backfill_with(
-            &store,
-            WALLET,
-            |limit, before| {
-                requested.push((limit, before.map(str::to_string)));
-                Ok(vec![
-                    serde_json::json!({
-                        "signature": NEW_A,
-                        "slot": 98,
-                        "blockTime": 1_760_000_000,
-                        "confirmationStatus": "finalized"
-                    }),
-                    serde_json::json!({
-                        "signature": NEW_B,
-                        "slot": 97,
-                        "blockTime": 1_759_999_999,
-                        "confirmationStatus": "confirmed"
-                    }),
-                ])
-            },
-        )
+        let scanned = resume_history_backfill_with(&store, WALLET, |limit, before| {
+            requested.push((limit, before.map(str::to_string)));
+            Ok(vec![
+                serde_json::json!({
+                    "signature": NEW_A,
+                    "slot": 98,
+                    "blockTime": 1_760_000_000,
+                    "confirmationStatus": "finalized"
+                }),
+                serde_json::json!({
+                    "signature": NEW_B,
+                    "slot": 97,
+                    "blockTime": 1_759_999_999,
+                    "confirmationStatus": "confirmed"
+                }),
+            ])
+        })
         .unwrap();
         assert_eq!(scanned, 2);
         assert_eq!(requested, vec![(1_000, Some(ANCHOR.to_string()))]);
@@ -422,7 +405,9 @@ mod tests {
             Some((Some(NEW_B.to_string()), 2, true))
         );
         assert_eq!(
-            store.pending_signatures_for_lane(WALLET, "history", 10).unwrap(),
+            store
+                .pending_signatures_for_lane(WALLET, "history", 10)
+                .unwrap(),
             vec![NEW_A.to_string(), NEW_B.to_string()]
         );
 

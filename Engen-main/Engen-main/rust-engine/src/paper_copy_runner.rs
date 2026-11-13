@@ -329,6 +329,17 @@ pub fn queue_paper_orders_at(
         if !result.is_object() {
             continue;
         }
+        if result
+            .get("source_lane")
+            .and_then(Value::as_str)
+            .is_some_and(|lane| lane != "fresh")
+            || result
+                .get("paper_copy_eligible")
+                .and_then(Value::as_bool)
+                == Some(false)
+        {
+            continue;
+        }
         let Some(signature) = result.get("signature").and_then(Value::as_str) else {
             continue;
         };
@@ -826,6 +837,26 @@ mod tests {
             &CopySettings::default(),
             None,
             1_760_000_001,
+        )
+        .unwrap();
+        assert!(queued.is_empty());
+        assert!(simulator.orders().is_empty());
+    }
+
+
+    #[test]
+    fn history_lane_results_are_never_queued_for_paper_execution() {
+        let mut simulator = simulator();
+        let mut history = buy_signal(&"8".repeat(64));
+        history["source_lane"] = json!("history");
+        history["paper_copy_eligible"] = json!(false);
+        let queued = queue_paper_orders(
+            WALLET,
+            &[history],
+            &mut simulator,
+            AllowedSides::Both,
+            &CopySettings::default(),
+            None,
         )
         .unwrap();
         assert!(queued.is_empty());

@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use thiserror::Error;
 
 use crate::latency::LatencyRecorder;
+use crate::monitor_scheduler::{ScanPlan, ScanStage, DEFAULT_HISTORY_BATCH, MAX_FRESH_BATCH};
 use crate::signature_store::{ProcessingStage, SignatureStore, SignatureStoreError};
 use crate::solana_public::{SolanaRpcClient, SolanaRpcError};
 use crate::solana_validation::{is_valid_solana_address, is_valid_transaction_signature};
@@ -200,6 +201,7 @@ fn record_retry(
 }
 
 /// Process a bounded set of saved signature observations.
+/// Backward-compatible Fresh-lane processing entrypoint.
 pub fn process_new_signatures(
     client: &SolanaRpcClient,
     store: &SignatureStore,
@@ -208,9 +210,35 @@ pub fn process_new_signatures(
     defer_processed: bool,
     latency_recorder: Option<&LatencyRecorder>,
 ) -> Result<Vec<Value>, TransactionMonitorError> {
+    process_signatures_for_lane(
+        client,
+        store,
+        wallet_address,
+        signatures,
+        "fresh",
+        defer_processed,
+        latency_recorder,
+    )
+}
+
+pub fn process_signatures_for_lane(
+    client: &SolanaRpcClient,
+    store: &SignatureStore,
+    wallet_address: &str,
+    signatures: &[Value],
+    source_lane: &str,
+    defer_processed: bool,
+    latency_recorder: Option<&LatencyRecorder>,
+) -> Result<Vec<Value>, TransactionMonitorError> {
     if !is_valid_solana_address(wallet_address) {
         return Err(TransactionMonitorError::InvalidInput(
             "Invalid Solana public wallet address.".to_string(),
+        ));
+    }
+
+    if !matches!(source_lane, "fresh" | "history") {
+        return Err(TransactionMonitorError::InvalidInput(
+            "Signature source lane must be fresh or history.".to_string(),
         ));
     }
 
@@ -470,6 +498,13 @@ pub fn process_new_signatures(
             }
         }
         let raw = result.get("raw_transaction");
+        if let Some(object) = result.as_object_mut() {
+            object.insert("source_lane".to_string(), Value::String(source_lane.to_string()));
+            object.insert(
+                "paper_copy_eligible".to_string(),
+                Value::Bool(source_lane == "fresh"),
+            );
+        }
         let record_status = if result.get("status").and_then(Value::as_str) == Some("failed") {
             "failed"
         } else {
@@ -542,6 +577,7 @@ pub fn annotate_stale_candidates(
                         Value::String("stale".to_string()),
                     );
                     object.insert("retryable".to_string(), Value::Bool(false));
+                    object.insert("paper_copy_eligible".to_string(), Value::Bool(false));
                 }
             }
         }
@@ -564,21 +600,82 @@ pub fn monitor_wallet(
             "Invalid Solana public wallet address.".to_string(),
         ));
     }
-    let pending = get_and_store_new_wallet_signatures(
+    let _discovered = get_and_store_new_wallet_signatures(
         client,
         store,
         wallet_address,
         limit,
         latency_recorder,
     )?;
-    let processed = process_new_signatures(
-        client,
-        store,
-        wallet_address,
-        &pending,
-        defer_processed,
-        latency_recorder,
-    )?;
+    let history_batch = std::env::var("ENGEN_HISTORY_BATCH")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| (10..=25).contains(value))
+        .unwrap_or(DEFAULT_HISTORY_BATCH);
+    let plan = ScanPlan::new(limit.min(MAX_FRESH_BATCH), history_batch, 0);
+    let fresh_count = store.pending_count_for_lane(wallet_address, "fresh")?;
+    let history_count = store.pending_count_for_lane(wallet_address, "history")?;
+    let mut processed = Vec::new();
+
+    match plan.next_stage(fresh_count, history_count) {
+        Some(ScanStage::Fresh { limit: fresh_limit }) => {
+            let fresh = store.pending_signature_observations(
+                wallet_address,
+                "fresh",
+                fresh_limit,
+            )?;
+            processed.extend(process_signatures_for_lane(
+                client,
+                store,
+                wallet_address,
+                &fresh,
+                "fresh",
+                defer_processed,
+                latency_recorder,
+            )?);
+
+            // History is admitted only after every Fresh item is completed or moved
+            // to an explicit retry/review state. Active claims also block History.
+            let fresh_remaining = store.pending_count_for_lane(wallet_address, "fresh")?;
+            let history_remaining = store.pending_count_for_lane(wallet_address, "history")?;
+            if let Some(ScanStage::History { limit: history_limit, .. }) =
+                plan.next_stage(fresh_remaining, history_remaining)
+            {
+                let history = store.pending_signature_observations(
+                    wallet_address,
+                    "history",
+                    history_limit,
+                )?;
+                processed.extend(process_signatures_for_lane(
+                    client,
+                    store,
+                    wallet_address,
+                    &history,
+                    "history",
+                    defer_processed,
+                    latency_recorder,
+                )?);
+            }
+        }
+        Some(ScanStage::History { limit: history_limit, .. }) => {
+            let history = store.pending_signature_observations(
+                wallet_address,
+                "history",
+                history_limit,
+            )?;
+            processed.extend(process_signatures_for_lane(
+                client,
+                store,
+                wallet_address,
+                &history,
+                "history",
+                defer_processed,
+                latency_recorder,
+            )?);
+        }
+        None => {}
+    }
+
     annotate_stale_candidates(
         store,
         wallet_address,

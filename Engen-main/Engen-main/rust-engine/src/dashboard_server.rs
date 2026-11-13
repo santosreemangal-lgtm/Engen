@@ -2173,6 +2173,42 @@ mod tests {
     }
 
     #[test]
+    fn real_http_request_parser_and_response_writer_serve_wallet_api_over_tcp() {
+        use std::net::TcpListener;
+
+        let (_directory, app) = dashboard_app_fixture();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (stream, peer) = listener.accept().unwrap();
+            let request = read_request(&stream, peer.ip()).unwrap();
+            let response = app.handle(request);
+            write_response(stream, response).unwrap();
+        });
+
+        let mut client = TcpStream::connect(address).unwrap();
+        client
+            .write_all(
+                format!(
+                    "GET /api/wallets HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+                    address
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).unwrap();
+        server.join().unwrap();
+
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(response.contains("Content-Security-Policy:"));
+        let body = response.split_once("\r\n\r\n").unwrap().1;
+        let payload: Value = serde_json::from_str(body).unwrap();
+        assert_eq!(payload["wallets"], json!([]));
+    }
+
+    #[test]
     fn monitor_stop_persists_opt_out_for_global_and_profile_services() {
         let (_directory, app) = dashboard_app_fixture();
         fs::write(

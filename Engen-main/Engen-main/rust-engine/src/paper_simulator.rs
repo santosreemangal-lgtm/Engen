@@ -1271,7 +1271,7 @@ impl PaperSimulator {
             Err(_) => return self.reject_order(&mut order, "Configured priority fee is invalid."),
         };
         let network = &base_network_fee + &priority_fee;
-        if network > BigDecimal::from(1_000) {
+        if network > 1_000 {
             return self.reject_order(
                 &mut order,
                 "Combined simulated network and priority fees exceed the $1,000 per-fill safety limit.",

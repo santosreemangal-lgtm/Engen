@@ -40,6 +40,15 @@ for file in "$README" "$ROOT_README"; do
   fi
 done
 
+LAUNCHER="$ROOT/scripts/run_engen_rust_dashboard.sh"
+if [[ ! -f "$LAUNCHER" ]]; then
+  report_blocker "Rust-only dashboard launcher is missing."
+elif grep -nE '(^|[[:space:]])python(3)?([[:space:]]|$)' "$LAUNCHER"; then
+  report_blocker "Rust dashboard launcher must not invoke Python."
+else
+  report_note "Rust dashboard launcher exists and contains no Python command."
+fi
+
 MAIN="$APP/rust-engine/src/main.rs"
 LIB="$APP/rust-engine/src/lib.rs"
 if [[ ! -f "$MAIN" ]] || ! grep -q 'serve-dashboard' "$MAIN"; then

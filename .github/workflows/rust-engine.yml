@@ -9,6 +9,7 @@ on:
     paths:
       - "Engen-main/Engen-main/rust-engine/**"
       - "Engen-main/Engen-main/engine/**"
+      - "Engen-main/Engen-main/dashboard/**"
       - ".github/workflows/rust-engine.yml"
   push:
     branches:
@@ -16,6 +17,7 @@ on:
     paths:
       - "Engen-main/Engen-main/rust-engine/**"
       - "Engen-main/Engen-main/engine/**"
+      - "Engen-main/Engen-main/dashboard/**"
       - ".github/workflows/rust-engine.yml"
   workflow_dispatch:
 
@@ -92,5 +94,19 @@ jobs:
         env:
           PYTHONPATH: .
         run: python -m unittest discover -s engine/engine/engine/tests -p 'test_phase8_pnl_simulation.py' -v
+      - name: Dashboard backend and browser script syntax
+        working-directory: Engen-main/Engen-main
+        run: |
+          python -m py_compile dashboard/server.py engine/pnl.py
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          page = Path("dashboard/index.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script>(.*?)</script>", page, flags=re.DOTALL)
+          if len(scripts) != 1:
+              raise SystemExit(f"Expected exactly one inline dashboard script; found {len(scripts)}")
+          Path("/tmp/engen-dashboard.js").write_text(scripts[0], encoding="utf-8")
+          PY
+          node --check /tmp/engen-dashboard.js
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings

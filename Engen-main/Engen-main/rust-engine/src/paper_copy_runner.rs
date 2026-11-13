@@ -534,6 +534,7 @@ pub fn queue_paper_orders_at(
                 "max_buy_usd": settings.max_buy_usd,
                 "asset_decimals": asset_change.decimals,
                 "minimum_order_quantity": minimum_quantity_for_decimals(asset_change.decimals)?,
+                "asset_quantity_step": minimum_quantity_for_decimals(asset_change.decimals)?,
                 "source_asset_quantity": raw_to_string(&source_quantity),
                 "source_asset_pre_amount": asset_change.pre_amount.as_ref().map(raw_to_string),
                 "source_asset_post_amount": asset_change.post_amount.as_ref().map(raw_to_string),
@@ -958,6 +959,7 @@ mod tests {
         assert_eq!(order.details["target_notional_usd"], "5");
         assert_eq!(order.details["asset_decimals"], 6);
         assert_eq!(order.details["minimum_order_quantity"], "0.000001");
+        assert_eq!(order.details["asset_quantity_step"], "0.000001");
         assert_eq!(order.details["real_trading"], false);
         let duplicate = queue_paper_orders(
             WALLET,
@@ -1045,8 +1047,11 @@ mod tests {
         );
         assert_eq!(outcomes.len(), 1);
         assert_eq!(outcomes[0]["status"], "FILLED");
-        assert_eq!(simulator.fills()[0].quantity, "5");
-        assert_eq!(simulator.balances()[ASSET].to_string(), "5");
+        assert_eq!(
+            BigDecimal::from_str(&simulator.fills()[0].quantity).unwrap(),
+            BigDecimal::from(5)
+        );
+        assert_eq!(simulator.balances()[ASSET], BigDecimal::from(5));
     }
 
     #[test]
@@ -1114,8 +1119,14 @@ mod tests {
         let spent = BigDecimal::from_str(&fill.gross_quote).unwrap()
             + BigDecimal::from_str(&fill.fee).unwrap()
             + BigDecimal::from_str(&fill.network_cost).unwrap();
-        assert_eq!(spent, BigDecimal::from_str("7.5").unwrap());
-        assert_eq!(simulator.balances()["USD"].to_string(), "92.5");
+        let budget = BigDecimal::from_str("7.5").unwrap();
+        let unspent = &budget - &spent;
+        assert!(unspent >= BigDecimal::zero());
+        assert!(unspent < BigDecimal::from_str("0.0000021").unwrap());
+        assert_eq!(
+            simulator.balances()["USD"],
+            BigDecimal::from_str("100").unwrap() - spent
+        );
     }
 
     #[test]

@@ -759,9 +759,19 @@ impl DashboardApp {
                     Err(error) => HttpResponse::json(400, json!({"error":error.to_string()})),
                 }
             }
-            "update" | "settings" | "associate-source-wallet" | "disassociate-source-wallet" | "delete" => {
+            "update" | "settings" | "associate-source-wallet" | "disassociate-source-wallet" => {
                 let Some(raw_id) = body.get("profile_id").and_then(Value::as_str) else { return HttpResponse::json(400, json!({"error":"A valid profile_id is required."})); };
                 let id = match Self::canonical_profile(raw_id) { Ok(value) => value, Err(response) => return response };
+                if action == "delete" {
+                    if let Ok(mut services) = self.profile_monitors.lock() {
+                        if let Some(service) = services.remove(&id) { let _ = service.stop_and_wait(Duration::from_secs(15)); }
+                    }
+                    let _ = self.set_profile_monitor_pref(&id, false);
+                    return match self.context.profile_store.delete_profile(&id) {
+                        Ok(_) => HttpResponse::json(200, json!({"deleted":true,"profile_id":id,"history_preserved":true})),
+                        Err(error) => HttpResponse::json(404, json!({"error":error.to_string()})),
+                    };
+                }
                 let result = match action {
                     "update" => {
                         let name = body.get("name").and_then(Value::as_str);
@@ -790,15 +800,7 @@ impl DashboardApp {
                     "disassociate-source-wallet" => {
                         let Some(wallet) = body.get("wallet_address").and_then(Value::as_str) else { return HttpResponse::json(400, json!({"error":"A valid public wallet address is required."})); };
                         self.context.profile_store.disassociate_source_wallet(&id, wallet).map_err(|error| error.to_string())
-                            .and_then(|_| self.context.profile_store.get_profile(&id).map_err(|error| error.to_string())?.ok_or_else(|| "Profile not found.".to_string()))
-                    }
-                    "delete" => {
-                        if let Ok(mut services) = self.profile_monitors.lock() {
-                            if let Some(service) = services.remove(&id) { let _ = service.stop_and_wait(Duration::from_secs(15)); }
-                        }
-                        let _ = self.set_profile_monitor_pref(&id, false);
-                        self.context.profile_store.delete_profile(&id).map(|_| json!({"deleted":true,"profile_id":id,"history_preserved":true}))
-                            .map_err(|error| error.to_string())
+                            .and_then(|_| serde_json::to_value(self.context.profile_store.get_profile(&id).map_err(|error| error.to_string())?.ok_or_else(|| "Profile not found.".to_string())?).map_err(|_| "Profile response serialization failed.".to_string()))
                     }
                     _ => unreachable!(),
                 };

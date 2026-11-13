@@ -87,5 +87,10 @@ jobs:
           python -m unittest discover -s engine/engine/engine/tests -p 'test_rpc_policy.py'
           python -m unittest discover -s engine/engine/engine/tests -p 'test_signature_store.py'
           python -m unittest discover -s engine/engine/engine/tests -p 'test_wallet_monitor.py'
+      - name: Python Phase 8 P&L and ROI behavioral-reference tests
+        working-directory: Engen-main/Engen-main
+        env:
+          PYTHONPATH: .
+        run: python -m unittest discover -s engine/engine/engine/tests -p 'test_phase8_pnl_simulation.py' -v
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings

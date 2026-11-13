@@ -155,6 +155,16 @@ impl Config {
             parse_fee_usd(values, "ENGEN_PAPER_NETWORK_FEE_USD", "0", &mut problems);
         let paper_priority_fee_usd =
             parse_fee_usd(values, "ENGEN_PAPER_PRIORITY_FEE_USD", "0", &mut problems);
+        let total_network_fee = BigDecimal::from_str(&paper_network_fee_usd)
+            .unwrap_or_else(|_| BigDecimal::zero())
+            + BigDecimal::from_str(&paper_priority_fee_usd)
+                .unwrap_or_else(|_| BigDecimal::zero());
+        if total_network_fee > BigDecimal::from_str(MAX_PAPER_NETWORK_FEE_USD).unwrap() {
+            problems.push(
+                "Combined network and priority fees must not exceed 1000 USD per paper fill."
+                    .to_string(),
+            );
+        }
 
         let rpc_retries = match values.get("ENGEN_RPC_RETRIES") {
             None => 2,

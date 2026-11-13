@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use bigdecimal::rounding::RoundingMode;
 use bigdecimal::BigDecimal;
 use num_traits::Zero;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -825,7 +826,7 @@ impl PaperSimulator {
             );
         }
         let minimum_order_value_raw = match order.details.get("minimum_order_value_usd").cloned() {
-            None => policy.min_order_value_usd.clone(),
+            None | Some(Value::Null) => policy.min_order_value_usd.clone(),
             Some(Value::String(value)) => value,
             Some(_) => {
                 return self.reject_order(&mut order, "Minimum order value is invalid.");
@@ -838,7 +839,7 @@ impl PaperSimulator {
             };
         let minimum_order_quantity_raw = match order.details.get("minimum_order_quantity").cloned()
         {
-            None => policy.min_order_quantity.clone(),
+            None | Some(Value::Null) => policy.min_order_quantity.clone(),
             Some(Value::String(value)) => value,
             Some(_) => {
                 return self.reject_order(&mut order, "Minimum order quantity is invalid.");
@@ -851,6 +852,17 @@ impl PaperSimulator {
                     return self.reject_order(&mut order, "Minimum order quantity is invalid.")
                 }
             };
+        let quantity_step_raw = match order.details.get("asset_quantity_step").cloned() {
+            None | Some(Value::Null) => policy.min_order_quantity.clone(),
+            Some(Value::String(value)) => value,
+            Some(_) => {
+                return self.reject_order(&mut order, "Token quantity step is invalid.");
+            }
+        };
+        let quantity_step = match decimal_value(&quantity_step_raw, "Token quantity step", false) {
+            Ok(value) => value,
+            Err(_) => return self.reject_order(&mut order, "Token quantity step is invalid."),
+        };
         let reference_price = price.price.clone();
         let slip_factor = BigDecimal::from(10_000_i64 + i64::from(policy.slippage_bps))
             / BigDecimal::from(10_000_i64);
@@ -869,7 +881,7 @@ impl PaperSimulator {
         };
 
         let target_budget = match order.details.get("target_budget_usd").cloned() {
-            None => None,
+            None | Some(Value::Null) => None,
             Some(Value::String(value)) => {
                 match decimal_value(&value, "Target all-in USD BUY budget", false) {
                     Ok(value) => Some(value),
@@ -926,10 +938,15 @@ impl PaperSimulator {
                 );
             }
             order.quantity = quantity.to_string();
-        } else if let Some(target) = order.details.get("target_notional_usd").cloned() {
+        } else if order
+            .details
+            .get("target_notional_usd")
+            .is_some_and(|value| !value.is_null())
+        {
             // Backward compatibility for pending orders persisted before the
             // all-in budget contract was introduced.
-            let Some(target) = target.as_str() else {
+            let Some(target) = order.details.get("target_notional_usd").and_then(Value::as_str)
+            else {
                 return self.reject_order(&mut order, "Target USD paper order size is invalid.");
             };
             let target_value = match decimal_value(target, "Target USD paper order size", false) {
@@ -939,8 +956,14 @@ impl PaperSimulator {
                 }
             };
             quantity = target_value / &price.price;
-            order.quantity = quantity.to_string();
         }
+
+        // Token balances are integer atomic units. Round down to a whole
+        // quantity step so paper fills never invent fractional base units or
+        // exceed an all-in BUY budget because of decimal division precision.
+        let whole_steps = (&quantity / &quantity_step).with_scale_round(0, RoundingMode::Down);
+        quantity = whole_steps * &quantity_step;
+        order.quantity = quantity.to_string();
 
         if quantity < minimum_order_quantity {
             return self.reject_order(
@@ -1034,6 +1057,11 @@ impl PaperSimulator {
             &mut order.details,
             "minimum_order_quantity",
             json!(minimum_order_quantity.to_string()),
+        );
+        set_detail(
+            &mut order.details,
+            "asset_quantity_step",
+            json!(quantity_step.to_string()),
         );
         set_detail(
             &mut order.details,
@@ -1307,8 +1335,11 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result["status"], "FILLED");
-        assert_eq!(sim.balances()["USD"].to_string(), "79.8799");
-        assert_eq!(sim.balances()["TOKEN"].to_string(), "2");
+        assert_eq!(
+            sim.balances()["USD"],
+            BigDecimal::from_str("79.8799").unwrap()
+        );
+        assert_eq!(sim.balances()["TOKEN"], BigDecimal::from(2));
         assert_eq!(sim.fills().len(), 1);
         assert_eq!(result["transaction_broadcast"], false);
     }
@@ -1333,9 +1364,13 @@ mod tests {
         let spent = BigDecimal::from_str(&fill.gross_quote).unwrap()
             + BigDecimal::from_str(&fill.fee).unwrap()
             + BigDecimal::from_str(&fill.network_cost).unwrap();
-        assert_eq!(spent, BigDecimal::from(20));
-        assert_eq!(sim.balances()["USD"], BigDecimal::zero());
+        let budget = BigDecimal::from(20);
+        let unspent = &budget - &spent;
+        assert!(unspent >= BigDecimal::zero());
+        assert!(unspent < BigDecimal::from_str("0.00000000000000002").unwrap());
+        assert_eq!(sim.balances()["USD"], unspent);
         assert!(BigDecimal::from_str(&fill.quantity).unwrap() < BigDecimal::from(2));
+        assert_eq!(sim.orders()[&id].details["asset_quantity_step"], "0.000000000000000001");
         assert_eq!(
             sim.orders()[&id].details["buy_budget_used_usd"],
             spent.to_string()
@@ -1382,6 +1417,47 @@ mod tests {
             .unwrap();
         assert_eq!(rejected["status"], "REJECTED");
         assert!(sim.fills().is_empty());
+    }
+
+
+    #[test]
+    fn all_in_buy_quantity_is_rounded_down_to_token_atomic_units() {
+        let mut balances = virtual_cash();
+        balances.insert("USD".to_string(), "20".to_string());
+        let mut sim = PaperSimulator::in_memory(&balances).unwrap();
+        let order = sim
+            .create_order(CreateOrderRequest {
+                signal_id: "atomic-unit-rounding",
+                side: "BUY",
+                asset_mint: "TOKEN",
+                quantity: "1",
+                quote_mint: "USD",
+                created_at: now(),
+                details: Some(json!({
+                    "target_budget_usd":"20",
+                    "asset_quantity_step":"0.1",
+                    "minimum_order_quantity":"0.1"
+                })),
+            })
+            .unwrap();
+        let id = order["order_id"].as_str().unwrap();
+        let result = sim
+            .execute_order(
+                id,
+                Some(&price("TOKEN")),
+                now(),
+                &ExecutionPolicy::default(),
+                true,
+            )
+            .unwrap();
+
+        assert_eq!(result["status"], "FILLED");
+        assert_eq!(sim.fills()[0].quantity, "1.9");
+        let spent = BigDecimal::from_str(&sim.fills()[0].gross_quote).unwrap()
+            + BigDecimal::from_str(&sim.fills()[0].fee).unwrap()
+            + BigDecimal::from_str(&sim.fills()[0].network_cost).unwrap();
+        assert!(spent <= BigDecimal::from(20));
+        assert_eq!(sim.balances()["USD"], BigDecimal::from(20) - spent);
     }
 
     #[test]

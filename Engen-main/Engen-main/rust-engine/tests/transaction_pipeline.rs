@@ -153,6 +153,7 @@ fn missing_signature_block_time_is_recovered_and_persisted_before_fresh_eligibil
         ),
         rpc_response(4, buy_transaction),
         rpc_response(7, json!(block_time)),
+        rpc_response(6, json!([])),
     ]);
 
     let client = SolanaRpcClient::new(RpcConfig {
@@ -321,6 +322,7 @@ fn unsupported_transaction_version_is_retained_for_manual_review_after_restart()
                 "message":"Transaction version (1) is not supported by this RPC node"
             }
         }),
+        rpc_response(6, json!([])),
     ]);
 
     let client = SolanaRpcClient::new(RpcConfig {
@@ -444,6 +446,7 @@ fn failed_transaction_is_persisted_as_non_copyable_evidence_after_restart() {
             }]),
         ),
         rpc_response(4, failed_transaction.clone()),
+        rpc_response(6, json!([])),
     ]);
 
     let client = SolanaRpcClient::new(RpcConfig {
@@ -570,6 +573,7 @@ fn wallet_discovery_to_transfer_classification_and_restart_evidence_is_offline()
             }]),
         ),
         rpc_response(4, transaction.clone()),
+        rpc_response(6, json!([])),
     ]);
 
     let client = SolanaRpcClient::new(RpcConfig {

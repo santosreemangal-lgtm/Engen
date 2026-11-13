@@ -254,7 +254,7 @@ where
     Ok(scanned)
 }
 
-fn resume_history_backfill(
+pub fn resume_history_backfill(
     client: &SolanaRpcClient,
     store: &SignatureStore,
     wallet_address: &str,
@@ -293,7 +293,8 @@ pub fn get_and_store_new_wallet_signatures(
 
     if !store.has_baseline(wallet_address)? {
         initialize_wallet_baseline(store, wallet_address, &first_page)?;
-        resume_history_backfill(client, store, wallet_address, latency_recorder)?;
+        // Initial observation establishes the baseline only. History is not fetched
+        // or processed until a later cycle, after Fresh work has been considered.
         return Ok(Vec::new());
     }
 
@@ -310,7 +311,6 @@ pub fn get_and_store_new_wallet_signatures(
     if store.history_backfill_state(wallet_address)?.is_none() {
         store.start_history_backfill(wallet_address, history_cursor.as_deref())?;
     }
-    resume_history_backfill(client, store, wallet_address, latency_recorder)?;
     Ok(discovered)
 }
 

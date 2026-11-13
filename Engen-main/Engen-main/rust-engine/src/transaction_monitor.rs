@@ -14,7 +14,9 @@ use crate::solana_validation::{is_valid_solana_address, is_valid_transaction_sig
 use crate::source_freshness::source_block_time_ok;
 use crate::transaction_analysis::classify_transaction;
 use crate::transaction_processor::{process_transaction_signature, TransactionProcessorError};
-use crate::wallet_monitor::{get_and_store_new_wallet_signatures, WalletMonitorError};
+use crate::wallet_monitor::{
+    get_and_store_new_wallet_signatures, resume_history_backfill, WalletMonitorError,
+};
 
 const MAX_PROCESSING_ATTEMPTS: u32 = 6;
 const SIGNATURE_CLAIM_LEASE_SECONDS: u64 = 120;
@@ -603,9 +605,10 @@ pub fn monitor_wallet(
 ) -> Result<Vec<Value>, TransactionMonitorError> {
     if !is_valid_solana_address(wallet_address) {
         return Err(TransactionMonitorError::InvalidInput(
-            "Invalid Solana public wallet address.".to_string(),
+            "Invalid transaction-monitor input: ".to_string(),
         ));
     }
+    let had_baseline = store.has_baseline(wallet_address)?;
     let _discovered = get_and_store_new_wallet_signatures(
         client,
         store,
@@ -613,6 +616,10 @@ pub fn monitor_wallet(
         limit,
         latency_recorder,
     )?;
+    if !had_baseline {
+        return Ok(Vec::new());
+    }
+
     let history_batch = std::env::var("ENGEN_HISTORY_BATCH")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
@@ -620,54 +627,41 @@ pub fn monitor_wallet(
         .unwrap_or(DEFAULT_HISTORY_BATCH);
     let plan = ScanPlan::new(limit.min(MAX_FRESH_BATCH), history_batch, 0);
     let fresh_count = store.pending_count_for_lane(wallet_address, "fresh")?;
-    let history_count = store.pending_count_for_lane(wallet_address, "history")?;
     let mut processed = Vec::new();
 
-    match plan.next_stage(fresh_count, history_count) {
-        Some(ScanStage::Fresh { limit: fresh_limit }) => {
-            let fresh =
-                store.pending_signature_observations(wallet_address, "fresh", fresh_limit)?;
-            processed.extend(process_signatures_for_lane(
-                client,
-                store,
-                wallet_address,
-                &fresh,
-                "fresh",
-                defer_processed,
-                latency_recorder,
-            )?);
+    if let Some(ScanStage::Fresh { limit: fresh_limit }) =
+        plan.next_stage(fresh_count, 0)
+    {
+        let fresh = store.pending_signature_observations(
+            wallet_address,
+            "fresh",
+            fresh_limit,
+        )?;
+        processed.extend(process_signatures_for_lane(
+            client,
+            store,
+            wallet_address,
+            &fresh,
+            "fresh",
+            defer_processed,
+            latency_recorder,
+        )?);
+    }
 
-            // History is admitted only after every Fresh item is completed or moved
-            // to an explicit retry/review state. Active claims also block History.
-            let fresh_remaining = store.pending_count_for_lane(wallet_address, "fresh")?;
-            let history_remaining = store.pending_count_for_lane(wallet_address, "history")?;
-            if let Some(ScanStage::History {
-                limit: history_limit,
-                ..
-            }) = plan.next_stage(fresh_remaining, history_remaining)
-            {
-                let history = store.pending_signature_observations(
-                    wallet_address,
-                    "history",
-                    history_limit,
-                )?;
-                processed.extend(process_signatures_for_lane(
-                    client,
-                    store,
-                    wallet_address,
-                    &history,
-                    "history",
-                    defer_processed,
-                    latency_recorder,
-                )?);
-            }
-        }
-        Some(ScanStage::History {
-            limit: history_limit,
-            ..
-        }) => {
-            let history =
-                store.pending_signature_observations(wallet_address, "history", history_limit)?;
+    // A pending/claimed Fresh item blocks History. Only after Fresh has drained
+    // do we spend an RPC request on the bounded History cursor and process its batch.
+    let fresh_remaining = store.pending_count_for_lane(wallet_address, "fresh")?;
+    if fresh_remaining == 0 {
+        resume_history_backfill(client, store, wallet_address, latency_recorder)?;
+        let history_remaining = store.pending_count_for_lane(wallet_address, "history")?;
+        if let Some(ScanStage::History { limit: history_limit, .. }) =
+            plan.next_stage(0, history_remaining)
+        {
+            let history = store.pending_signature_observations(
+                wallet_address,
+                "history",
+                history_limit,
+            )?;
             processed.extend(process_signatures_for_lane(
                 client,
                 store,
@@ -678,7 +672,6 @@ pub fn monitor_wallet(
                 latency_recorder,
             )?);
         }
-        None => {}
     }
 
     annotate_stale_candidates(

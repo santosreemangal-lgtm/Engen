@@ -1721,12 +1721,20 @@ mod tests {
             Some(observed.clone()),
         )
         .unwrap();
+        // Simulate a changed environment after queue/restart. The order must
+        // retain the policy snapshot written when it was queued.
+        let changed_environment_policy = ExecutionPolicy {
+            fee_bps: 100,
+            network_cost: "10".to_string(),
+            priority_fee_usd: "5".to_string(),
+            ..ExecutionPolicy::default()
+        };
         let outcomes = execute_pending_paper_orders_with_at_and_policy(
             &mut simulator,
             Some(WALLET),
             |_mint| Some(price.clone()),
             None,
-            &global_policy,
+            &changed_environment_policy,
             1_760_000_001,
         );
 

@@ -1100,6 +1100,14 @@ mod tests {
     }
 
     #[test]
+    fn settings_can_be_validated_without_writing_and_reject_secret_fields() {
+        assert!(ProfileStore::validate_settings(&serde_json::json!({"risk":"low"})).is_ok());
+        assert!(ProfileStore::validate_settings(
+            &serde_json::json!({"credentials":{"seed_phrase":"must-not-be-stored"}})
+        ).is_err());
+    }
+
+    #[test]
     fn shared_wallet_association_and_soft_delete_preserve_history() {
         let (_directory, store) = store();
         let a = store.create_profile("A", None, None).unwrap();

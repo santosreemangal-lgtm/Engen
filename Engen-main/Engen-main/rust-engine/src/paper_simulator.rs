@@ -815,17 +815,6 @@ impl PaperSimulator {
                 "Slippage and fee basis points must be between 0 and 10000.".to_string(),
             ));
         }
-        let mut quantity = decimal_value(&order.quantity, "Order quantity", false)?;
-        if let Some(target) = order
-            .details
-            .get("target_notional_usd")
-            .and_then(Value::as_str)
-        {
-            let target_value = decimal_value(target, "Target USD paper order size", false)?;
-            quantity = target_value / &price.price;
-            order.quantity = quantity.to_string();
-        }
-
         let reference_price = price.price.clone();
         let slip_factor = BigDecimal::from(10_000_i64 + i64::from(policy.slippage_bps))
             / BigDecimal::from(10_000_i64);
@@ -836,10 +825,79 @@ impl PaperSimulator {
                 * (BigDecimal::from(10_000_i64 - i64::from(policy.slippage_bps))
                     / BigDecimal::from(10_000_i64))
         };
-        let gross = &quantity * &execution_price;
-        let fee =
-            &gross * BigDecimal::from(i64::from(policy.fee_bps)) / BigDecimal::from(10_000_i64);
+        let fee_rate =
+            BigDecimal::from(i64::from(policy.fee_bps)) / BigDecimal::from(10_000_i64);
+        let fee_multiplier = BigDecimal::from(1) + &fee_rate;
         let network = decimal_value(&policy.network_cost, "Network cost", true)?;
+
+        let target_budget = match order.details.get("target_budget_usd") {
+            None => None,
+            Some(Value::String(value)) => Some(decimal_value(
+                value,
+                "Target all-in USD BUY budget",
+                false,
+            )?),
+            Some(_) => {
+                return self.reject_order(
+                    &mut order,
+                    "Target all-in USD BUY budget is invalid.",
+                )
+            }
+        };
+        let mut quantity = decimal_value(&order.quantity, "Order quantity", false)?;
+        if let Some(budget) = target_budget {
+            if order.side != "BUY" {
+                return self.reject_order(
+                    &mut order,
+                    "An all-in USD BUY budget can only be used by a BUY order.",
+                );
+            }
+            let quote_balance = self
+                .balances
+                .get(&order.quote_mint)
+                .cloned()
+                .unwrap_or_else(BigDecimal::zero);
+            if budget > quote_balance {
+                return self.reject_order(
+                    &mut order,
+                    "Insufficient simulated quote balance for the configured BUY budget.",
+                );
+            }
+            if budget <= network {
+                return self.reject_order(
+                    &mut order,
+                    "The configured BUY budget does not cover simulated network cost.",
+                );
+            }
+            let all_in_cost_per_token = &execution_price * &fee_multiplier;
+            if all_in_cost_per_token <= BigDecimal::zero() {
+                return self.reject_order(
+                    &mut order,
+                    "The simulated BUY execution price and fees are invalid.",
+                );
+            }
+            quantity = (&budget - &network) / all_in_cost_per_token;
+            if quantity <= BigDecimal::zero() {
+                return self.reject_order(
+                    &mut order,
+                    "The configured BUY budget produces no positive token quantity.",
+                );
+            }
+            order.quantity = quantity.to_string();
+        } else if let Some(target) = order
+            .details
+            .get("target_notional_usd")
+            .and_then(Value::as_str)
+        {
+            // Backward compatibility for pending orders persisted before the
+            // all-in budget contract was introduced.
+            let target_value = decimal_value(target, "Target USD paper order size", false)?;
+            quantity = target_value / &price.price;
+            order.quantity = quantity.to_string();
+        }
+
+        let gross = &quantity * &execution_price;
+        let fee = &gross * &fee_rate;
         let total_cost_or_proceeds = if order.side == "BUY" {
             &gross + &fee + &network
         } else {
@@ -901,6 +959,13 @@ impl PaperSimulator {
 
         order.status = "FILLED".to_string();
         order.reason = None;
+        if order.details.get("target_budget_usd").is_some() {
+            set_detail(
+                &mut order.details,
+                "buy_budget_used_usd",
+                json!(total_cost_or_proceeds.to_string()),
+            );
+        }
         set_detail(&mut order.details, "execution_state", json!("FILLED"));
         set_detail(
             &mut order.details,
@@ -1134,6 +1199,26 @@ mod tests {
             .to_string()
     }
 
+    fn budget_buy_order(sim: &mut PaperSimulator, signal: &str, budget: &str) -> String {
+        sim.create_order(CreateOrderRequest {
+            signal_id: signal,
+            side: "BUY",
+            asset_mint: "TOKEN",
+            quantity: "1",
+            quote_mint: "USD",
+            created_at: now(),
+            details: Some(json!({
+                "target_budget_usd":budget,
+                "target_budget_semantics":"ALL_IN_USD_BUDGET_INCLUDING_SLIPPAGE_FEES_AND_NETWORK_COST",
+                "origin":"AUTOMATIC_WALLET_COPY"
+            })),
+        })
+        .unwrap()["order_id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
     #[test]
     fn fills_a_paper_buy_with_decimal_accounting() {
         let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
@@ -1152,6 +1237,69 @@ mod tests {
         assert_eq!(sim.balances()["TOKEN"].to_string(), "2");
         assert_eq!(sim.fills().len(), 1);
         assert_eq!(result["transaction_broadcast"], false);
+    }
+
+    #[test]
+    fn all_in_buy_budget_covers_slippage_fees_and_network_cost_without_overspend() {
+        let mut balances = virtual_cash();
+        balances.insert("USD".to_string(), "20".to_string());
+        let mut sim = PaperSimulator::in_memory(&balances).unwrap();
+        let id = budget_buy_order(&mut sim, "all-in-budget", "20");
+        let result = sim.execute_order(
+            &id,
+            Some(&price("TOKEN")),
+            now(),
+            &ExecutionPolicy::default(),
+            true,
+        ).unwrap();
+        assert_eq!(result["status"], "FILLED");
+        let fill = &sim.fills()[0];
+        let spent = BigDecimal::from_str(&fill.gross_quote).unwrap()
+            + BigDecimal::from_str(&fill.fee).unwrap()
+            + BigDecimal::from_str(&fill.network_cost).unwrap();
+        assert_eq!(spent, BigDecimal::from(20));
+        assert_eq!(sim.balances()["USD"], BigDecimal::zero());
+        assert!(BigDecimal::from_str(&fill.quantity).unwrap() < BigDecimal::from(2));
+        assert_eq!(
+            sim.orders()[&id].details["buy_budget_used_usd"],
+            spent.to_string()
+        );
+    }
+
+    #[test]
+    fn all_in_buy_budget_rejects_invalid_or_unaffordable_budget_without_fill() {
+        let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
+        let id = budget_buy_order(&mut sim, "oversized-budget", "101");
+        let result = sim.execute_order(
+            &id,
+            Some(&price("TOKEN")),
+            now(),
+            &ExecutionPolicy::default(),
+            true,
+        ).unwrap();
+        assert_eq!(result["status"], "REJECTED");
+        assert!(sim.fills().is_empty());
+        assert_eq!(sim.balances()["USD"], BigDecimal::from(100));
+
+        let invalid = sim.create_order(CreateOrderRequest {
+            signal_id: "invalid-budget",
+            side: "BUY",
+            asset_mint: "TOKEN",
+            quantity: "1",
+            quote_mint: "USD",
+            created_at: now(),
+            details: Some(json!({"target_budget_usd":true})),
+        }).unwrap();
+        let invalid_id = invalid["order_id"].as_str().unwrap();
+        let rejected = sim.execute_order(
+            invalid_id,
+            Some(&price("TOKEN")),
+            now(),
+            &ExecutionPolicy::default(),
+            true,
+        ).unwrap();
+        assert_eq!(rejected["status"], "REJECTED");
+        assert!(sim.fills().is_empty());
     }
 
     #[test]

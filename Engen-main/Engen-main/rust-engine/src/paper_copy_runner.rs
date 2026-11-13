@@ -492,16 +492,30 @@ pub fn queue_paper_orders_at(
             target_notional_usd = Some(target_budget);
             order_quantity = "1".to_string();
         } else {
-            let Some(pre_source_raw) = asset_change.pre_amount.clone() else {
+            let (Some(pre_source_raw), Some(post_source_raw)) = (
+                asset_change.pre_amount.clone(),
+                asset_change.post_amount.clone(),
+            ) else {
                 continue;
             };
-            let pre_source = &pre_source_raw
-                / BigDecimal::from_str(&format!("1{}", "0".repeat(asset_change.decimals as usize)))
-                    .unwrap_or_else(|_| BigDecimal::from(1));
-            if pre_source <= 0 || source_quantity > pre_source {
+            let unit_factor = BigDecimal::from_str(&format!(
+                "1{}",
+                "0".repeat(asset_change.decimals as usize)
+            ))
+            .unwrap_or_else(|_| BigDecimal::from(1));
+            let pre_source = &pre_source_raw / &unit_factor;
+            let post_source = &post_source_raw / &unit_factor;
+
+            // A SELL fraction is valid only when pre - post equals the absolute
+            // source token delta. Inconsistent balance snapshots are never copied.
+            if pre_source <= 0 || post_source < 0 || post_source >= pre_source {
                 continue;
             }
-            let fraction = &source_quantity / &pre_source;
+            let sold_from_balances = &pre_source - &post_source;
+            if sold_from_balances != source_quantity {
+                continue;
+            }
+            let fraction = &sold_from_balances / &pre_source;
             if fraction <= 0 || fraction > 1 {
                 continue;
             }
@@ -610,7 +624,38 @@ pub fn execute_pending_paper_orders_with_at<F>(
 where
     F: FnMut(&str) -> Option<MarketPrice>,
 {
-    let orders: Vec<_> = simulator.orders().values().cloned().collect();
+    let mut orders: Vec<_> = simulator.orders().values().cloned().collect();
+    // Orders are stored by UUID, which is not source chronology. Preserve the
+    // source event order so sequential partial sells consume the intended
+    // remaining paper position and fills reach the P&L ledger in time order.
+    orders.sort_by(|left, right| {
+        let left_slot = left
+            .details
+            .get("source_slot")
+            .and_then(Value::as_u64)
+            .unwrap_or(u64::MAX);
+        let right_slot = right
+            .details
+            .get("source_slot")
+            .and_then(Value::as_u64)
+            .unwrap_or(u64::MAX);
+        let left_block_time = left
+            .details
+            .get("source_block_time")
+            .and_then(Value::as_i64)
+            .unwrap_or(i64::MAX);
+        let right_block_time = right
+            .details
+            .get("source_block_time")
+            .and_then(Value::as_i64)
+            .unwrap_or(i64::MAX);
+
+        left_slot
+            .cmp(&right_slot)
+            .then_with(|| left_block_time.cmp(&right_block_time))
+            .then_with(|| left.created_at.cmp(&right.created_at))
+            .then_with(|| left.signal_id.cmp(&right.signal_id))
+    });
     let mut outcomes = Vec::new();
     for order in orders {
         let details = &order.details;
@@ -1052,6 +1097,182 @@ mod tests {
             BigDecimal::from(5)
         );
         assert_eq!(simulator.balances()[ASSET], BigDecimal::from(5));
+    }
+
+    #[test]
+    fn sell_queue_rejects_inconsistent_source_pre_post_and_delta_amounts() {
+        let mut simulator = simulator();
+        let mut inconsistent = sell_signal(&"c".repeat(64));
+        inconsistent["token_balance_changes"][0]["post_amount"] = json!("4000000");
+
+        let queued = queue_paper_orders(
+            WALLET,
+            &[inconsistent],
+            &mut simulator,
+            AllowedSides::Sell,
+            &CopySettings::default(),
+            None,
+        )
+        .unwrap();
+
+        assert!(queued.is_empty());
+        assert!(simulator.orders().is_empty());
+        assert_eq!(simulator.balances()[ASSET], BigDecimal::from(10));
+    }
+
+    #[test]
+    fn partial_sell_uses_source_percentage_and_updates_both_virtual_balances() {
+        let mut simulator = simulator();
+        let mut source = sell_signal(&"e".repeat(64));
+        source["token_balance_changes"][0]["delta_amount"] = json!("-2500000");
+        source["token_balance_changes"][0]["pre_amount"] = json!("10000000");
+        source["token_balance_changes"][0]["post_amount"] = json!("7500000");
+
+        let queued = queue_paper_orders(
+            WALLET,
+            &[source],
+            &mut simulator,
+            AllowedSides::Sell,
+            &CopySettings::default(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(
+            simulator.orders().values().next().unwrap().details["source_sell_fraction"],
+            "0.25"
+        );
+
+        let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let price = MarketPrice::new(
+            ASSET,
+            "1",
+            "USD",
+            "partial-sell-fixture",
+            now.clone(),
+            Some("25000"),
+            Some("test-liquidity".to_string()),
+            Some(now),
+        )
+        .unwrap();
+        let outcomes = execute_pending_paper_orders_with(
+            &mut simulator,
+            Some(WALLET),
+            |_mint| Some(price.clone()),
+            None,
+        );
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0]["status"], "FILLED");
+        let fill = &simulator.fills()[0];
+        assert_eq!(
+            BigDecimal::from_str(&fill.quantity).unwrap(),
+            BigDecimal::from_str("2.5").unwrap()
+        );
+        assert_eq!(
+            simulator.balances()[ASSET],
+            BigDecimal::from_str("7.5").unwrap()
+        );
+
+        let expected_proceeds = BigDecimal::from_str(&fill.gross_quote).unwrap()
+            - BigDecimal::from_str(&fill.fee).unwrap()
+            - BigDecimal::from_str(&fill.network_cost).unwrap();
+        assert_eq!(
+            simulator.balances()["USD"],
+            BigDecimal::from(100) + expected_proceeds
+        );
+        assert!(BigDecimal::from_str(&fill.fee).unwrap() > BigDecimal::zero());
+    }
+
+    #[test]
+    fn sequential_partial_sells_execute_in_source_slot_order_and_are_idempotent() {
+        let mut simulator = simulator();
+        let mut later = sell_signal(&"f".repeat(64));
+        later["signature_observation"]["slot"] = json!(102);
+        later["signature_observation"]["block_time"] = json!(1760000001);
+        later["token_balance_changes"][0]["delta_amount"] = json!("-2500000");
+        later["token_balance_changes"][0]["pre_amount"] = json!("5000000");
+        later["token_balance_changes"][0]["post_amount"] = json!("2500000");
+
+        let mut earlier = sell_signal(&"a".repeat(64));
+        earlier["signature_observation"]["slot"] = json!(101);
+        earlier["signature_observation"]["block_time"] = json!(1760000000);
+
+        // Intentionally queue the later source trade first. Execution must sort
+        // by source chronology, not by the random order UUID or insertion order.
+        let queued = queue_paper_orders(
+            WALLET,
+            &[later, earlier],
+            &mut simulator,
+            AllowedSides::Sell,
+            &CopySettings::default(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(queued.len(), 2);
+
+        let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let mut price_call = 0usize;
+        let outcomes = execute_pending_paper_orders_with(
+            &mut simulator,
+            Some(WALLET),
+            |_mint| {
+                let (value, source) = if price_call == 0 {
+                    ("1", "source-slot-101")
+                } else {
+                    ("2", "source-slot-102")
+                };
+                price_call += 1;
+                Some(
+                    MarketPrice::new(
+                        ASSET,
+                        value,
+                        "USD",
+                        source,
+                        now.clone(),
+                        Some("25000"),
+                        Some("test-liquidity".to_string()),
+                        Some(now.clone()),
+                    )
+                    .unwrap(),
+                )
+            },
+            None,
+        );
+
+        assert_eq!(outcomes.len(), 2);
+        assert!(outcomes.iter().all(|value| value["status"] == "FILLED"));
+        assert_eq!(simulator.fills().len(), 2);
+        assert_eq!(simulator.fills()[0].price_source, "source-slot-101");
+        assert_eq!(simulator.fills()[1].price_source, "source-slot-102");
+        assert_eq!(
+            BigDecimal::from_str(&simulator.fills()[0].quantity).unwrap(),
+            BigDecimal::from(5)
+        );
+        assert_eq!(
+            BigDecimal::from_str(&simulator.fills()[1].quantity).unwrap(),
+            BigDecimal::from_str("2.5").unwrap()
+        );
+        assert_eq!(
+            simulator.balances()[ASSET],
+            BigDecimal::from_str("2.5").unwrap()
+        );
+
+        let expected_usd = BigDecimal::from(100)
+            + BigDecimal::from_str(&simulator.fills()[0].net_quote).unwrap()
+            + BigDecimal::from_str(&simulator.fills()[1].net_quote).unwrap();
+        assert_eq!(simulator.balances()["USD"], expected_usd);
+
+        let balance_after_fills = simulator.balances().clone();
+        let no_second_fill = execute_pending_paper_orders_with(
+            &mut simulator,
+            Some(WALLET),
+            |_mint| panic!("filled SELL orders must not request another market price"),
+            None,
+        );
+        assert!(no_second_fill.is_empty());
+        assert_eq!(simulator.fills().len(), 2);
+        assert_eq!(simulator.balances(), &balance_after_fills);
     }
 
     #[test]

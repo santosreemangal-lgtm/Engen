@@ -79,7 +79,6 @@ fn shared_phase2_golden_corpus_matches_transaction_type_contract() {
     }
 }
 
-
 #[test]
 fn missing_signature_block_time_is_recovered_and_persisted_before_fresh_eligibility() {
     let block_time = std::time::SystemTime::now()
@@ -174,8 +173,14 @@ fn missing_signature_block_time_is_recovered_and_persisted_before_fresh_eligibil
         .expect("monitor source wallet and recover missing blockTime");
 
     assert_eq!(results.len(), 1);
-    assert_eq!(results[0]["trade_signal"]["classification"], "BUY_CANDIDATE");
-    assert_eq!(results[0]["signature_observation"]["block_time"], block_time);
+    assert_eq!(
+        results[0]["trade_signal"]["classification"],
+        "BUY_CANDIDATE"
+    );
+    assert_eq!(
+        results[0]["signature_observation"]["block_time"],
+        block_time
+    );
     assert_eq!(results[0]["paper_copy_eligible"], true);
     assert_eq!(
         store.get_status(WALLET, NEW_SIGNATURE).unwrap().as_deref(),

@@ -73,6 +73,10 @@ jobs:
           fi
       - name: Rust unit and integration tests
         run: cargo test --all-targets
+      - name: Public Solana mainnet read-only RPC smoke test
+        env:
+          ENGEN_PUBLIC_RPC_INTEGRATION: "1"
+        run: cargo test --test public_rpc_smoke -- --nocapture
       - name: Python Phase 2 behavioral-reference tests
         working-directory: Engen-main/Engen-main
         env:

@@ -133,6 +133,7 @@ jobs:
           set -euo pipefail
           TEMP_DATA="$(mktemp -d)"
           export ENGEN_APP_ROOT="$GITHUB_WORKSPACE/Engen-main/Engen-main"
+          export ENGEN_RUST_BINARY="$GITHUB_WORKSPACE/Engen-main/Engen-main/rust-engine/target/debug/engen-engine"
           export PROFILE_STORE_DB="$TEMP_DATA/profiles.db"
           export SIGNATURE_DB="$TEMP_DATA/signatures.db"
           export PAPER_SIMULATOR_DB="$TEMP_DATA/paper_simulator.db"
@@ -149,17 +150,20 @@ jobs:
           trap cleanup EXIT
           READY=0
           for attempt in $(seq 1 60); do
-            if curl --fail --silent "http://127.0.0.1:\${PORT}/" -o "$TEMP_DATA/index.html"; then
+            if curl --fail --silent "http://127.0.0.1:$PORT/" -o "$TEMP_DATA/index.html"; then
               READY=1
               break
             fi
             sleep 0.5
           done
-          test "$READY" = "1"
+          if [[ "$READY" != "1" ]]; then
+            cat "$TEMP_DATA/server.log"
+            exit 1
+          fi
           grep -F "<html" "$TEMP_DATA/index.html"
-          curl --fail --silent "http://127.0.0.1:\${PORT}/api/wallets" > "$TEMP_DATA/wallets.json"
+          curl --fail --silent "http://127.0.0.1:$PORT/api/wallets" > "$TEMP_DATA/wallets.json"
           grep -F '"wallets":[]' "$TEMP_DATA/wallets.json"
-          curl --silent --show-error -D "$TEMP_DATA/headers.txt" -o /dev/null "http://127.0.0.1:\${PORT}/api/wallets"
+          curl --silent --show-error -D "$TEMP_DATA/headers.txt" -o /dev/null "http://127.0.0.1:$PORT/api/wallets"
           grep -iF "Content-Security-Policy:" "$TEMP_DATA/headers.txt"
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings

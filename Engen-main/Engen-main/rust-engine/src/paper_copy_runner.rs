@@ -1051,7 +1051,10 @@ mod tests {
         let order = simulator.orders().values().next().unwrap();
         assert_eq!(order.details["source_sell_fraction"], "0.5");
         assert_eq!(order.details["sizing_mode"], "SOURCE_POSITION_REDUCTION");
-        assert_eq!(BigDecimal::from_str(&order.quantity).unwrap(), BigDecimal::from(5));
+        assert_eq!(
+            BigDecimal::from_str(&order.quantity).unwrap(),
+            BigDecimal::from(5)
+        );
         assert_eq!(order.details["reservation_mint"], ASSET);
         assert_eq!(order.details["reservation_amount"], "5");
         assert_eq!(simulator.reserved_balance(ASSET), BigDecimal::from(5));
@@ -1286,9 +1289,15 @@ mod tests {
         .unwrap();
         assert_eq!(queued.len(), 2);
         assert_eq!(
-            BigDecimal::from_str(&simulator.orders().values().find(|order| {
-                order.details["source_slot"] == 101
-            }).unwrap().quantity).unwrap(),
+            BigDecimal::from_str(
+                &simulator
+                    .orders()
+                    .values()
+                    .find(|order| { order.details["source_slot"] == 101 })
+                    .unwrap()
+                    .quantity
+            )
+            .unwrap(),
             BigDecimal::from(5)
         );
         assert_eq!(
@@ -1385,10 +1394,7 @@ mod tests {
     #[test]
     fn multiple_pending_buy_signals_reserve_decreasing_available_cash() {
         let mut simulator = simulator();
-        let rows = vec![
-            buy_signal(&"b".repeat(64)),
-            buy_signal(&"c".repeat(64)),
-        ];
+        let rows = vec![buy_signal(&"b".repeat(64)), buy_signal(&"c".repeat(64))];
         let queued = queue_paper_orders(
             WALLET,
             &rows,
@@ -1404,17 +1410,14 @@ mod tests {
             .orders()
             .values()
             .map(|order| {
-                BigDecimal::from_str(
-                    order.details["target_budget_usd"].as_str().unwrap(),
-                )
-                .unwrap()
+                BigDecimal::from_str(order.details["target_budget_usd"].as_str().unwrap()).unwrap()
             })
             .collect();
         budgets.sort();
-        assert_eq!(budgets, vec![
-            BigDecimal::from_str("4.75").unwrap(),
-            BigDecimal::from(5),
-        ]);
+        assert_eq!(
+            budgets,
+            vec![BigDecimal::from_str("4.75").unwrap(), BigDecimal::from(5),]
+        );
         assert_eq!(
             simulator.reserved_balance("USD"),
             BigDecimal::from_str("9.75").unwrap()

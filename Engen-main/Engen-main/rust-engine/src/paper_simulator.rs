@@ -436,10 +436,8 @@ impl PaperSimulator {
         for row in rows {
             let (order_id, mint, raw_amount) = row?;
             let amount = decimal_value(&raw_amount, "Persisted reservation amount", false)?;
-            self.reservations.insert(
-                order_id,
-                BalanceReservation { mint, amount },
-            );
+            self.reservations
+                .insert(order_id, BalanceReservation { mint, amount });
         }
         Ok(())
     }
@@ -487,8 +485,7 @@ impl PaperSimulator {
             return Ok(());
         }
         let mut connection = self.connect()?;
-        let transaction =
-            connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         Self::persist_order(&transaction, order)?;
 
         if release_reservation {
@@ -585,8 +582,7 @@ impl PaperSimulator {
         }
 
         let mut connection = self.connect()?;
-        let transaction =
-            connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         if let Some(reservation) = reservation {
             let stored_raw: Option<String> = transaction
                 .query_row(
@@ -600,8 +596,7 @@ impl PaperSimulator {
                 .map(|raw| decimal_value(raw, "Persisted virtual balance", true))
                 .transpose()?
                 .unwrap_or_else(BigDecimal::zero);
-            let reserved =
-                Self::persisted_reserved_balance(&transaction, &reservation.mint, None)?;
+            let reserved = Self::persisted_reserved_balance(&transaction, &reservation.mint, None)?;
             if reservation.amount > stored - reserved {
                 return Ok(false);
             }
@@ -1233,8 +1228,7 @@ impl PaperSimulator {
                     "An all-in USD BUY budget can only be used by a BUY order.",
                 );
             }
-            let quote_balance =
-                self.available_balance_for_order(&order.quote_mint, order_id);
+            let quote_balance = self.available_balance_for_order(&order.quote_mint, order_id);
             if budget > quote_balance {
                 return self.reject_order(
                     &mut order,
@@ -1325,8 +1319,7 @@ impl PaperSimulator {
             .cloned()
             .unwrap_or_else(BigDecimal::zero);
         if order.side == "BUY" {
-            let spendable_quote =
-                self.available_balance_for_order(&order.quote_mint, order_id);
+            let spendable_quote = self.available_balance_for_order(&order.quote_mint, order_id);
             if spendable_quote < total_cost_or_proceeds {
                 return self.reject_order(&mut order, "Insufficient simulated quote balance.");
             }
@@ -1336,8 +1329,7 @@ impl PaperSimulator {
             );
             balances.insert(order.asset_mint.clone(), asset_balance + &quantity);
         } else {
-            let spendable_asset =
-                self.available_balance_for_order(&order.asset_mint, order_id);
+            let spendable_asset = self.available_balance_for_order(&order.asset_mint, order_id);
             if spendable_asset < quantity {
                 return self.reject_order(
                     &mut order,
@@ -1577,7 +1569,10 @@ impl PaperSimulator {
         let mut available_balances = Map::new();
         for mint in self.balances.keys() {
             reserved_balances.insert(mint.clone(), json!(self.reserved_balance(mint).to_string()));
-            available_balances.insert(mint.clone(), json!(self.available_balance(mint).to_string()));
+            available_balances.insert(
+                mint.clone(),
+                json!(self.available_balance(mint).to_string()),
+            );
         }
         Ok(json!({
             "mode":"PAPER_SIMULATION",

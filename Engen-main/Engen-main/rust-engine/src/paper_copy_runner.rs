@@ -1687,16 +1687,27 @@ mod tests {
     #[test]
     fn global_execution_fee_policy_applies_when_profile_has_no_override() {
         let mut simulator = simulator();
-        let queued = queue_paper_orders(
+        let global_policy = ExecutionPolicy {
+            fee_bps: 40,
+            network_cost: "0.20".to_string(),
+            priority_fee_usd: "0.10".to_string(),
+            ..ExecutionPolicy::default()
+        };
+        let queued = queue_paper_orders_with_policy(
             WALLET,
             &[buy_signal(&"e".repeat(64))],
             &mut simulator,
             AllowedSides::Buy,
             &CopySettings::default(),
             None,
+            &global_policy,
         )
         .unwrap();
         assert_eq!(queued.len(), 1);
+        assert_eq!(
+            simulator.orders().values().next().unwrap().details["fee_configuration_source"],
+            "GLOBAL_CONFIG"
+        );
 
         let observed = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
         let price = MarketPrice::new(
@@ -1710,12 +1721,6 @@ mod tests {
             Some(observed.clone()),
         )
         .unwrap();
-        let global_policy = ExecutionPolicy {
-            fee_bps: 40,
-            network_cost: "0.20".to_string(),
-            priority_fee_usd: "0.10".to_string(),
-            ..ExecutionPolicy::default()
-        };
         let outcomes = execute_pending_paper_orders_with_at_and_policy(
             &mut simulator,
             Some(WALLET),

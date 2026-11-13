@@ -93,6 +93,12 @@ pub struct CopySettings {
     pub sizing_mode: SizingMode,
     pub sizing_value: String,
     pub max_buy_usd: Option<String>,
+    /// Optional profile-level override for global trading fee basis points.
+    pub trading_fee_bps: Option<u16>,
+    /// Optional fixed base-network fee override, USD per paper fill.
+    pub network_fee_usd: Option<String>,
+    /// Optional priority-fee estimate override, USD per paper fill.
+    pub priority_fee_usd: Option<String>,
 }
 
 impl Default for CopySettings {
@@ -101,6 +107,33 @@ impl Default for CopySettings {
             sizing_mode: SizingMode::SourcePercent,
             sizing_value: "5".to_string(),
             max_buy_usd: Some("10".to_string()),
+            trading_fee_bps: None,
+            network_fee_usd: None,
+            priority_fee_usd: None,
+        }
+    }
+}
+
+fn optional_fee_usd(
+    settings: &Value,
+    key: &str,
+    label: &str,
+) -> Result<Option<String>, PaperCopyError> {
+    match settings.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => {
+            let raw = number_to_string(value).ok_or_else(|| {
+                PaperCopyError::InvalidInput(format!(
+                    "{key} must be a non-negative decimal no greater than 1000 USD."
+                ))
+            })?;
+            let amount = decimal(&raw, label)?;
+            if amount < 0 || amount > decimal("1000", "Fee limit")? {
+                return Err(PaperCopyError::InvalidInput(format!(
+                    "{key} must be a non-negative decimal no greater than 1000 USD."
+                )));
+            }
+            Ok(Some(amount.normalized().to_plain_string()))
         }
     }
 }
@@ -143,10 +176,39 @@ impl CopySettings {
                 )
             })?),
         };
+        let trading_fee_bps = match settings.get("trading_fee_bps") {
+            None | Some(Value::Null) => None,
+            Some(value) => {
+                let raw = number_to_string(value).ok_or_else(|| {
+                    PaperCopyError::InvalidInput(
+                        "trading_fee_bps must be an integer from 0 to 10000.".to_string(),
+                    )
+                })?;
+                let parsed = raw.parse::<u16>().map_err(|_| {
+                    PaperCopyError::InvalidInput(
+                        "trading_fee_bps must be an integer from 0 to 10000.".to_string(),
+                    )
+                })?;
+                if parsed > 10_000 {
+                    return Err(PaperCopyError::InvalidInput(
+                        "trading_fee_bps must be an integer from 0 to 10000.".to_string(),
+                    ));
+                }
+                Some(parsed)
+            }
+        };
+        let network_fee_usd =
+            optional_fee_usd(settings, "network_fee_usd", "Base network fee")?;
+        let priority_fee_usd =
+            optional_fee_usd(settings, "priority_fee_usd", "Priority fee")?;
+
         let parsed = Self {
             sizing_mode,
             sizing_value,
             max_buy_usd,
+            trading_fee_bps,
+            network_fee_usd,
+            priority_fee_usd,
         };
         parsed.validate()?;
         Ok(parsed)
@@ -175,6 +237,25 @@ impl CopySettings {
                 return Err(PaperCopyError::InvalidInput(
                     "Maximum BUY amount must be positive and at most $1,000,000.".to_string(),
                 ));
+            }
+        }
+        if self.trading_fee_bps.is_some_and(|value| value > 10_000) {
+            return Err(PaperCopyError::InvalidInput(
+                "trading_fee_bps must be an integer from 0 to 10000.".to_string(),
+            ));
+        }
+        for (name, value) in [
+            ("Base network fee", self.network_fee_usd.as_deref()),
+            ("Priority fee", self.priority_fee_usd.as_deref()),
+        ] {
+            if let Some(raw) = value {
+                let amount = decimal(raw, name)?;
+                if amount < 0 || amount > decimal("1000", "Fee limit")? {
+                    return Err(PaperCopyError::InvalidInput(
+                        "Network and priority fee overrides must be between 0 and 1000 USD per paper fill."
+                            .to_string(),
+                    ));
+                }
             }
         }
         Ok(())
@@ -598,6 +679,9 @@ pub fn queue_paper_orders_at(
                 "target_notional_usd": target_notional_usd.as_ref().map(raw_to_string),
                 "target_budget_usd": target_notional_usd.as_ref().map(raw_to_string),
                 "target_budget_semantics":"ALL_IN_USD_BUDGET_INCLUDING_SLIPPAGE_FEES_AND_NETWORK_COST",
+                "trading_fee_bps":settings.trading_fee_bps,
+                "network_fee_usd":settings.network_fee_usd,
+                "priority_fee_usd":settings.priority_fee_usd,
                 "reservation_mint":reservation_amount.as_ref().map(|_| reservation_mint),
                 "reservation_amount":reservation_amount.as_ref().map(raw_to_string),
                 "max_buy_usd": settings.max_buy_usd,
@@ -634,6 +718,9 @@ pub fn queue_paper_orders_at(
             "sizing_value":if side == "BUY" {Some(settings.sizing_value.clone())} else {None},
             "target_notional_usd":target_notional_usd.as_ref().map(raw_to_string),
             "target_budget_usd":target_notional_usd.as_ref().map(raw_to_string),
+            "trading_fee_bps":settings.trading_fee_bps,
+            "network_fee_usd":settings.network_fee_usd,
+            "priority_fee_usd":settings.priority_fee_usd,
             "source_quote_mint":quote_mint,
             "status":order.get("status"),
             "execution_state":"AWAITING_VERIFIED_MARKET_DATA"

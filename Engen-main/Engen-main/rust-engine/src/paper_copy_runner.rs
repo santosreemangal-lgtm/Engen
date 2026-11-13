@@ -397,7 +397,7 @@ fn outcome(
     })
 }
 
-/// Queue deduplicated paper orders from fully verified monitored-wallet swap observations.
+/// Queue deduplicated paper orders using the default paper fee policy.
 pub fn queue_paper_orders(
     wallet_address: &str,
     results: &[Value],
@@ -406,13 +406,36 @@ pub fn queue_paper_orders(
     settings: &CopySettings,
     latency_recorder: Option<&LatencyRecorder>,
 ) -> Result<Vec<Value>, PaperCopyError> {
-    queue_paper_orders_at(
+    queue_paper_orders_with_policy(
         wallet_address,
         results,
         simulator,
         allowed_sides,
         settings,
         latency_recorder,
+        &ExecutionPolicy::default(),
+    )
+}
+
+/// Queue deduplicated paper orders and snapshot the supplied global fee policy.
+/// Per-profile fee values in CopySettings override the matching global values.
+pub fn queue_paper_orders_with_policy(
+    wallet_address: &str,
+    results: &[Value],
+    simulator: &mut PaperSimulator,
+    allowed_sides: AllowedSides,
+    settings: &CopySettings,
+    latency_recorder: Option<&LatencyRecorder>,
+    execution_policy: &ExecutionPolicy,
+) -> Result<Vec<Value>, PaperCopyError> {
+    queue_paper_orders_at_with_policy(
+        wallet_address,
+        results,
+        simulator,
+        allowed_sides,
+        settings,
+        latency_recorder,
+        execution_policy,
         Utc::now().timestamp(),
     )
 }
@@ -427,12 +450,68 @@ pub fn queue_paper_orders_at(
     latency_recorder: Option<&LatencyRecorder>,
     now_ts: i64,
 ) -> Result<Vec<Value>, PaperCopyError> {
+    queue_paper_orders_at_with_policy(
+        wallet_address,
+        results,
+        simulator,
+        allowed_sides,
+        settings,
+        latency_recorder,
+        &ExecutionPolicy::default(),
+        now_ts,
+    )
+}
+
+/// Deterministic queue entrypoint that persists the resolved fee settings on every order.
+pub fn queue_paper_orders_at_with_policy(
+    wallet_address: &str,
+    results: &[Value],
+    simulator: &mut PaperSimulator,
+    allowed_sides: AllowedSides,
+    settings: &CopySettings,
+    latency_recorder: Option<&LatencyRecorder>,
+    execution_policy: &ExecutionPolicy,
+    now_ts: i64,
+) -> Result<Vec<Value>, PaperCopyError> {
     if wallet_address.trim().is_empty() {
         return Err(PaperCopyError::InvalidInput(
             "A monitored public wallet address is required.".to_string(),
         ));
     }
     settings.validate()?;
+    if execution_policy.fee_bps > 10_000 {
+        return Err(PaperCopyError::InvalidInput(
+            "Global trading_fee_bps must be between 0 and 10000.".to_string(),
+        ));
+    }
+    let global_base_network_fee =
+        decimal(&execution_policy.network_cost, "Global base network fee")?;
+    let global_priority_fee =
+        decimal(&execution_policy.priority_fee_usd, "Global priority fee")?;
+    if global_base_network_fee < 0
+        || global_priority_fee < 0
+        || global_base_network_fee + global_priority_fee > decimal("1000", "Fee limit")?
+    {
+        return Err(PaperCopyError::InvalidInput(
+            "Combined global network and priority fees must be between 0 and 1000 USD per paper fill."
+                .to_string(),
+        ));
+    }
+    let resolved_trading_fee_bps = settings
+        .trading_fee_bps
+        .unwrap_or(execution_policy.fee_bps);
+    let resolved_network_fee_usd = settings
+        .network_fee_usd
+        .clone()
+        .unwrap_or_else(|| global_base_network_fee.normalized().to_plain_string());
+    let resolved_priority_fee_usd = settings
+        .priority_fee_usd
+        .clone()
+        .unwrap_or_else(|| global_priority_fee.normalized().to_plain_string());
+    let profile_fee_override = settings.trading_fee_bps.is_some()
+        || settings.network_fee_usd.is_some()
+        || settings.priority_fee_usd.is_some();
+
     let started = Instant::now();
     let mut queued = Vec::new();
 
@@ -684,9 +763,10 @@ pub fn queue_paper_orders_at(
                 "target_notional_usd": target_notional_usd.as_ref().map(raw_to_string),
                 "target_budget_usd": target_notional_usd.as_ref().map(raw_to_string),
                 "target_budget_semantics":"ALL_IN_USD_BUDGET_INCLUDING_SLIPPAGE_FEES_AND_NETWORK_COST",
-                "trading_fee_bps":settings.trading_fee_bps,
-                "network_fee_usd":settings.network_fee_usd,
-                "priority_fee_usd":settings.priority_fee_usd,
+                "trading_fee_bps":resolved_trading_fee_bps,
+                "network_fee_usd":resolved_network_fee_usd,
+                "priority_fee_usd":resolved_priority_fee_usd,
+                "fee_configuration_source":if profile_fee_override {"PROFILE_OVERRIDE"} else {"GLOBAL_CONFIG"},
                 "reservation_mint":reservation_amount.as_ref().map(|_| reservation_mint),
                 "reservation_amount":reservation_amount.as_ref().map(raw_to_string),
                 "max_buy_usd": settings.max_buy_usd,
@@ -723,9 +803,10 @@ pub fn queue_paper_orders_at(
             "sizing_value":if side == "BUY" {Some(settings.sizing_value.clone())} else {None},
             "target_notional_usd":target_notional_usd.as_ref().map(raw_to_string),
             "target_budget_usd":target_notional_usd.as_ref().map(raw_to_string),
-            "trading_fee_bps":settings.trading_fee_bps,
-            "network_fee_usd":settings.network_fee_usd,
-            "priority_fee_usd":settings.priority_fee_usd,
+            "trading_fee_bps":resolved_trading_fee_bps,
+            "network_fee_usd":resolved_network_fee_usd,
+            "priority_fee_usd":resolved_priority_fee_usd,
+            "fee_configuration_source":if profile_fee_override {"PROFILE_OVERRIDE"} else {"GLOBAL_CONFIG"},
             "source_quote_mint":quote_mint,
             "status":order.get("status"),
             "execution_state":"AWAITING_VERIFIED_MARKET_DATA"

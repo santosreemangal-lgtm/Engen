@@ -917,7 +917,16 @@ impl PaperSimulator {
 
         if self.db_path.is_some() {
             let mut connection = self.connect()?;
-            let transaction = connection.transaction()?;
+            let transaction =
+                connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let persisted_reserved =
+                Self::persisted_reserved_balance(&transaction, mint, None)?;
+            if value < persisted_reserved {
+                return Err(PaperSimulatorError::InvalidInput(
+                    "Starting balance cannot be set below funds reserved by pending orders."
+                        .to_string(),
+                ));
+            }
             transaction.execute(
                 "INSERT INTO simulator_balances(mint,amount) VALUES(?1,?2)
                  ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount",
@@ -996,7 +1005,16 @@ impl PaperSimulator {
             return Ok(());
         }
         let mut connection = self.connect()?;
-        let transaction = connection.transaction()?;
+        let transaction =
+            connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let persisted_reserved =
+            Self::persisted_reserved_balance(&transaction, mint, None)?;
+        if value < persisted_reserved {
+            return Err(PaperSimulatorError::InvalidInput(
+                "Virtual balance cannot be reduced below funds reserved by pending orders."
+                    .to_string(),
+            ));
+        }
         transaction.execute(
             "INSERT INTO simulator_balances(mint,amount) VALUES(?1,?2)
              ON CONFLICT(mint) DO UPDATE SET amount=excluded.amount",

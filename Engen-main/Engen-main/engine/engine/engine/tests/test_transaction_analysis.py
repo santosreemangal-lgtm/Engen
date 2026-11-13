@@ -666,6 +666,26 @@ class TransactionAnalysisTests(unittest.TestCase):
                 )
                 self.assertEqual(result["transaction_type"], case["expected_type"])
                 self.assertEqual(result["trade_signal"], case["expected_signal"])
+                expected_analysis = case.get("expected_analysis")
+                if expected_analysis:
+                    summary = analyze_transaction(case["transaction"])
+                    for field in (
+                        "status", "slot", "fee", "account_count", "signers", "program_ids"
+                    ):
+                        self.assertEqual(summary[field], expected_analysis[field], field)
+                    projected = [
+                        {
+                            "source": instruction["source"],
+                            "program_id": instruction["program_id"],
+                            "parsed_type": instruction["parsed_type"],
+                        }
+                        for instruction in summary["instructions"]
+                    ]
+                    self.assertEqual(projected, expected_analysis["instructions"])
+                expected_token_changes = case.get("expected_token_balance_changes")
+                if expected_token_changes is not None:
+                    actual = analyze_token_balance_changes(case["transaction"]["meta"])
+                    self.assertEqual(actual, expected_token_changes)
                 expected_program_id = case.get("expected_outer_program_id")
                 if expected_program_id:
                     summary = analyze_transaction(case["transaction"])

@@ -432,5 +432,329 @@
     ],
     "expected_type": "UNKNOWN",
     "expected_signal": "NOT_COPYABLE"
+  },
+  {
+    "name": "token_2022_swap_buy_with_inner_transfer",
+    "wallet": "So11111111111111111111111111111111111111112",
+    "transaction": {
+      "slot": 222,
+      "transaction": {
+        "message": {
+          "header": {
+            "numRequiredSignatures": 1
+          },
+          "accountKeys": [
+            {
+              "pubkey": "So11111111111111111111111111111111111111112",
+              "signer": true,
+              "writable": true
+            },
+            "JUPITER_PROGRAM",
+            "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          ],
+          "instructions": [
+            {
+              "program": "jupiter",
+              "programId": "JUPITER_PROGRAM",
+              "parsed": {
+                "type": "swap"
+              }
+            }
+          ]
+        }
+      },
+      "meta": {
+        "err": null,
+        "fee": 5000,
+        "preBalances": [
+          10000000,
+          0,
+          0
+        ],
+        "postBalances": [
+          9995000,
+          0,
+          0
+        ],
+        "preTokenBalances": [
+          {
+            "accountIndex": 1,
+            "mint": "TOKEN_2022_MINT",
+            "owner": "So11111111111111111111111111111111111111112",
+            "uiTokenAmount": {
+              "amount": "0",
+              "decimals": 6
+            }
+          },
+          {
+            "accountIndex": 2,
+            "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "owner": "So11111111111111111111111111111111111111112",
+            "uiTokenAmount": {
+              "amount": "2500000",
+              "decimals": 6
+            }
+          }
+        ],
+        "postTokenBalances": [
+          {
+            "accountIndex": 1,
+            "mint": "TOKEN_2022_MINT",
+            "owner": "So11111111111111111111111111111111111111112",
+            "uiTokenAmount": {
+              "amount": "100",
+              "decimals": 6
+            }
+          },
+          {
+            "accountIndex": 2,
+            "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "owner": "So11111111111111111111111111111111111111112",
+            "uiTokenAmount": {
+              "amount": "0",
+              "decimals": 6
+            }
+          }
+        ],
+        "innerInstructions": [
+          {
+            "index": 0,
+            "instructions": [
+              {
+                "program": "spl-token-2022",
+                "programId": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+                "parsed": {
+                  "type": "transferChecked"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "balance_changes": [
+      {
+        "owner": "So11111111111111111111111111111111111111112",
+        "mint": "TOKEN_2022_MINT",
+        "delta_amount": "100",
+        "decimals": 6
+      },
+      {
+        "owner": "So11111111111111111111111111111111111111112",
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "delta_amount": "-2500000",
+        "decimals": 6
+      }
+    ],
+    "expected_type": "BUY",
+    "expected_signal": "BUY_CANDIDATE",
+    "expected_outer_program_id": "JUPITER_PROGRAM",
+    "expected_token_balance_changes": [
+      {
+        "account_index": 1,
+        "mint": "TOKEN_2022_MINT",
+        "owner": "So11111111111111111111111111111111111111112",
+        "decimals": 6,
+        "pre_amount": "0",
+        "post_amount": "100",
+        "delta_amount": "100"
+      },
+      {
+        "account_index": 2,
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "owner": "So11111111111111111111111111111111111111112",
+        "decimals": 6,
+        "pre_amount": "2500000",
+        "post_amount": "0",
+        "delta_amount": "-2500000"
+      }
+    ],
+    "expected_analysis": {
+      "status": "success",
+      "slot": 222,
+      "fee": 5000,
+      "account_count": 3,
+      "signers": [
+        "So11111111111111111111111111111111111111112"
+      ],
+      "program_ids": [
+        "JUPITER_PROGRAM",
+        "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+      ],
+      "instructions": [
+        {
+          "source": "message",
+          "program_id": "JUPITER_PROGRAM",
+          "parsed_type": "swap"
+        },
+        {
+          "source": "inner",
+          "program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+          "parsed_type": "transferChecked"
+        }
+      ]
+    }
+  },
+  {
+    "name": "token_2022_swap_sell_with_inner_transfer",
+    "wallet": "So11111111111111111111111111111111111111112",
+    "transaction": {
+      "slot": 222,
+      "transaction": {
+        "message": {
+          "header": {
+            "numRequiredSignatures": 1
+          },
+          "accountKeys": [
+            {
+              "pubkey": "So11111111111111111111111111111111111111112",
+              "signer": true,
+              "writable": true
+            },
+            "JUPITER_PROGRAM",
+            "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          ],
+          "instructions": [
+            {
+              "program": "jupiter",
+              "programId": "JUPITER_PROGRAM",
+              "parsed": {
+                "type": "swap"
+              }
+            }
+          ]
+        }
+      },
+      "meta": {
+        "err": null,
+        "fee": 5000,
+        "preBalances": [
+          10000000,
+          0,
+          0
+        ],
+        "postBalances": [
+          9995000,
+          0,
+          0
+        ],
+        "preTokenBalances": [
+          {
+            "accountIndex": 1,
+            "mint": "TOKEN_2022_MINT",
+            "owner": "So11111111111111111111111111111111111111112",
+            "uiTokenAmount": {
+              "amount": "100",
+              "decimals": 6
+            }
+          },
+          {
+            "accountIndex": 2,
+            "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "owner": "So11111111111111111111111111111111111111112",
+            "uiTokenAmount": {
+              "amount": "0",
+              "decimals": 6
+            }
+          }
+        ],
+        "postTokenBalances": [
+          {
+            "accountIndex": 1,
+            "mint": "TOKEN_2022_MINT",
+            "owner": "So11111111111111111111111111111111111111112",
+            "uiTokenAmount": {
+              "amount": "0",
+              "decimals": 6
+            }
+          },
+          {
+            "accountIndex": 2,
+            "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+            "owner": "So11111111111111111111111111111111111111112",
+            "uiTokenAmount": {
+              "amount": "2500000",
+              "decimals": 6
+            }
+          }
+        ],
+        "innerInstructions": [
+          {
+            "index": 0,
+            "instructions": [
+              {
+                "program": "spl-token-2022",
+                "programId": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+                "parsed": {
+                  "type": "transferChecked"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "balance_changes": [
+      {
+        "owner": "So11111111111111111111111111111111111111112",
+        "mint": "TOKEN_2022_MINT",
+        "delta_amount": "-100",
+        "decimals": 6
+      },
+      {
+        "owner": "So11111111111111111111111111111111111111112",
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "delta_amount": "2500000",
+        "decimals": 6
+      }
+    ],
+    "expected_type": "SELL",
+    "expected_signal": "SELL_CANDIDATE",
+    "expected_outer_program_id": "JUPITER_PROGRAM",
+    "expected_token_balance_changes": [
+      {
+        "account_index": 1,
+        "mint": "TOKEN_2022_MINT",
+        "owner": "So11111111111111111111111111111111111111112",
+        "decimals": 6,
+        "pre_amount": "100",
+        "post_amount": "0",
+        "delta_amount": "-100"
+      },
+      {
+        "account_index": 2,
+        "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        "owner": "So11111111111111111111111111111111111111112",
+        "decimals": 6,
+        "pre_amount": "0",
+        "post_amount": "2500000",
+        "delta_amount": "2500000"
+      }
+    ],
+    "expected_analysis": {
+      "status": "success",
+      "slot": 222,
+      "fee": 5000,
+      "account_count": 3,
+      "signers": [
+        "So11111111111111111111111111111111111111112"
+      ],
+      "program_ids": [
+        "JUPITER_PROGRAM",
+        "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+      ],
+      "instructions": [
+        {
+          "source": "message",
+          "program_id": "JUPITER_PROGRAM",
+          "parsed_type": "swap"
+        },
+        {
+          "source": "inner",
+          "program_id": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+          "parsed_type": "transferChecked"
+        }
+      ]
+    }
   }
 ]

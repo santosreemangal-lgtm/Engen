@@ -47,7 +47,9 @@ fn rpc_response(id: u64, result: Value) -> Value {
 
 #[test]
 fn shared_phase2_golden_corpus_matches_transaction_type_contract() {
-    use engen_engine::transaction_analysis::{analyze_transaction, classify_transaction};
+    use engen_engine::transaction_analysis::{
+        analyze_token_balance_changes, analyze_transaction, classify_transaction,
+    };
 
     let cases: Vec<Value> = serde_json::from_str(include_str!("fixtures/phase2_transactions.json"))
         .expect("parse shared Phase 2 golden corpus");
@@ -66,6 +68,31 @@ fn shared_phase2_golden_corpus_matches_transaction_type_contract() {
             result["trade_signal"], case["expected_signal"],
             "trade signal mismatch for fixture {name}"
         );
+        if let Some(expected_analysis) = case.get("expected_analysis") {
+            let summary = analyze_transaction(transaction).expect("analyze differential fixture");
+            for field in ["status", "slot", "fee", "account_count", "signers", "program_ids"] {
+                assert_eq!(summary[field], expected_analysis[field], "{field} mismatch for {name}");
+            }
+            let projected: Vec<Value> = summary["instructions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|instruction| json!({
+                    "source": instruction["source"],
+                    "program_id": instruction["program_id"],
+                    "parsed_type": instruction["parsed_type"]
+                }))
+                .collect();
+            assert_eq!(
+                projected,
+                expected_analysis["instructions"],
+                "instruction normalization mismatch for {name}"
+            );
+        }
+        if let Some(expected_token_changes) = case.get("expected_token_balance_changes") {
+            let actual = analyze_token_balance_changes(&transaction["meta"]);
+            assert_eq!(actual, *expected_token_changes, "token balance delta mismatch for {name}");
+        }
         if let Some(program_id) = case
             .get("expected_outer_program_id")
             .and_then(Value::as_str)

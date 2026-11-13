@@ -90,7 +90,96 @@ class MarketPrice:
     def is_fresh(self, *, max_age_seconds=60, now=None):
         if not isinstance(max_age_seconds, int) or isinstance(max_age_seconds, bool) or max_age_seconds < 0:
             raise ValueError("max_age_seconds must be a non-negative integer.")
-        return self.age_seconds(now) <= max_age_seconds
+        current = now or datetime.now(timezone.utc)
+        if isinstance(current, str):
+            current = parse_timestamp(current)
+        if not isinstance(current, datetime) or current.tzinfo is None:
+            raise ValueError("now must be a timezone-aware datetime or ISO-8601 string.")
+        age = (current.astimezone(timezone.utc) - parse_timestamp(self.observed_at)).total_seconds()
+        # A future-dated provider snapshot is not a fresh price.
+        return 0 <= age <= max_age_seconds
+
+
+def portfolio_valuation_usd(balances, market_prices, *, max_age_seconds=60, now=None):
+    """Value virtual USD cash and token balances using fresh, mint-matched USD prices.
+
+    Cost basis is deliberately irrelevant to market value. Missing, stale, future,
+    or mismatched prices keep that holding visible but withhold the aggregate total.
+    """
+    if not isinstance(balances, dict) or not isinstance(market_prices, dict):
+        raise ValueError("Balances and market prices must be dictionaries.")
+    if not isinstance(max_age_seconds, int) or isinstance(max_age_seconds, bool) or max_age_seconds < 0:
+        raise ValueError("max_age_seconds must be a non-negative integer.")
+
+    cash = decimal_value(balances.get("USD", "0"), "Cash balance", allow_zero=True)
+    holdings = []
+    token_total = Decimal("0")
+    all_holdings_priced = True
+    valuation_notes = []
+
+    for mint in sorted(balances):
+        if not isinstance(mint, str) or not mint.strip():
+            raise ValueError("Every portfolio balance must have a token mint.")
+        if mint == "USD":
+            continue
+        quantity = decimal_value(balances[mint], "Token balance", allow_zero=True)
+        if quantity == 0:
+            continue
+
+        price = market_prices.get(mint)
+        status = "calculated"
+        price_age = None
+        market_value = None
+        if not isinstance(price, MarketPrice) or price.mint != mint:
+            status = "price_unavailable" if price is None else "invalid_or_mismatched_price"
+        else:
+            current = now or datetime.now(timezone.utc)
+            if isinstance(current, str):
+                current = parse_timestamp(current)
+            if not isinstance(current, datetime) or current.tzinfo is None:
+                raise ValueError("now must be a timezone-aware datetime or ISO-8601 string.")
+            age = (current.astimezone(timezone.utc) - parse_timestamp(price.observed_at)).total_seconds()
+            price_age = max(0, int(age))
+            if age < 0:
+                status = "future_price"
+            elif age > max_age_seconds:
+                status = "stale_price"
+            else:
+                market_value = quantity * price.price
+                token_total += market_value
+
+        holdings.append({
+            "mint": mint,
+            "quantity": format(quantity, "f"),
+            "currency": PORTFOLIO_CURRENCY,
+            "price_usd": format(price.price, "f") if market_value is not None else None,
+            "market_value_usd": format(market_value, "f") if market_value is not None else None,
+            "status": status,
+            "price_source": price.source if isinstance(price, MarketPrice) else None,
+            "price_timestamp": price.observed_at if isinstance(price, MarketPrice) else None,
+            "price_age_seconds": price_age,
+        })
+        if market_value is None:
+            all_holdings_priced = False
+            valuation_notes.append(status + ":" + mint)
+
+    token_value = format(token_total, "f") if all_holdings_priced else None
+    portfolio_value = format(cash + token_total, "f") if all_holdings_priced else None
+    return {
+        "currency": PORTFOLIO_CURRENCY,
+        "cash_balance_usd": format(cash, "f"),
+        "token_holdings_value_usd": token_value,
+        "token_holdings": holdings,
+        "portfolio_value_usd": portfolio_value,
+        "total_portfolio_value_usd": portfolio_value,
+        "portfolio_value_status": "calculated" if all_holdings_priced else "incomplete_market_valuation",
+        "portfolio_value_note": (
+            "Cash and all token holdings are valued in USD using fresh, mint-matched prices."
+            if all_holdings_priced else
+            "Total value is withheld until every token holding has a fresh, mint-matched USD price."
+        ),
+        "portfolio_valuation_notes": valuation_notes,
+    }
 
 
 class AverageCostLedger:

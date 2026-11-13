@@ -129,9 +129,7 @@ impl CopySettings {
         let sizing_value = match settings.get("sizing_value") {
             None | Some(Value::Null) => default_value.to_string(),
             Some(value) => number_to_string(value).ok_or_else(|| {
-                PaperCopyError::InvalidInput(
-                    "Sizing value must be a valid number.".to_string(),
-                )
+                PaperCopyError::InvalidInput("Sizing value must be a valid number.".to_string())
             })?,
         };
         let max_buy_usd = match settings.get("max_buy_usd") {
@@ -1048,7 +1046,8 @@ mod tests {
             "sizing_mode":" fixed_usd ",
             "sizing_value":"7.50",
             "max_buy_usd":null
-        }))).unwrap();
+        })))
+        .unwrap();
         let queued = queue_paper_orders(
             WALLET,
             &[buy_signal(&"9".repeat(64))],
@@ -1056,18 +1055,29 @@ mod tests {
             AllowedSides::Buy,
             &settings,
             None,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0]["target_budget_usd"], "7.5");
         let order_id = queued[0]["order_id"].as_str().unwrap();
 
         let observed = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
         let price = MarketPrice::new(
-            ASSET, "2", "USD", "test-fixture", &observed, Some("25000"),
-            Some("test-fixture".to_string()), Some(observed),
-        ).unwrap();
+            ASSET,
+            "2",
+            "USD",
+            "test-fixture",
+            &observed,
+            Some("25000"),
+            Some("test-fixture".to_string()),
+            Some(observed),
+        )
+        .unwrap();
         let outcomes = execute_pending_paper_orders_with(
-            &mut simulator, Some(WALLET), |_mint| Some(price.clone()), None,
+            &mut simulator,
+            Some(WALLET),
+            |_mint| Some(price.clone()),
+            None,
         );
         assert_eq!(outcomes[0]["status"], "FILLED");
         let order = simulator.orders().get(order_id).unwrap();
@@ -1089,7 +1099,8 @@ mod tests {
             "sizing_mode":"FIXED_PERCENTAGE",
             "sizing_value":"12.5",
             "max_buy_usd":null
-        }))).unwrap();
+        })))
+        .unwrap();
         let queued = queue_paper_orders(
             WALLET,
             &[buy_signal(&"a".repeat(64))],
@@ -1097,10 +1108,14 @@ mod tests {
             AllowedSides::Buy,
             &settings,
             None,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0]["target_budget_usd"], "10");
-        assert_eq!(simulator.orders().values().next().unwrap().details["sizing_mode"], "SOURCE_PERCENT");
+        assert_eq!(
+            simulator.orders().values().next().unwrap().details["sizing_mode"],
+            "SOURCE_PERCENT"
+        );
     }
 
     #[test]
@@ -1112,7 +1127,8 @@ mod tests {
             "sizing_mode":"FIXED_USD",
             "sizing_value":"6",
             "max_buy_usd":null
-        }))).unwrap();
+        })))
+        .unwrap();
         let queued = queue_paper_orders(
             WALLET,
             &[buy_signal(&"b".repeat(64))],
@@ -1120,7 +1136,8 @@ mod tests {
             AllowedSides::Buy,
             &settings,
             None,
-        ).unwrap();
+        )
+        .unwrap();
         assert!(queued.is_empty());
         assert!(simulator.orders().is_empty());
     }
@@ -1129,23 +1146,36 @@ mod tests {
     fn validates_fixed_dollar_percentage_and_maximum_inputs() {
         assert!(AllowedSides::parse("UNKNOWN").is_err());
         for invalid_percent in ["0", "-1", "100", "100.01", "NaN", "not-a-number"] {
-            assert!(CopySettings::from_json(Some(&json!({
-                "sizing_mode":"FIXED_PERCENTAGE","sizing_value":invalid_percent
-            }))).is_err(), "accepted invalid percentage {invalid_percent}");
+            assert!(
+                CopySettings::from_json(Some(&json!({
+                    "sizing_mode":"FIXED_PERCENTAGE","sizing_value":invalid_percent
+                })))
+                .is_err(),
+                "accepted invalid percentage {invalid_percent}"
+            );
         }
         for invalid_usd in ["0", "-1", "1000000.01", "NaN", "not-a-number"] {
-            assert!(CopySettings::from_json(Some(&json!({
-                "sizing_mode":"FIXED_USD","sizing_value":invalid_usd,"max_buy_usd":null
-            }))).is_err(), "accepted invalid fixed USD value {invalid_usd}");
+            assert!(
+                CopySettings::from_json(Some(&json!({
+                    "sizing_mode":"FIXED_USD","sizing_value":invalid_usd,"max_buy_usd":null
+                })))
+                .is_err(),
+                "accepted invalid fixed USD value {invalid_usd}"
+            );
         }
         for invalid_max in ["0", "-1", "1000000.01", "NaN", "not-a-number"] {
-            assert!(CopySettings::from_json(Some(&json!({
-                "sizing_mode":"FIXED_USD","sizing_value":"1","max_buy_usd":invalid_max
-            }))).is_err(), "accepted invalid maximum BUY amount {invalid_max}");
+            assert!(
+                CopySettings::from_json(Some(&json!({
+                    "sizing_mode":"FIXED_USD","sizing_value":"1","max_buy_usd":invalid_max
+                })))
+                .is_err(),
+                "accepted invalid maximum BUY amount {invalid_max}"
+            );
         }
         assert!(CopySettings::from_json(Some(&json!("FIXED_USD"))).is_err());
         assert!(CopySettings::from_json(Some(&json!({
             "sizing_mode":"FIXED_USD","sizing_value":true
-        }))).is_err());
+        })))
+        .is_err());
     }
 }

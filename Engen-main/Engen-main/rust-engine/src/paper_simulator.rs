@@ -825,23 +825,17 @@ impl PaperSimulator {
                 * (BigDecimal::from(10_000_i64 - i64::from(policy.slippage_bps))
                     / BigDecimal::from(10_000_i64))
         };
-        let fee_rate =
-            BigDecimal::from(i64::from(policy.fee_bps)) / BigDecimal::from(10_000_i64);
+        let fee_rate = BigDecimal::from(i64::from(policy.fee_bps)) / BigDecimal::from(10_000_i64);
         let fee_multiplier = BigDecimal::from(1) + &fee_rate;
         let network = decimal_value(&policy.network_cost, "Network cost", true)?;
 
         let target_budget = match order.details.get("target_budget_usd") {
             None => None,
-            Some(Value::String(value)) => Some(decimal_value(
-                value,
-                "Target all-in USD BUY budget",
-                false,
-            )?),
+            Some(Value::String(value)) => {
+                Some(decimal_value(value, "Target all-in USD BUY budget", false)?)
+            }
             Some(_) => {
-                return self.reject_order(
-                    &mut order,
-                    "Target all-in USD BUY budget is invalid.",
-                )
+                return self.reject_order(&mut order, "Target all-in USD BUY budget is invalid.")
             }
         };
         let mut quantity = decimal_value(&order.quantity, "Order quantity", false)?;
@@ -1245,13 +1239,15 @@ mod tests {
         balances.insert("USD".to_string(), "20".to_string());
         let mut sim = PaperSimulator::in_memory(&balances).unwrap();
         let id = budget_buy_order(&mut sim, "all-in-budget", "20");
-        let result = sim.execute_order(
-            &id,
-            Some(&price("TOKEN")),
-            now(),
-            &ExecutionPolicy::default(),
-            true,
-        ).unwrap();
+        let result = sim
+            .execute_order(
+                &id,
+                Some(&price("TOKEN")),
+                now(),
+                &ExecutionPolicy::default(),
+                true,
+            )
+            .unwrap();
         assert_eq!(result["status"], "FILLED");
         let fill = &sim.fills()[0];
         let spent = BigDecimal::from_str(&fill.gross_quote).unwrap()
@@ -1270,34 +1266,40 @@ mod tests {
     fn all_in_buy_budget_rejects_invalid_or_unaffordable_budget_without_fill() {
         let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
         let id = budget_buy_order(&mut sim, "oversized-budget", "101");
-        let result = sim.execute_order(
-            &id,
-            Some(&price("TOKEN")),
-            now(),
-            &ExecutionPolicy::default(),
-            true,
-        ).unwrap();
+        let result = sim
+            .execute_order(
+                &id,
+                Some(&price("TOKEN")),
+                now(),
+                &ExecutionPolicy::default(),
+                true,
+            )
+            .unwrap();
         assert_eq!(result["status"], "REJECTED");
         assert!(sim.fills().is_empty());
         assert_eq!(sim.balances()["USD"], BigDecimal::from(100));
 
-        let invalid = sim.create_order(CreateOrderRequest {
-            signal_id: "invalid-budget",
-            side: "BUY",
-            asset_mint: "TOKEN",
-            quantity: "1",
-            quote_mint: "USD",
-            created_at: now(),
-            details: Some(json!({"target_budget_usd":true})),
-        }).unwrap();
+        let invalid = sim
+            .create_order(CreateOrderRequest {
+                signal_id: "invalid-budget",
+                side: "BUY",
+                asset_mint: "TOKEN",
+                quantity: "1",
+                quote_mint: "USD",
+                created_at: now(),
+                details: Some(json!({"target_budget_usd":true})),
+            })
+            .unwrap();
         let invalid_id = invalid["order_id"].as_str().unwrap();
-        let rejected = sim.execute_order(
-            invalid_id,
-            Some(&price("TOKEN")),
-            now(),
-            &ExecutionPolicy::default(),
-            true,
-        ).unwrap();
+        let rejected = sim
+            .execute_order(
+                invalid_id,
+                Some(&price("TOKEN")),
+                now(),
+                &ExecutionPolicy::default(),
+                true,
+            )
+            .unwrap();
         assert_eq!(rejected["status"], "REJECTED");
         assert!(sim.fills().is_empty());
     }

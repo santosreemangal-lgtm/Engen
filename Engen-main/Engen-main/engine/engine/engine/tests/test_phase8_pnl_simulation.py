@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from engine.pnl import AverageCostLedger, MarketPrice
+from engine.pnl import AverageCostLedger, MarketPrice, portfolio_valuation_usd
 from engine.paper_simulator import PaperSimulator
 
 
@@ -119,6 +119,58 @@ class PnLTests(unittest.TestCase):
             MarketPrice(MINT, "1", "USD", "", NOW)
         with self.assertRaises(ValueError):
             MarketPrice(MINT, "1", "USD", "source", "2026-10-26T12:00:00")
+
+    def test_portfolio_value_includes_cash_and_fresh_token_holdings_without_cost_basis(self):
+        token_price = MarketPrice(MINT, Decimal("12"), "USD", "test-feed", NOW)
+        report = portfolio_valuation_usd(
+            {"USD": "100", MINT: "2"},
+            {MINT: token_price},
+            max_age_seconds=60,
+            now=NOW,
+        )
+        self.assertEqual(report["cash_balance_usd"], "100")
+        self.assertEqual(report["token_holdings_value_usd"], "24")
+        self.assertEqual(report["portfolio_value_usd"], "124")
+        self.assertEqual(report["portfolio_value_status"], "calculated")
+        self.assertEqual(report["token_holdings"][0]["quantity"], "2")
+        self.assertEqual(report["token_holdings"][0]["price_usd"], "12")
+        self.assertEqual(report["token_holdings"][0]["market_value_usd"], "24")
+
+    def test_missing_token_price_withholds_total_but_keeps_each_holding_visible(self):
+        fresh = MarketPrice(MINT, Decimal("12"), "USD", "test-feed", NOW)
+        report = portfolio_valuation_usd(
+            {"USD": "100", MINT: "2", "TOKEN_B": "3"},
+            {MINT: fresh},
+            max_age_seconds=60,
+            now=NOW,
+        )
+        self.assertEqual(report["cash_balance_usd"], "100")
+        self.assertIsNone(report["token_holdings_value_usd"])
+        self.assertIsNone(report["portfolio_value_usd"])
+        self.assertEqual(report["portfolio_value_status"], "incomplete_market_valuation")
+        by_mint = {item["mint"]: item for item in report["token_holdings"]}
+        self.assertEqual(by_mint[MINT]["market_value_usd"], "24")
+        self.assertIsNone(by_mint["TOKEN_B"]["market_value_usd"])
+        self.assertEqual(by_mint["TOKEN_B"]["status"], "price_unavailable")
+
+    def test_future_price_is_not_accepted_for_portfolio_valuation(self):
+        future = MarketPrice(MINT, Decimal("12"), "USD", "test-feed", "2026-10-26T12:00:01Z")
+        self.assertFalse(future.is_fresh(max_age_seconds=60, now=NOW))
+        report = portfolio_valuation_usd(
+            {"USD": "100", MINT: "2"},
+            {MINT: future},
+            max_age_seconds=60,
+            now=NOW,
+        )
+        self.assertIsNone(report["portfolio_value_usd"])
+        self.assertEqual(report["token_holdings"][0]["status"], "future_price")
+
+    def test_empty_token_portfolio_is_valued_at_cash_balance(self):
+        report = portfolio_valuation_usd({"USD": "7.25"}, {}, now=NOW)
+        self.assertEqual(report["cash_balance_usd"], "7.25")
+        self.assertEqual(report["token_holdings_value_usd"], "0")
+        self.assertEqual(report["portfolio_value_usd"], "7.25")
+        self.assertEqual(report["token_holdings"], [])
 
 
 class PaperSimulatorTests(unittest.TestCase):

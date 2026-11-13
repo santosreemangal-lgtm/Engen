@@ -945,7 +945,10 @@ impl PaperSimulator {
         {
             // Backward compatibility for pending orders persisted before the
             // all-in budget contract was introduced.
-            let Some(target) = order.details.get("target_notional_usd").and_then(Value::as_str)
+            let Some(target) = order
+                .details
+                .get("target_notional_usd")
+                .and_then(Value::as_str)
             else {
                 return self.reject_order(&mut order, "Target USD paper order size is invalid.");
             };
@@ -1370,7 +1373,10 @@ mod tests {
         assert!(unspent < BigDecimal::from_str("0.00000000000000002").unwrap());
         assert_eq!(sim.balances()["USD"], unspent);
         assert!(BigDecimal::from_str(&fill.quantity).unwrap() < BigDecimal::from(2));
-        assert_eq!(sim.orders()[&id].details["asset_quantity_step"], "0.000000000000000001");
+        assert_eq!(
+            sim.orders()[&id].details["asset_quantity_step"],
+            "0.000000000000000001"
+        );
         assert_eq!(
             sim.orders()[&id].details["buy_budget_used_usd"],
             spent.to_string()
@@ -1418,7 +1424,6 @@ mod tests {
         assert_eq!(rejected["status"], "REJECTED");
         assert!(sim.fills().is_empty());
     }
-
 
     #[test]
     fn all_in_buy_quantity_is_rounded_down_to_token_atomic_units() {

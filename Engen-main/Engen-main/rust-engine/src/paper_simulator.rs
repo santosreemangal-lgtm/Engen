@@ -831,30 +831,26 @@ impl PaperSimulator {
                 return self.reject_order(&mut order, "Minimum order value is invalid.");
             }
         };
-        let minimum_order_value = match decimal_value(
-            &minimum_order_value_raw,
-            "Minimum order value USD",
-            false,
-        ) {
-            Ok(value) => value,
-            Err(_) => return self.reject_order(&mut order, "Minimum order value is invalid."),
+        let minimum_order_value =
+            match decimal_value(&minimum_order_value_raw, "Minimum order value USD", false) {
+                Ok(value) => value,
+                Err(_) => return self.reject_order(&mut order, "Minimum order value is invalid."),
+            };
+        let minimum_order_quantity_raw = match order.details.get("minimum_order_quantity").cloned()
+        {
+            None => policy.min_order_quantity.clone(),
+            Some(Value::String(value)) => value,
+            Some(_) => {
+                return self.reject_order(&mut order, "Minimum order quantity is invalid.");
+            }
         };
-        let minimum_order_quantity_raw =
-            match order.details.get("minimum_order_quantity").cloned() {
-                None => policy.min_order_quantity.clone(),
-                Some(Value::String(value)) => value,
-                Some(_) => {
-                    return self.reject_order(&mut order, "Minimum order quantity is invalid.");
+        let minimum_order_quantity =
+            match decimal_value(&minimum_order_quantity_raw, "Minimum order quantity", false) {
+                Ok(value) => value,
+                Err(_) => {
+                    return self.reject_order(&mut order, "Minimum order quantity is invalid.")
                 }
             };
-        let minimum_order_quantity = match decimal_value(
-            &minimum_order_quantity_raw,
-            "Minimum order quantity",
-            false,
-        ) {
-            Ok(value) => value,
-            Err(_) => return self.reject_order(&mut order, "Minimum order quantity is invalid."),
-        };
         let reference_price = price.price.clone();
         let slip_factor = BigDecimal::from(10_000_i64 + i64::from(policy.slippage_bps))
             / BigDecimal::from(10_000_i64);
@@ -878,7 +874,8 @@ impl PaperSimulator {
                 match decimal_value(&value, "Target all-in USD BUY budget", false) {
                     Ok(value) => Some(value),
                     Err(_) => {
-                        return self.reject_order(&mut order, "Target all-in USD BUY budget is invalid.");
+                        return self
+                            .reject_order(&mut order, "Target all-in USD BUY budget is invalid.");
                     }
                 }
             }
@@ -937,7 +934,9 @@ impl PaperSimulator {
             };
             let target_value = match decimal_value(target, "Target USD paper order size", false) {
                 Ok(value) => value,
-                Err(_) => return self.reject_order(&mut order, "Target USD paper order size is invalid."),
+                Err(_) => {
+                    return self.reject_order(&mut order, "Target USD paper order size is invalid.")
+                }
             };
             quantity = target_value / &price.price;
             order.quantity = quantity.to_string();
@@ -1036,7 +1035,11 @@ impl PaperSimulator {
             "minimum_order_quantity",
             json!(minimum_order_quantity.to_string()),
         );
-        set_detail(&mut order.details, "order_value_usd", json!(gross.to_string()));
+        set_detail(
+            &mut order.details,
+            "order_value_usd",
+            json!(gross.to_string()),
+        );
         set_detail(&mut order.details, "execution_state", json!("FILLED"));
         set_detail(
             &mut order.details,
@@ -1381,7 +1384,6 @@ mod tests {
         assert!(sim.fills().is_empty());
     }
 
-
     #[test]
     fn orders_below_minimum_usd_value_are_rejected_without_balance_changes() {
         let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
@@ -1443,7 +1445,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(result["status"], "REJECTED");
-        assert!(result["reason"].as_str().unwrap().contains("minimum token quantity"));
+        assert!(result["reason"]
+            .as_str()
+            .unwrap()
+            .contains("minimum token quantity"));
         assert_eq!(sim.orders()[id].status, "REJECTED");
         assert_eq!(sim.balances()["USD"], BigDecimal::from(100));
         assert!(sim.fills().is_empty());
@@ -1453,9 +1458,18 @@ mod tests {
     fn malformed_order_budget_and_minimum_constraints_are_persistently_rejected() {
         let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
         for (signal, details) in [
-            ("malformed-budget", json!({"target_budget_usd":"not-a-number"})),
-            ("malformed-minimum-value", json!({"minimum_order_value_usd":true})),
-            ("malformed-minimum-quantity", json!({"minimum_order_quantity":"-0.1"})),
+            (
+                "malformed-budget",
+                json!({"target_budget_usd":"not-a-number"}),
+            ),
+            (
+                "malformed-minimum-value",
+                json!({"minimum_order_value_usd":true}),
+            ),
+            (
+                "malformed-minimum-quantity",
+                json!({"minimum_order_quantity":"-0.1"}),
+            ),
         ] {
             let order = sim
                 .create_order(CreateOrderRequest {

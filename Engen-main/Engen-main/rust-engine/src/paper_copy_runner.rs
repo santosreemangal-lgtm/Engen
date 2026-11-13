@@ -1690,7 +1690,7 @@ mod tests {
             priority_fee_usd: "0.10".to_string(),
             ..ExecutionPolicy::default()
         };
-        let queued = queue_paper_orders_with_policy(
+        let queued = queue_paper_orders_at_with_policy(
             WALLET,
             &[buy_signal(&"e".repeat(64))],
             &mut simulator,
@@ -1698,6 +1698,7 @@ mod tests {
             &CopySettings::default(),
             None,
             &global_policy,
+            1_760_000_001,
         )
         .unwrap();
         assert_eq!(queued.len(), 1);

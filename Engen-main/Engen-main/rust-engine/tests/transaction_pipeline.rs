@@ -79,6 +79,89 @@ fn shared_phase2_golden_corpus_matches_transaction_type_contract() {
     }
 }
 
+
+#[test]
+fn pending_fresh_signature_blocks_history_processing_in_the_same_monitor_cycle() {
+    const HISTORY_SIGNATURE: &str =
+        "1111111111111111111111111111111111111111111111111111111111111113";
+
+    let (endpoint, server) = spawn_mock_rpc(vec![
+        rpc_response(
+            6,
+            json!([{
+                "signature": NEW_SIGNATURE,
+                "slot": 102,
+                "err": null,
+                "confirmationStatus": "confirmed",
+                "blockTime": 1760000002
+            }]),
+        ),
+        rpc_response(
+            6,
+            json!([{
+                "signature": HISTORY_SIGNATURE,
+                "slot": 101,
+                "err": null,
+                "confirmationStatus": "confirmed",
+                "blockTime": 1760000001
+            }]),
+        ),
+        rpc_response(6, json!([])),
+        rpc_response(4, Value::Null),
+    ]);
+
+    let client = SolanaRpcClient::new(RpcConfig {
+        endpoint,
+        timeout: Duration::from_secs(3),
+        retries: 0,
+        backoff: Duration::ZERO,
+        min_interval: Duration::ZERO,
+    })
+    .expect("create loopback-only Fresh-first RPC client");
+
+    let directory = tempfile::tempdir().expect("create disposable DB directory");
+    let database_path = directory.path().join("fresh-history.db");
+    let store = SignatureStore::open(&database_path).expect("open disposable store");
+    store.mark_baseline(WALLET).expect("initialize source baseline");
+    store
+        .save(WALLET, OLD_SIGNATURE, Some(100))
+        .expect("save processed anchor");
+    store
+        .mark_processed(WALLET, OLD_SIGNATURE)
+        .expect("advance processed anchor");
+
+    let results = monitor_wallet(&client, &store, WALLET, 1, false, None)
+        .expect("run Fresh-first monitoring cycle");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["signature"], NEW_SIGNATURE);
+    assert_eq!(results[0]["processing_status"], "pending");
+    assert_eq!(
+        store.get_status(WALLET, NEW_SIGNATURE).unwrap().as_deref(),
+        Some("pending")
+    );
+    assert_eq!(
+        store.get_status(WALLET, HISTORY_SIGNATURE).unwrap().as_deref(),
+        Some("pending")
+    );
+    assert_eq!(
+        store
+            .pending_signatures_for_lane(WALLET, "fresh", 10)
+            .unwrap(),
+        vec![NEW_SIGNATURE.to_string()]
+    );
+    assert_eq!(
+        store
+            .pending_signatures_for_lane(WALLET, "history", 10)
+            .unwrap(),
+        vec![HISTORY_SIGNATURE.to_string()]
+    );
+
+    server
+        .join()
+        .expect("mock RPC server completed only Fresh processing requests");
+}
+
 #[test]
 fn unsupported_transaction_version_is_retained_for_manual_review_after_restart() {
     let (endpoint, server) = spawn_mock_rpc(vec![

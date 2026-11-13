@@ -519,7 +519,10 @@ pub fn process_signatures_for_lane(
             "signers": result.get("signers"),
             "program_ids": result.get("program_ids"),
             "instructions": result.get("instructions"),
-            "token_balance_changes": result.get("token_balance_changes")
+            "token_balance_changes": result.get("token_balance_changes"),
+            "signature_observation": result.get("signature_observation"),
+            "source_lane": result.get("source_lane"),
+            "paper_copy_eligible": result.get("paper_copy_eligible")
         });
         store.save_transaction_evidence(
             wallet_address,

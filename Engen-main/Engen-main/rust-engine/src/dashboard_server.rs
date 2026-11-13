@@ -1021,7 +1021,12 @@ fn empty_paper_report(profile_id: &str, initialized: bool) -> Value {
         "cash_balance_usd":null,"token_holdings_value_usd":null,"token_holdings":[],
         "portfolio_value_usd":null,"total_portfolio_value_usd":null,
         "portfolio_value_status":"not_initialized","realized_pnl_usd":null,"unrealized_pnl_usd":null,
-        "realized_roi_pct":null,"unrealized_roi_pct":null
+        "realized_roi_pct":null,"unrealized_roi_pct":null,
+        "pnl":{"cost_basis_method":"average_cost","currency":"USD","realized_by_mint":{},
+            "unrealized_by_mint":{},"realized_pnl":null,"unrealized_pnl":null,
+            "realized_roi_pct":null,"unrealized_roi_pct":null,
+            "realized_status":"unavailable","unrealized_status":"unavailable",
+            "unrealized_note":"No verified fresh market price is available."}
     })
 }
 
@@ -1034,6 +1039,20 @@ fn enrich_paper_report(mut report: Value, profile_id: &str) -> Value {
     report["transaction_broadcast"]=json!(false);
     if !profile_id.is_empty() { report["profile_id"]=json!(profile_id); }
     report["database_available"]=json!(true);
+    let cash = report.get("cash_balance_usd").cloned().unwrap_or(Value::Null);
+    let available = report.get("available_balances")
+        .and_then(|balances| balances.get("USD"))
+        .cloned()
+        .or_else(|| report.get("balances").and_then(|balances| balances.get("USD")).cloned())
+        .unwrap_or(cash.clone());
+    report["available_balance_usd"] = available.clone();
+    report["available_balance"] = available;
+    if let Some(pnl) = report.get("pnl").cloned() {
+        report["realized_pnl_usd"] = pnl.get("realized_pnl").cloned().unwrap_or(Value::Null);
+        report["unrealized_pnl_usd"] = pnl.get("unrealized_pnl").cloned().unwrap_or(Value::Null);
+        report["realized_roi_pct"] = pnl.get("realized_roi_pct").cloned().unwrap_or(Value::Null);
+        report["unrealized_roi_pct"] = pnl.get("unrealized_roi_pct").cloned().unwrap_or(Value::Null);
+    }
     report
 }
 

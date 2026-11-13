@@ -1183,6 +1183,60 @@ mod tests {
     }
 
     #[test]
+    fn fractional_partial_sell_rounds_down_to_token_atomic_precision() {
+        let mut simulator = simulator();
+        let mut source = sell_signal(&"9".repeat(64));
+        source["token_balance_changes"][0]["delta_amount"] = json!("-1000000");
+        source["token_balance_changes"][0]["pre_amount"] = json!("3000000");
+        source["token_balance_changes"][0]["post_amount"] = json!("2000000");
+
+        let queued = queue_paper_orders(
+            WALLET,
+            &[source],
+            &mut simulator,
+            AllowedSides::Sell,
+            &CopySettings::default(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(queued.len(), 1);
+
+        let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let price = MarketPrice::new(
+            ASSET,
+            "1",
+            "USD",
+            "fractional-sell-fixture",
+            now.clone(),
+            Some("25000"),
+            Some("test-liquidity".to_string()),
+            Some(now),
+        )
+        .unwrap();
+        let outcomes = execute_pending_paper_orders_with(
+            &mut simulator,
+            Some(WALLET),
+            |_mint| Some(price.clone()),
+            None,
+        );
+
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0]["status"], "FILLED");
+        assert_eq!(
+            BigDecimal::from_str(&simulator.fills()[0].quantity).unwrap(),
+            BigDecimal::from_str("3.333333").unwrap()
+        );
+        assert_eq!(
+            simulator.balances()[ASSET],
+            BigDecimal::from_str("6.666667").unwrap()
+        );
+        assert_eq!(
+            simulator.orders().values().next().unwrap().details["asset_quantity_step"],
+            "0.000001"
+        );
+    }
+
+    #[test]
     fn sequential_partial_sells_execute_in_source_slot_order_and_are_idempotent() {
         let mut simulator = simulator();
         let mut later = sell_signal(&"f".repeat(64));

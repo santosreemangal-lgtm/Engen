@@ -497,7 +497,7 @@ pub fn process_signatures_for_lane(
                 }
             }
         }
-        let raw = result.get("raw_transaction");
+        let raw = result.get("raw_transaction").cloned();
         if let Some(object) = result.as_object_mut() {
             object.insert(
                 "source_lane".to_string(),
@@ -524,7 +524,7 @@ pub fn process_signatures_for_lane(
         store.save_transaction_evidence(
             wallet_address,
             signature,
-            raw,
+            raw.as_ref(),
             Some(&parsed_evidence),
             result.get("trade_signal"),
             record_status,

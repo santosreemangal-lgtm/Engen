@@ -10,7 +10,7 @@ use crate::signature_store::{SignatureStore, SignatureStoreError};
 use crate::solana_public::{SolanaRpcClient, SolanaRpcError};
 use crate::solana_validation::{is_valid_solana_address, is_valid_transaction_signature};
 
-const MAX_SCAN_PAGES: usize = 1_000;
+const MAX_SCAN_PAGES: usize = 5;
 const MAX_PAGE_SIZE: usize = 1000;
 const MAX_BACKFILL_SIGNATURES: usize = 1_000;
 

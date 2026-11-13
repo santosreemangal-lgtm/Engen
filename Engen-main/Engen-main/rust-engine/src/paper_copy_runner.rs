@@ -200,6 +200,21 @@ fn decimal(value: &str, field: &str) -> Result<BigDecimal, PaperCopyError> {
         .map_err(|_| PaperCopyError::InvalidInput(format!("{field} must be a valid decimal.")))
 }
 
+fn minimum_quantity_for_decimals(decimals: u32) -> Result<String, PaperCopyError> {
+    if decimals > 255 {
+        return Err(PaperCopyError::InvalidInput(
+            "Asset decimals must be between 0 and 255.".to_string(),
+        ));
+    }
+    if decimals == 0 {
+        return Ok("1".to_string());
+    }
+    Ok(format!(
+        "0.{}1",
+        "0".repeat(decimals.saturating_sub(1) as usize)
+    ))
+}
+
 fn raw_integer(value: &Value) -> Option<BigDecimal> {
     let raw = value.as_str()?;
     let digits = raw.strip_prefix('-').unwrap_or(raw);
@@ -517,6 +532,8 @@ pub fn queue_paper_orders_at(
                 "target_budget_usd": target_notional_usd.as_ref().map(raw_to_string),
                 "target_budget_semantics":"ALL_IN_USD_BUDGET_INCLUDING_SLIPPAGE_FEES_AND_NETWORK_COST",
                 "max_buy_usd": settings.max_buy_usd,
+                "asset_decimals": asset_change.decimals,
+                "minimum_order_quantity": minimum_quantity_for_decimals(asset_change.decimals)?,
                 "source_asset_quantity": raw_to_string(&source_quantity),
                 "source_asset_pre_amount": asset_change.pre_amount.as_ref().map(raw_to_string),
                 "source_asset_post_amount": asset_change.post_amount.as_ref().map(raw_to_string),
@@ -913,6 +930,15 @@ mod tests {
     }
 
     #[test]
+    fn minimum_quantity_uses_asset_atomic_precision() {
+        assert_eq!(minimum_quantity_for_decimals(0).unwrap(), "1");
+        assert_eq!(minimum_quantity_for_decimals(1).unwrap(), "0.1");
+        assert_eq!(minimum_quantity_for_decimals(6).unwrap(), "0.000001");
+        assert_eq!(minimum_quantity_for_decimals(9).unwrap(), "0.000000001");
+        assert!(minimum_quantity_for_decimals(256).is_err());
+    }
+
+    #[test]
     fn buy_queue_uses_virtual_percentage_and_is_idempotent() {
         let mut simulator = simulator();
         let result = vec![buy_signal("1".repeat(64).as_str())];
@@ -930,6 +956,8 @@ mod tests {
         assert_eq!(queued[0]["side"], "BUY");
         let order = simulator.orders().values().next().unwrap();
         assert_eq!(order.details["target_notional_usd"], "5");
+        assert_eq!(order.details["asset_decimals"], 6);
+        assert_eq!(order.details["minimum_order_quantity"], "0.000001");
         assert_eq!(order.details["real_trading"], false);
         let duplicate = queue_paper_orders(
             WALLET,

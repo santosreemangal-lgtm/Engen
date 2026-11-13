@@ -31,6 +31,18 @@ pub fn decimal_value(value: &str, field: &str, allow_zero: bool) -> Result<BigDe
     Ok(parsed)
 }
 
+/// Return percentage ROI against a positive, exact cost-basis denominator.
+pub fn roi_percentage(pnl: &BigDecimal, cost_basis: &BigDecimal) -> Option<String> {
+    if cost_basis <= &BigDecimal::zero() {
+        return None;
+    }
+    Some(
+        (pnl * BigDecimal::from(100) / cost_basis)
+            .normalized()
+            .to_plain_string(),
+    )
+}
+
 pub fn parse_timestamp(value: &str) -> Result<DateTime<Utc>, PnlError> {
     DateTime::parse_from_rfc3339(value)
         .map(|date| date.with_timezone(&Utc))
@@ -196,6 +208,8 @@ pub struct UnrealizedPnl {
     pub pnl: Option<String>,
     pub market_value: Option<String>,
     pub cost_basis: Option<String>,
+    /// Percentage return against the remaining open-position cost basis.
+    pub roi_pct: Option<String>,
     pub currency: String,
     pub status: String,
     pub price_age_seconds: Option<u64>,
@@ -566,6 +580,7 @@ impl AverageCostLedger {
                 pnl: None,
                 market_value: Some(value.to_string()),
                 cost_basis: None,
+                roi_pct: None,
                 currency: PORTFOLIO_CURRENCY.to_string(),
                 status: "unknown_cost_basis".to_string(),
                 price_age_seconds: Some(age),
@@ -579,6 +594,7 @@ impl AverageCostLedger {
             pnl: Some(pnl.to_string()),
             market_value: Some(value.to_string()),
             cost_basis: Some(pos.cost_basis.to_string()),
+            roi_pct: roi_percentage(&pnl, &pos.cost_basis),
             currency: PORTFOLIO_CURRENCY.to_string(),
             status: "calculated".to_string(),
             price_age_seconds: Some(age),
@@ -607,6 +623,7 @@ fn unavailable(
         pnl: None,
         market_value: None,
         cost_basis: None,
+        roi_pct: None,
         currency: PORTFOLIO_CURRENCY.to_string(),
         status: status.to_string(),
         price_age_seconds: age,

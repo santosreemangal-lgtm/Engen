@@ -115,12 +115,21 @@ pub struct PaperPnlSummary {
     pub cost_basis_method: String,
     pub currency: String,
     pub realized_by_mint: BTreeMap<String, Value>,
+    /// Total realized P&L across all completed sales.
+    pub realized_pnl: Option<String>,
+    /// Cost basis allocated to sold units; the realized ROI denominator.
+    pub realized_cost_basis: Option<String>,
+    /// Weighted realized return: realized P&L / sold-unit cost basis × 100.
+    pub realized_roi_pct: Option<String>,
+    pub realized_status: String,
     /// Per-token mark-to-market detail, including price provenance and availability status.
     pub unrealized_by_mint: BTreeMap<String, Value>,
     /// Portfolio-level totals are null unless the relevant inputs are complete.
     pub unrealized_pnl: Option<String>,
     pub unrealized_market_value: Option<String>,
     pub unrealized_cost_basis: Option<String>,
+    /// Weighted unrealized return: open-position P&L / remaining basis × 100.
+    pub unrealized_roi_pct: Option<String>,
     pub unrealized_status: String,
     pub unrealized_note: String,
 }
@@ -1574,7 +1583,7 @@ impl PaperSimulator {
         &self,
     ) -> Result<(AverageCostLedger, BTreeMap<String, Value>), PaperSimulatorError> {
         let mut ledger = AverageCostLedger::new();
-        let mut realized: BTreeMap<String, (BigDecimal, bool)> = BTreeMap::new();
+        let mut realized: BTreeMap<String, (BigDecimal, BigDecimal, bool)> = BTreeMap::new();
         let mut quote_mints = BTreeSet::from(["USD".to_string()]);
 
         for fill in &self.fills {
@@ -1618,14 +1627,19 @@ impl PaperSimulator {
                     )?;
                     let entry = realized
                         .entry(fill.asset_mint.clone())
-                        .or_insert((BigDecimal::zero(), true));
-                    match event.realized_pnl {
-                        Some(value) => {
+                        .or_insert((BigDecimal::zero(), BigDecimal::zero(), true));
+                    match (event.realized_pnl, event.allocated_cost_basis) {
+                        (Some(value), Some(allocated_basis)) => {
                             entry.0 += BigDecimal::from_str(&value).map_err(|_| {
                                 PaperSimulatorError::InvalidInput("Invalid P&L result.".to_string())
-                            })?
+                            })?;
+                            entry.1 += BigDecimal::from_str(&allocated_basis).map_err(|_| {
+                                PaperSimulatorError::InvalidInput(
+                                    "Invalid realized cost-basis result.".to_string(),
+                                )
+                            })?;
                         }
-                        None => entry.1 = false,
+                        _ => entry.2 = false,
                     }
                 }
                 _ => {
@@ -1668,11 +1682,21 @@ impl PaperSimulator {
 
         let realized_by_mint = realized
             .into_iter()
-            .map(|(mint, (value, complete))| {
+            .map(|(mint, (value, sold_cost_basis, complete))| {
                 (
                     mint,
                     json!({
                         "pnl": if complete { Some(value.to_string()) } else { None },
+                        "cost_basis_sold": if complete {
+                            Some(sold_cost_basis.to_string())
+                        } else {
+                            None
+                        },
+                        "roi_pct": if complete {
+                            crate::pnl::roi_percentage(&value, &sold_cost_basis)
+                        } else {
+                            None
+                        },
                         "status": if complete { "calculated" } else { "unknown_cost_basis" },
                         "currency":"USD"
                     }),
@@ -1707,6 +1731,53 @@ impl PaperSimulator {
         now: Option<&str>,
     ) -> Result<PaperPnlSummary, PaperSimulatorError> {
         let (ledger, realized_by_mint) = self.rebuild_pnl_ledger()?;
+        let mut realized_pnl_total = BigDecimal::zero();
+        let mut realized_cost_basis_total = BigDecimal::zero();
+        let mut all_realized_complete = true;
+        for item in realized_by_mint.values() {
+            if item.get("status").and_then(Value::as_str) != Some("calculated") {
+                all_realized_complete = false;
+                continue;
+            }
+            let pnl = item
+                .get("pnl")
+                .and_then(Value::as_str)
+                .and_then(|value| BigDecimal::from_str(value).ok());
+            let cost_basis = item
+                .get("cost_basis_sold")
+                .and_then(Value::as_str)
+                .and_then(|value| BigDecimal::from_str(value).ok());
+            match (pnl, cost_basis) {
+                (Some(pnl), Some(cost_basis)) if cost_basis > BigDecimal::zero() => {
+                    realized_pnl_total += pnl;
+                    realized_cost_basis_total += cost_basis;
+                }
+                _ => all_realized_complete = false,
+            }
+        }
+        let has_realized_sales = !realized_by_mint.is_empty();
+        let realized_status = if !has_realized_sales {
+            "no_realized_sells"
+        } else if all_realized_complete {
+            "calculated"
+        } else {
+            "incomplete_cost_basis"
+        };
+        let realized_pnl = if !has_realized_sales || all_realized_complete {
+            Some(realized_pnl_total.normalized().to_plain_string())
+        } else {
+            None
+        };
+        let realized_cost_basis = if !has_realized_sales || all_realized_complete {
+            Some(realized_cost_basis_total.normalized().to_plain_string())
+        } else {
+            None
+        };
+        let realized_roi_pct = if has_realized_sales && all_realized_complete {
+            crate::pnl::roi_percentage(&realized_pnl_total, &realized_cost_basis_total)
+        } else {
+            None
+        };
         let positions = ledger.open_positions();
         let mut unrealized_by_mint = BTreeMap::new();
         let mut total_pnl = BigDecimal::zero();
@@ -1772,6 +1843,14 @@ impl PaperSimulator {
         } else {
             None
         };
+        let unrealized_roi_pct = if has_open_positions
+            && all_pnl_calculated
+            && all_cost_basis_available
+        {
+            crate::pnl::roi_percentage(&total_pnl, &total_cost_basis)
+        } else {
+            None
+        };
         let unrealized_status = if !has_open_positions {
             "no_open_positions"
         } else if all_pnl_calculated {
@@ -1791,10 +1870,15 @@ impl PaperSimulator {
             cost_basis_method: "average_cost".to_string(),
             currency: "USD".to_string(),
             realized_by_mint,
+            realized_pnl,
+            realized_cost_basis,
+            realized_roi_pct,
+            realized_status: realized_status.to_string(),
             unrealized_by_mint,
             unrealized_pnl,
             unrealized_market_value,
             unrealized_cost_basis,
+            unrealized_roi_pct,
             unrealized_status: unrealized_status.to_string(),
             unrealized_note,
         })
@@ -1939,6 +2023,136 @@ mod tests {
         assert_eq!(report["pnl"]["unrealized_pnl"], "2.9");
         assert_eq!(report["real_trading"], false);
         assert_eq!(report["transaction_broadcast"], false);
+    }
+
+    #[test]
+    fn realized_and_unrealized_roi_use_their_respective_average_cost_bases() {
+        let mut sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
+        let buy_id = buy_order(&mut sim, "roi-buy");
+        let policy = ExecutionPolicy {
+            slippage_bps: 0,
+            fee_bps: 1_000,
+            network_cost: "0".to_string(),
+            priority_fee_usd: "0".to_string(),
+            ..ExecutionPolicy::default()
+        };
+        let buy_result = sim
+            .execute_order(&buy_id, Some(&price("TOKEN")), now(), &policy, true)
+            .unwrap();
+        assert_eq!(buy_result["status"], "FILLED");
+
+        let sell_id = sim
+            .create_order(CreateOrderRequest {
+                signal_id: "roi-partial-sell",
+                side: "SELL",
+                asset_mint: "TOKEN",
+                quantity: "1",
+                quote_mint: "USD",
+                created_at: now(),
+                details: None,
+            })
+            .unwrap()["order_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let sell_price = MarketPrice::new(
+            "TOKEN",
+            "16.5",
+            "USD",
+            "test-feed",
+            now(),
+            Some("50000"),
+            Some("test-liquidity".to_string()),
+            Some(now().to_string()),
+        )
+        .unwrap();
+        let sell_result = sim
+            .execute_order(&sell_id, Some(&sell_price), now(), &policy, true)
+            .unwrap();
+        assert_eq!(sell_result["status"], "FILLED");
+
+        // BUY basis = $20 gross + $2 buy fee = $22. Half is allocated
+        // to the one token sold ($11). Net SELL proceeds = $16.50 - $1.65
+        // fee = $14.85, so realized P&L is $3.85 and realized ROI is 35%.
+        let mark = MarketPrice::new(
+            "TOKEN",
+            "13.2",
+            "USD",
+            "dexscreener_public_api",
+            now(),
+            Some("50000"),
+            Some("dexscreener_public_api".to_string()),
+            Some(now().to_string()),
+        )
+        .unwrap();
+        let prices = BTreeMap::from([("TOKEN".to_string(), mark)]);
+        let summary = sim
+            .pnl_summary_with_market_prices(&prices, 60, Some(now()))
+            .unwrap();
+
+        assert_eq!(summary.realized_pnl.as_deref(), Some("3.85"));
+        assert_eq!(summary.realized_cost_basis.as_deref(), Some("11"));
+        assert_eq!(summary.realized_roi_pct.as_deref(), Some("35"));
+        assert_eq!(summary.realized_status, "calculated");
+        assert_eq!(summary.realized_by_mint["TOKEN"]["cost_basis_sold"], "11");
+        assert_eq!(summary.realized_by_mint["TOKEN"]["roi_pct"], "35");
+
+        // Remaining token basis is $11. Its mark value is $13.20, so
+        // unrealized P&L is $2.20 and unrealized ROI is 20%.
+        assert_eq!(summary.unrealized_pnl.as_deref(), Some("2.2"));
+        assert_eq!(summary.unrealized_cost_basis.as_deref(), Some("11"));
+        assert_eq!(summary.unrealized_roi_pct.as_deref(), Some("20"));
+        assert_eq!(summary.unrealized_by_mint["TOKEN"]["roi_pct"], "20");
+    }
+
+    #[test]
+    fn roi_is_unavailable_when_realized_cost_basis_is_unknown() {
+        let mut balances = virtual_cash();
+        balances.insert("TOKEN".to_string(), "2".to_string());
+        let mut sim = PaperSimulator::in_memory(&balances).unwrap();
+        let sell_id = sim
+            .create_order(CreateOrderRequest {
+                signal_id: "unknown-basis-roi-sell",
+                side: "SELL",
+                asset_mint: "TOKEN",
+                quantity: "1",
+                quote_mint: "USD",
+                created_at: now(),
+                details: None,
+            })
+            .unwrap()["order_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let result = sim
+            .execute_order(
+                &sell_id,
+                Some(&price("TOKEN")),
+                now(),
+                &ExecutionPolicy::default(),
+                true,
+            )
+            .unwrap();
+        assert_eq!(result["status"], "FILLED");
+        let summary = sim.pnl_summary().unwrap();
+        assert_eq!(summary.realized_status, "incomplete_cost_basis");
+        assert_eq!(summary.realized_pnl, None);
+        assert_eq!(summary.realized_roi_pct, None);
+        assert_eq!(
+            summary.realized_by_mint["TOKEN"]["status"],
+            "unknown_cost_basis"
+        );
+        assert_eq!(summary.realized_by_mint["TOKEN"]["roi_pct"], Value::Null);
+    }
+
+    #[test]
+    fn realized_roi_is_unavailable_before_any_sell() {
+        let sim = PaperSimulator::in_memory(&virtual_cash()).unwrap();
+        let summary = sim.pnl_summary().unwrap();
+        assert_eq!(summary.realized_status, "no_realized_sells");
+        assert_eq!(summary.realized_pnl.as_deref(), Some("0"));
+        assert_eq!(summary.realized_cost_basis.as_deref(), Some("0"));
+        assert_eq!(summary.realized_roi_pct, None);
     }
 
     #[test]

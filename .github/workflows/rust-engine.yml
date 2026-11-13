@@ -29,8 +29,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 jobs:
   rust:
@@ -44,18 +43,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Produce formatted Rust source artifact
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/rewrite/rust-backend-20261109' || github.ref == 'refs/heads/migration/rust-dashboard-runtime-20261113')
-        run: cargo fmt --all
-      - name: Upload formatted Rust source
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/rewrite/rust-backend-20261109' || github.ref == 'refs/heads/migration/rust-dashboard-runtime-20261113')
-        uses: actions/upload-artifact@v4
-        with:
-          name: rustfmt-current-source
-          path: |
-            Engen-main/Engen-main/rust-engine/src/*.rs
-            Engen-main/Engen-main/rust-engine/tests/**/*.rs
-          if-no-files-found: error
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
       - name: Commit canonical rustfmt normalization and dispatch verification

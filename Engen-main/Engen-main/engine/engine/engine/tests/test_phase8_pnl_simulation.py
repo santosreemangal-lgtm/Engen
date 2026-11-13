@@ -172,6 +172,35 @@ class PnLTests(unittest.TestCase):
         self.assertEqual(report["portfolio_value_usd"], "7.25")
         self.assertEqual(report["token_holdings"], [])
 
+    def test_stale_price_is_retained_as_stale_but_not_included_in_value(self):
+        stale = MarketPrice(
+            MINT, Decimal("12"), "USD", "test-feed", "2026-10-26T11:58:59Z"
+        )
+        report = portfolio_valuation_usd(
+            {"USD": "100", MINT: "2"},
+            {MINT: stale},
+            max_age_seconds=60,
+            now=NOW,
+        )
+        holding = report["token_holdings"][0]
+        self.assertEqual(holding["status"], "stale_price")
+        self.assertEqual(holding["price_usd"], "12")
+        self.assertIsNone(holding["market_value_usd"])
+        self.assertIsNone(report["portfolio_value_usd"])
+
+    def test_mismatched_price_mint_is_never_used(self):
+        other = MarketPrice("TOKEN_B", Decimal("12"), "USD", "test-feed", NOW)
+        report = portfolio_valuation_usd(
+            {"USD": "100", MINT: "2"},
+            {MINT: other},
+            max_age_seconds=60,
+            now=NOW,
+        )
+        holding = report["token_holdings"][0]
+        self.assertEqual(holding["status"], "invalid_or_mismatched_price")
+        self.assertIsNone(holding["price_usd"])
+        self.assertIsNone(report["portfolio_value_usd"])
+
 
 class PaperSimulatorTests(unittest.TestCase):
     def make_simulator(self, directory=None):

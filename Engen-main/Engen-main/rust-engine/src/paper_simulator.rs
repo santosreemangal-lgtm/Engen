@@ -1381,8 +1381,13 @@ mod tests {
             "0.000000000000000001"
         );
         assert_eq!(
-            sim.orders()[&id].details["buy_budget_used_usd"],
-            spent.to_string()
+            BigDecimal::from_str(
+                sim.orders()[&id].details["buy_budget_used_usd"]
+                    .as_str()
+                    .unwrap()
+            )
+            .unwrap(),
+            spent
         );
     }
 
@@ -1691,7 +1696,7 @@ mod tests {
         let sim = PaperSimulator::open(&path, &BTreeMap::new()).unwrap();
         assert_eq!(sim.orders()[&id].status, "FILLED");
         assert_eq!(sim.fills().len(), 1);
-        assert_eq!(sim.balances()["TOKEN"].to_string(), "2");
+        assert_eq!(sim.balances()["TOKEN"], BigDecimal::from(2));
     }
 
     #[test]

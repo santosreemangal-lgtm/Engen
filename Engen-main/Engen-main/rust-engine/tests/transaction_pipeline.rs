@@ -79,6 +79,125 @@ fn shared_phase2_golden_corpus_matches_transaction_type_contract() {
     }
 }
 
+
+#[test]
+fn missing_signature_block_time_is_recovered_and_persisted_before_fresh_eligibility() {
+    let block_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock after Unix epoch")
+        .as_secs() as i64;
+
+    let buy_transaction = json!({
+        "slot": 103,
+        "transaction": {
+            "message": {
+                "header": {"numRequiredSignatures": 1},
+                "accountKeys": [
+                    {"pubkey": WALLET, "signer": true, "writable": true},
+                    {"pubkey": "ASSET_TOKEN_ACCOUNT", "signer": false, "writable": true},
+                    {"pubkey": "QUOTE_TOKEN_ACCOUNT", "signer": false, "writable": true},
+                    {"pubkey": "JUPITER_PROGRAM", "signer": false, "writable": false}
+                ],
+                "instructions": [{
+                    "program": "jupiter",
+                    "programId": "JUPITER_PROGRAM",
+                    "parsed": {"type": "swap"}
+                }]
+            }
+        },
+        "meta": {
+            "err": null,
+            "fee": 5000,
+            "preBalances": [10000000, 0, 0, 0],
+            "postBalances": [9995000, 0, 0, 0],
+            "preTokenBalances": [
+                {
+                    "accountIndex": 1,
+                    "mint": "MINT_A",
+                    "owner": WALLET,
+                    "uiTokenAmount": {"amount": "0", "decimals": 6}
+                },
+                {
+                    "accountIndex": 2,
+                    "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    "owner": WALLET,
+                    "uiTokenAmount": {"amount": "2500000", "decimals": 6}
+                }
+            ],
+            "postTokenBalances": [
+                {
+                    "accountIndex": 1,
+                    "mint": "MINT_A",
+                    "owner": WALLET,
+                    "uiTokenAmount": {"amount": "100", "decimals": 6}
+                },
+                {
+                    "accountIndex": 2,
+                    "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    "owner": WALLET,
+                    "uiTokenAmount": {"amount": "0", "decimals": 6}
+                }
+            ]
+        }
+    });
+
+    let (endpoint, server) = spawn_mock_rpc(vec![
+        rpc_response(
+            6,
+            json!([{
+                "signature": NEW_SIGNATURE,
+                "slot": 103,
+                "err": null,
+                "confirmationStatus": "confirmed",
+                "blockTime": null
+            }]),
+        ),
+        rpc_response(4, buy_transaction),
+        rpc_response(7, json!(block_time)),
+    ]);
+
+    let client = SolanaRpcClient::new(RpcConfig {
+        endpoint,
+        timeout: Duration::from_secs(3),
+        retries: 0,
+        backoff: Duration::ZERO,
+        min_interval: Duration::ZERO,
+    })
+    .expect("create loopback-only blockTime-recovery RPC client");
+
+    let directory = tempfile::tempdir().expect("create disposable DB directory");
+    let database_path = directory.path().join("block-time-recovery.db");
+    let store = SignatureStore::open(&database_path).expect("open disposable store");
+    store.mark_baseline(WALLET).expect("initialize baseline");
+
+    let results = monitor_wallet(&client, &store, WALLET, 10, false, None)
+        .expect("monitor source wallet and recover missing blockTime");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["trade_signal"]["classification"], "BUY_CANDIDATE");
+    assert_eq!(results[0]["signature_observation"]["block_time"], block_time);
+    assert_eq!(results[0]["paper_copy_eligible"], true);
+    assert_eq!(
+        store.get_status(WALLET, NEW_SIGNATURE).unwrap().as_deref(),
+        Some("processed")
+    );
+    let record = store
+        .get_transaction_record(WALLET, NEW_SIGNATURE)
+        .unwrap()
+        .expect("persist recovered transaction evidence");
+    assert_eq!(
+        record.parsed_evidence.as_ref().unwrap()["signature_observation"]["block_time"],
+        block_time
+    );
+    assert_eq!(
+        record.parsed_evidence.as_ref().unwrap()["source_lane"],
+        "fresh"
+    );
+    server
+        .join()
+        .expect("mock RPC server completed blockTime recovery requests");
+}
+
 #[test]
 fn pending_fresh_signature_blocks_history_processing_in_the_same_monitor_cycle() {
     const HISTORY_SIGNATURE: &str =

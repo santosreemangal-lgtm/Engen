@@ -1,3 +1,21 @@
+# Current migration status — 2026-11-14
+
+**Step 1 (core application/domain Rust component parity): COMPLETE.**  
+Verified code commit: `1f38d3373b8e193bb1f279733bf7ef6a5c2815b3`  
+- [CI push run #640](https://github.com/santosreemangal-lgtm/Engen/actions/runs/43571357136): success
+- [CI PR run #641](https://github.com/santosreemangal-lgtm/Engen/actions/runs/43571360458): success
+- [Draft PR #49](https://github.com/santosreemangal-lgtm/Engen/pull/49): open, unmerged
+
+Rust component ports now cover configuration/safety, redacting logging, health, public RPC policy/client, address/signature validation, freshness, signature/profile stores, transaction analysis/processing/monitoring, wallet monitoring, scheduler/service, market data, paper-copy queue, pending-copy reporting, paper simulation/P&L, persistent legacy PaperTrader compatibility, local latency recording, and the Telegram paper-only adapter.
+
+Both CI workflows passed formatting, Rust tests, public read-only RPC smoke, Python behavioral references, dashboard E2E, Python-free release runtime check, Clippy and the static migration audit.
+
+**Important scope boundary:** Step 1 acceptance is not full Rust-only migration acceptance. Steps 2–6 remain open: complete Dashboard API contract comparison; integrated monitor/execution/DB service acceptance; all launchers and standalone tools migrated; Python-free production entrypoint/deployment cutover; and full DB/restart/duplicate/fault/rollback E2E. The audit still reports 38 Python production/runtime paths, and none were deleted.
+
+Safety remains paper/read-only only. No signing, private keys, seed phrases, live transaction construction or broadcast. No real user database changed. PR #49 remains Draft and unmerged.
+
+---
+
 # Rust Backend Migration — Status
 
 **Target baseline:** `feature/engen-vision-core-20261108`  

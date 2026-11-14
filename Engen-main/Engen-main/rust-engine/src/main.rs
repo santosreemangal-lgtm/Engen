@@ -229,16 +229,14 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
         "classify-transaction" => run_classification(&args[1..]),
         "health-check" => {
             let config = Config::from_process_env()?;
-            let report = engen_engine::health::get_status(
-                &config,
-                &engen_engine::health::project_root(),
-            );
+            let report =
+                engen_engine::health::get_status(&config, &engen_engine::health::project_root());
             println!("{}", serde_json::to_string_pretty(&report)?);
             if report["status"] != "ok" {
                 return Err(invalid_input("Rust runtime health checks failed."));
             }
             Ok(())
-        },
+        }
         "scan-wallet-once" => run_scan(parse_scan_options(&args[1..])?),
         "serve-dashboard" => engen_engine::dashboard_server::serve_dashboard(),
         _ => Err(invalid_input(format!(

@@ -79,11 +79,25 @@ impl HttpResponse {
 #[derive(Clone)]
 struct ScanContext {
     project_root: PathBuf,
+    profile_data_dir: PathBuf,
     profile_store: Arc<ProfileStore>,
     signature_store: Arc<SignatureStore>,
     rpc: Arc<SolanaRpcClient>,
     profile_simulators: Arc<Mutex<HashMap<String, Arc<Mutex<PaperSimulator>>>>>,
     execution_policy: ExecutionPolicy,
+}
+
+fn configured_profile_data_dir(
+    profile_store_db: &Path,
+    explicit_profile_data_dir: Option<PathBuf>,
+    default_data_dir: &Path,
+) -> PathBuf {
+    explicit_profile_data_dir.unwrap_or_else(|| {
+        profile_store_db
+            .parent()
+            .map(|parent| parent.join("profiles"))
+            .unwrap_or_else(|| default_data_dir.join("profiles"))
+    })
 }
 
 impl ScanContext {
@@ -97,9 +111,7 @@ impl ScanContext {
             return Ok(Arc::clone(existing));
         }
         let path = self
-            .project_root
-            .join("data")
-            .join("profiles")
+            .profile_data_dir
             .join(&canonical)
             .join("paper_trading.db");
         let simulator = PaperSimulator::open(path, &std::collections::BTreeMap::new())
@@ -389,6 +401,11 @@ impl DashboardApp {
         let profile_db = std::env::var_os("PROFILE_STORE_DB")
             .map(PathBuf::from)
             .unwrap_or_else(|| data_dir.join("profiles.db"));
+        let profile_data_dir = configured_profile_data_dir(
+            &profile_db,
+            std::env::var_os("PROFILE_DATA_DIR").map(PathBuf::from),
+            &data_dir,
+        );
         let signature_db = std::env::var_os("SIGNATURE_DB")
             .map(PathBuf::from)
             .unwrap_or_else(|| data_dir.join("signatures.db"));
@@ -418,6 +435,7 @@ impl DashboardApp {
         let global_paper = PaperSimulator::open(paper_db, &std::collections::BTreeMap::new())?;
         let context = ScanContext {
             project_root: project_root.clone(),
+            profile_data_dir,
             profile_store,
             signature_store,
             rpc: Arc::new(rpc),
@@ -2134,6 +2152,27 @@ pub fn serve_dashboard() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_data_directory_honors_python_environment_override_and_legacy_default() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("data");
+        let profile_db = data.join("profiles.db");
+        let explicit = root.path().join("custom-profile-data");
+        assert_eq!(
+            configured_profile_data_dir(&profile_db, Some(explicit.clone()), &data),
+            explicit
+        );
+        assert_eq!(
+            configured_profile_data_dir(&profile_db, None, &data),
+            data.join("profiles")
+        );
+        let bare_db = Path::new("profiles.db");
+        assert_eq!(
+            configured_profile_data_dir(bare_db, None, &data),
+            PathBuf::from("profiles")
+        );
+    }
 
     fn dashboard_app_fixture() -> (tempfile::TempDir, Arc<DashboardApp>) {
         use std::collections::BTreeMap;

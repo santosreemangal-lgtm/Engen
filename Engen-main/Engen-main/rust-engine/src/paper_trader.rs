@@ -225,8 +225,7 @@ impl PaperTrader {
         self.processed_signatures.clear();
         for row in rows {
             let trade = row?;
-            self.processed_signatures
-                .insert(trade.signature.clone());
+            self.processed_signatures.insert(trade.signature.clone());
             self.trades.push(trade);
         }
         Ok(())
@@ -331,7 +330,10 @@ impl PaperTrader {
         let Some(signal) = result.get("trade_signal").filter(|value| value.is_object()) else {
             return Ok(json!({"status":"SKIPPED","reason":"No trade signal."}));
         };
-        let action = signal.get("classification").and_then(Value::as_str).unwrap_or("");
+        let action = signal
+            .get("classification")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         if !matches!(action, "BUY_CANDIDATE" | "SELL_CANDIDATE") {
             return Ok(json!({
                 "status":"SKIPPED",
@@ -341,7 +343,9 @@ impl PaperTrader {
 
         let assets = signal.get("asset_mints").and_then(Value::as_array);
         let quotes = signal.get("quote_mints").and_then(Value::as_array);
-        let changes = result.get("token_balance_changes").and_then(Value::as_array);
+        let changes = result
+            .get("token_balance_changes")
+            .and_then(Value::as_array);
         let (Some(assets), Some(quotes), Some(changes)) = (assets, quotes, changes) else {
             return Ok(json!({
                 "status":"SKIPPED",
@@ -354,13 +358,10 @@ impl PaperTrader {
                 "reason":"Only one asset and one quote token are supported."
             }));
         }
-        let (Some(asset_mint), Some(quote_mint)) = (assets[0].as_str(), quotes[0].as_str())
-        else {
+        let (Some(asset_mint), Some(quote_mint)) = (assets[0].as_str(), quotes[0].as_str()) else {
             return Ok(json!({"status":"SKIPPED","reason":"Invalid token mints."}));
         };
-        if asset_mint.trim().is_empty()
-            || quote_mint.trim().is_empty()
-            || asset_mint == quote_mint
+        if asset_mint.trim().is_empty() || quote_mint.trim().is_empty() || asset_mint == quote_mint
         {
             return Ok(json!({"status":"SKIPPED","reason":"Invalid token mints."}));
         }
@@ -387,68 +388,69 @@ impl PaperTrader {
             .cloned()
             .unwrap_or_else(|| zero.clone());
 
-        let (side, asset_amount, quote_amount, new_asset_balance, new_quote_balance) =
-            if action == "BUY_CANDIDATE" {
-                if asset_delta <= zero || quote_delta >= zero {
-                    return Ok(json!({"status":"SKIPPED","reason":"Buy direction is inconsistent."}));
-                }
-                let asset_amount = asset_delta;
-                let quote_amount = -quote_delta;
-                if let Some(limit) = &self.max_position_pct {
-                    let maximum = &quote_balance * limit / BigDecimal::from(100);
-                    if quote_amount > maximum {
-                        return Ok(json!({
-                            "status":"REJECTED",
-                            "reason":"Buy exceeds this profile's maximum position percentage."
-                        }));
-                    }
-                }
-                if self.max_open_positions.is_some() && asset_balance <= zero {
-                    let open = self
-                        .balances
-                        .iter()
-                        .filter(|(mint, amount)| mint.as_str() != quote_mint && **amount > zero)
-                        .count();
-                    if open >= self.max_open_positions.unwrap_or(0) {
-                        return Ok(json!({
-                            "status":"REJECTED",
-                            "reason":"This profile's maximum open paper positions has been reached."
-                        }));
-                    }
-                }
-                if quote_balance < quote_amount {
+        let (side, asset_amount, quote_amount, new_asset_balance, new_quote_balance) = if action
+            == "BUY_CANDIDATE"
+        {
+            if asset_delta <= zero || quote_delta >= zero {
+                return Ok(json!({"status":"SKIPPED","reason":"Buy direction is inconsistent."}));
+            }
+            let asset_amount = asset_delta;
+            let quote_amount = -quote_delta;
+            if let Some(limit) = &self.max_position_pct {
+                let maximum = &quote_balance * limit / BigDecimal::from(100);
+                if quote_amount > maximum {
                     return Ok(json!({
                         "status":"REJECTED",
-                        "reason":"Insufficient paper quote balance."
+                        "reason":"Buy exceeds this profile's maximum position percentage."
                     }));
                 }
-                (
-                    "BUY",
-                    asset_amount.clone(),
-                    quote_amount.clone(),
-                    asset_balance + asset_amount,
-                    quote_balance - quote_amount,
-                )
-            } else {
-                if asset_delta >= zero || quote_delta <= zero {
-                    return Ok(json!({"status":"SKIPPED","reason":"Sell direction is inconsistent."}));
-                }
-                let asset_amount = -asset_delta;
-                let quote_amount = quote_delta;
-                if asset_balance < asset_amount {
+            }
+            if self.max_open_positions.is_some() && asset_balance <= zero {
+                let open = self
+                    .balances
+                    .iter()
+                    .filter(|(mint, amount)| mint.as_str() != quote_mint && **amount > zero)
+                    .count();
+                if open >= self.max_open_positions.unwrap_or(0) {
                     return Ok(json!({
                         "status":"REJECTED",
-                        "reason":"Insufficient paper asset balance."
+                        "reason":"This profile's maximum open paper positions has been reached."
                     }));
                 }
-                (
-                    "SELL",
-                    asset_amount.clone(),
-                    quote_amount.clone(),
-                    asset_balance - asset_amount,
-                    quote_balance + quote_amount,
-                )
-            };
+            }
+            if quote_balance < quote_amount {
+                return Ok(json!({
+                    "status":"REJECTED",
+                    "reason":"Insufficient paper quote balance."
+                }));
+            }
+            (
+                "BUY",
+                asset_amount.clone(),
+                quote_amount.clone(),
+                asset_balance + asset_amount,
+                quote_balance - quote_amount,
+            )
+        } else {
+            if asset_delta >= zero || quote_delta <= zero {
+                return Ok(json!({"status":"SKIPPED","reason":"Sell direction is inconsistent."}));
+            }
+            let asset_amount = -asset_delta;
+            let quote_amount = quote_delta;
+            if asset_balance < asset_amount {
+                return Ok(json!({
+                    "status":"REJECTED",
+                    "reason":"Insufficient paper asset balance."
+                }));
+            }
+            (
+                "SELL",
+                asset_amount.clone(),
+                quote_amount.clone(),
+                asset_balance - asset_amount,
+                quote_balance + quote_amount,
+            )
+        };
 
         let trade = PaperTrade {
             signature: signature.to_string(),
@@ -550,8 +552,7 @@ mod tests {
         let directory = tempdir().unwrap();
         let path = directory.path().join("paper.db");
         {
-            let mut trader =
-                PaperTrader::open(&balances("10"), &path, None, None).unwrap();
+            let mut trader = PaperTrader::open(&balances("10"), &path, None, None).unwrap();
             assert_eq!(
                 trader.process(&buy_result("restart-signature")).unwrap()["status"],
                 "PAPER_FILLED"
@@ -636,7 +637,10 @@ mod tests {
                 {"mint":native_sol,"delta_amount":"-200000000","decimals":9,"owner":"WALLET_A","source":"native_sol","fee_adjusted":true}
             ]
         });
-        assert_eq!(trader.process(&transaction).unwrap()["status"], "PAPER_FILLED");
+        assert_eq!(
+            trader.process(&transaction).unwrap()["status"],
+            "PAPER_FILLED"
+        );
         drop(trader);
         let restored = PaperTrader::open(&initial, &path, None, None).unwrap();
         assert_eq!(restored.get_balances()[native_sol], "0.8");
@@ -644,4 +648,3 @@ mod tests {
         assert_eq!(restored.trades().len(), 1);
     }
 }
-

@@ -46,7 +46,7 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("");
     let target = parts.next().unwrap_or("/");
-    let (path, _query) = target.split_once('?').unwrap_or((target, ""));
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
     let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
 
     if path.starts_with("/api/") && !authorized(request, state.api_token.as_deref()) {
@@ -71,9 +71,7 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
         ),
         ("GET", "/api/paper") | ("GET", "/api/paper-simulation") => {
             let sim = state.sim.lock().unwrap_or_else(|e| e.into_inner());
-            let mut report = sim.report();
-            report["simulated"] = serde_json::json!(true);
-            (200, report)
+            (200, paper_report(&sim))
         }
         ("GET", "/api/wallets") => {
             let store = state.profiles.lock().unwrap_or_else(|e| e.into_inner());
@@ -110,11 +108,21 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
             200,
             serde_json::json!({
                 "mode": "READ_ONLY",
+                "available": false,
+                "status": "paper_only",
                 "ok": true,
                 "real_trading": false,
                 "transaction_broadcast": false
             }),
         ),
+        ("GET", "/api/profile-monitor") => {
+            let id = query_param(query, "profile_id");
+            let store = state.profiles.lock().unwrap_or_else(|e| e.into_inner());
+            match store.monitor_status(&id) {
+                Ok(body) => (200, body),
+                Err(err) => status_for_profile(err),
+            }
+        }
         ("POST", "/api/wallets") => match serde_json::from_str::<serde_json::Value>(body) {
             Ok(value) => {
                 let address = value.get("address").and_then(|v| v.as_str()).unwrap_or("");
@@ -133,24 +141,30 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
             Err(err) => (400, serde_json::json!({"error": err.to_string()})),
         },
         ("POST", "/api/profiles") => match serde_json::from_str::<serde_json::Value>(body) {
+            Ok(value) => profile_action(state, &value),
+            Err(err) => (400, serde_json::json!({"error": err.to_string()})),
+        },
+        ("POST", "/api/profile-monitor") => match serde_json::from_str::<serde_json::Value>(body) {
             Ok(value) => {
-                let name = value.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let active = value.get("active").and_then(|v| v.as_bool()).unwrap_or(true);
-                let wallets = value
-                    .get("source_wallets")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
+                let id = value.get("profile_id").and_then(|v| v.as_str()).unwrap_or("");
+                let action = value.get("action").and_then(|v| v.as_str()).unwrap_or("");
                 let store = state.profiles.lock().unwrap_or_else(|e| e.into_inner());
-                match store.upsert(name, &wallets, active, None) {
-                    Ok(profile) => (200, serde_json::json!(profile)),
-                    Err(err) => (400, serde_json::json!({"error": err.to_string()})),
+                let enabled = match action {
+                    "start" => true,
+                    "stop" => false,
+                    _ => {
+                        return respond(400, &serde_json::json!({"error": "Action must be start or stop."}));
+                    }
+                };
+                match store.set_monitor(id, enabled) {
+                    Ok(body) => (200, body),
+                    Err(err) => status_for_profile(err),
                 }
             }
+            Err(err) => (400, serde_json::json!({"error": err.to_string()})),
+        },
+        ("POST", "/api/paper-simulation") => match serde_json::from_str::<serde_json::Value>(body) {
+            Ok(value) => paper_action(state, &value),
             Err(err) => (400, serde_json::json!({"error": err.to_string()})),
         },
         ("GET", "/api/profile-transactions") => {
@@ -274,6 +288,135 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
     respond(status, &payload)
 }
 
+fn query_param(query: &str, key: &str) -> String {
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(k, _)| *k == key)
+        .map(|(_, v)| v.to_string())
+        .unwrap_or_default()
+}
+
+fn status_for_profile(err: crate::EngenError) -> (u16, serde_json::Value) {
+    let message = err.to_string();
+    let code = if message.contains("Profile not found") {
+        404
+    } else if message.contains("Activate this profile") {
+        409
+    } else {
+        400
+    };
+    (code, serde_json::json!({"error": message}))
+}
+
+fn profile_action(state: &PaperApiState, value: &serde_json::Value) -> (u16, serde_json::Value) {
+    let action = value.get("action").and_then(|v| v.as_str()).unwrap_or("create");
+    let store = state.profiles.lock().unwrap_or_else(|e| e.into_inner());
+    let result = match action {
+        "create" => store
+            .create_profile(value.get("name").and_then(|v| v.as_str()).unwrap_or(""))
+            .map(|profile| (201, serde_json::json!({"profile": profile, "simulated": true}))),
+        "update" => {
+            let id = value.get("profile_id").and_then(|v| v.as_str()).unwrap_or("");
+            let status = value.get("status").and_then(|v| v.as_str()).unwrap_or("draft");
+            store
+                .set_status(id, status)
+                .map(|profile| (200, serde_json::json!({"profile": profile, "simulated": true})))
+        }
+        "settings" => {
+            let id = value.get("profile_id").and_then(|v| v.as_str()).unwrap_or("");
+            let settings = value.get("settings").cloned().unwrap_or(serde_json::json!({}));
+            store
+                .set_settings(id, &settings)
+                .map(|profile| (200, serde_json::json!({"profile": profile, "simulated": true})))
+        }
+        "associate-source-wallet" => {
+            let id = value.get("profile_id").and_then(|v| v.as_str()).unwrap_or("");
+            let wallet = value.get("wallet_address").and_then(|v| v.as_str()).unwrap_or("");
+            store
+                .associate_wallet(id, wallet)
+                .map(|profile| (200, serde_json::json!({"profile": profile, "simulated": true})))
+        }
+        "disassociate-source-wallet" => {
+            let id = value.get("profile_id").and_then(|v| v.as_str()).unwrap_or("");
+            let wallet = value.get("wallet_address").and_then(|v| v.as_str()).unwrap_or("");
+            store
+                .disassociate_wallet(id, wallet)
+                .map(|profile| (200, serde_json::json!({"profile": profile, "simulated": true})))
+        }
+        "delete" => {
+            let id = value.get("profile_id").and_then(|v| v.as_str()).unwrap_or("");
+            store.delete_profile(id).map(|_| {
+                (
+                    200,
+                    serde_json::json!({"deleted": true, "profile_id": id, "history_preserved": true}),
+                )
+            })
+        }
+        _ => Err(crate::EngenError::InvalidInput(
+            "Action must be create, update, settings, associate-source-wallet, disassociate-source-wallet, or delete.".into(),
+        )),
+    };
+    match result {
+        Ok(pair) => pair,
+        Err(err) => status_for_profile(err),
+    }
+}
+
+fn paper_report(sim: &crate::paper_simulator::PaperSimulator) -> serde_json::Value {
+    let mut report = sim.report();
+    let usd = report["balances"].get("USD").cloned().unwrap_or(serde_json::json!("0"));
+    report["mode"] = serde_json::json!("PAPER_SIMULATION");
+    report["simulated"] = serde_json::json!(true);
+    report["database_available"] = serde_json::json!(true);
+    report["real_wallet_balances_included"] = serde_json::json!(false);
+    report["real_trading"] = serde_json::json!(false);
+    report["transaction_broadcast"] = serde_json::json!(false);
+    report["available_balance"] = usd.clone();
+    report["available_balance_usd"] = usd;
+    report
+}
+
+fn paper_action(state: &PaperApiState, value: &serde_json::Value) -> (u16, serde_json::Value) {
+    let action = value.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    let mut sim = state.sim.lock().unwrap_or_else(|e| e.into_inner());
+    let amount = value
+        .get("amount")
+        .and_then(|v| v.as_str())
+        .or_else(|| value.get("amount").and_then(|v| v.as_i64()).map(|_| ""))
+        .unwrap_or("");
+    let amount = if amount.is_empty() {
+        value
+            .get("amount")
+            .map(|v| v.to_string().trim_matches('"').to_string())
+            .unwrap_or_default()
+    } else {
+        amount.to_string()
+    };
+    match action {
+        "set-initial-balance" | "set-profile-initial-balance" | "add-balance" => {
+            let mint = value.get("mint").and_then(|v| v.as_str()).unwrap_or("USD");
+            match sim.set_virtual_balance(&amount, mint) {
+                Ok(()) => (200, serde_json::json!({"result": {"status": "OK"}, "report": paper_report(&sim)})),
+                Err(err) => (400, serde_json::json!({"error": err.to_string()})),
+            }
+        }
+        "initialize-profile-ledger" => {
+            let id = value.get("profile_id").and_then(|v| v.as_str()).unwrap_or("");
+            let store = state.profiles.lock().unwrap_or_else(|e| e.into_inner());
+            match store.get(id) {
+                Ok(Some(_)) => (200, serde_json::json!({"report": paper_report(&sim), "profile_id": id})),
+                Ok(None) => (404, serde_json::json!({"error": "Profile not found."})),
+                Err(err) => (500, serde_json::json!({"error": err.to_string()})),
+            }
+        }
+        _ => (
+            400,
+            serde_json::json!({"error": "Action must be set-initial-balance, add-balance, set-profile-initial-balance, or initialize-profile-ledger."}),
+        ),
+    }
+}
+
 fn allow_request(hits: &Mutex<Vec<u64>>) -> bool {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -301,16 +444,7 @@ fn authorized(request: &str, token: Option<&str>) -> bool {
 }
 
 fn html_index() -> String {
-    let body = r#"<!doctype html><html><head><meta charset="utf-8"><title>Engen paper</title>
-<style>body{font:15px system-ui;background:#0b1020;color:#edf2ff;margin:32px}code{color:#9cf}</style>
-</head><body>
-<h1>Engen paper runtime</h1>
-<p>Paper only. No signing. No broadcast.</p>
-<p>GET <code>/health</code> · GET <code>/api/paper</code> · POST <code>/api/candidates</code> · POST <code>/api/fill</code></p>
-<pre id="out">loading…</pre>
-<script>
-fetch('/api/paper').then(r=>r.json()).then(j=>{document.getElementById('out').textContent=JSON.stringify(j,null,2)}).catch(e=>{document.getElementById('out').textContent=String(e)})
-</script></body></html>"#;
+    let body = include_str!("../static/index.html");
     format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
@@ -321,8 +455,12 @@ fn respond(status: u16, payload: &serde_json::Value) -> String {
     let body = payload.to_string();
     let reason = match status {
         200 => "OK",
+        201 => "Created",
         400 => "Bad Request",
+        401 => "Unauthorized",
         404 => "Not Found",
+        409 => "Conflict",
+        429 => "Too Many Requests",
         _ => "Error",
     };
     format!(
@@ -392,5 +530,31 @@ mod tests {
             &state,
         );
         assert!(ok.contains("200"));
+    }
+
+    #[test]
+    fn dashboard_profile_contract() {
+        let state = PaperApiState::for_tests();
+        let created = handle_http(
+            "POST /api/profiles HTTP/1.1\r\nHost: x\r\nContent-Length: 27\r\n\r\n{\"action\":\"create\",\"name\":\"alpha\"}",
+            &state,
+        );
+        assert!(created.contains("201"), "{created}");
+        assert!(created.contains("\"profile\""));
+        let id = created
+            .split("\"profile_id\":\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .to_string();
+        let body = format!("{{\"action\":\"update\",\"profile_id\":\"{id}\",\"status\":\"active\"}}");
+        let updated = handle_http(
+            &format!("POST /api/profiles HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{body}", body.len()),
+            &state,
+        );
+        assert!(updated.contains("200"));
+        assert!(updated.contains("\"status\":\"active\""));
     }
 }

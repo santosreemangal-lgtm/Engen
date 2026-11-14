@@ -7,6 +7,7 @@
 pub mod classifier;
 pub mod config;
 pub mod error;
+pub mod grpc_gate;
 pub mod logutil;
 pub mod monitor_service;
 pub mod paper_copy;
@@ -14,6 +15,7 @@ pub mod paper_http;
 pub mod paper_simulator;
 pub mod parser;
 pub mod profile_store;
+pub mod pumpfun;
 pub mod signature_store;
 pub mod source_freshness;
 pub mod transaction_monitor;

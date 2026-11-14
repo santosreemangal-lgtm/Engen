@@ -104,6 +104,9 @@ fi
 if [[ ! -f "$LIB" ]] || ! grep -q 'pub mod health' "$LIB"; then
   report_blocker "Rust library does not expose native health checks."
 fi
+if [[ ! -f "$LIB" ]] || ! grep -q 'pub mod logging' "$LIB"; then
+  report_blocker "Rust library does not expose native secret redaction."
+fi
 
 RENDER="$ROOT/render.yaml"
 if [[ ! -f "$RENDER" ]] || ! grep -qE '^[[:space:]]+runtime:[[:space:]]*rust[[:space:]]*$' "$RENDER"; then

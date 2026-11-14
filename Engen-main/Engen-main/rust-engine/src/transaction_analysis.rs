@@ -1398,13 +1398,11 @@ mod tests {
             let result = classify_transaction(transaction, wallet, Some(changes));
 
             assert_eq!(
-                result["transaction_type"],
-                case["expected_type"],
+                result["transaction_type"], case["expected_type"],
                 "transaction type mismatch for {name}"
             );
             assert_eq!(
-                result["trade_signal"],
-                case["expected_signal"],
+                result["trade_signal"], case["expected_signal"],
                 "trade signal mismatch for {name}"
             );
 
@@ -1436,8 +1434,7 @@ mod tests {
                     })
                     .collect::<Vec<_>>();
                 assert_eq!(
-                    instructions,
-                    expected["instructions"],
+                    instructions, expected["instructions"],
                     "instruction summary mismatch for {name}"
                 );
             }
@@ -1454,8 +1451,7 @@ mod tests {
             if let Some(expected) = case.get("expected_outer_program_id") {
                 let summary = analyze_transaction(transaction).unwrap();
                 assert_eq!(
-                    summary["instructions"][0]["program_id"],
-                    *expected,
+                    summary["instructions"][0]["program_id"], *expected,
                     "outer program ID mismatch for {name}"
                 );
             }

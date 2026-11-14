@@ -78,7 +78,6 @@ impl HttpResponse {
 
 #[derive(Clone)]
 struct ScanContext {
-    project_root: PathBuf,
     profile_data_dir: PathBuf,
     profile_store: Arc<ProfileStore>,
     signature_store: Arc<SignatureStore>,
@@ -434,7 +433,6 @@ impl DashboardApp {
         let signature_store = Arc::new(SignatureStore::open(signature_db)?);
         let global_paper = PaperSimulator::open(paper_db, &std::collections::BTreeMap::new())?;
         let context = ScanContext {
-            project_root: project_root.clone(),
             profile_data_dir,
             profile_store,
             signature_store,
@@ -2191,7 +2189,7 @@ mod tests {
         let global_paper =
             PaperSimulator::open(data.join("paper_simulator.db"), &BTreeMap::new()).unwrap();
         let context = ScanContext {
-            project_root: root.clone(),
+            profile_data_dir: data.join("profiles"),
             profile_store,
             signature_store,
             rpc,

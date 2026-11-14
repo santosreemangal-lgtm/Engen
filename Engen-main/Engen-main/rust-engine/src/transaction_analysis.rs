@@ -1384,6 +1384,85 @@ mod tests {
     }
 
     #[test]
+    fn shared_phase2_golden_corpus_matches_python_transaction_contract() {
+        let cases: Vec<Value> =
+            serde_json::from_str(include_str!("../tests/fixtures/phase2_transactions.json"))
+                .unwrap();
+        assert!(cases.len() >= 6);
+
+        for case in cases {
+            let name = case["name"].as_str().unwrap_or("unnamed");
+            let wallet = case["wallet"].as_str().unwrap();
+            let transaction = &case["transaction"];
+            let changes = &case["balance_changes"];
+            let result = classify_transaction(transaction, wallet, Some(changes));
+
+            assert_eq!(
+                result["transaction_type"],
+                case["expected_type"],
+                "transaction type mismatch for {name}"
+            );
+            assert_eq!(
+                result["trade_signal"],
+                case["expected_signal"],
+                "trade signal mismatch for {name}"
+            );
+
+            if let Some(expected) = case.get("expected_analysis") {
+                let summary = analyze_transaction(transaction).unwrap();
+                for field in [
+                    "status",
+                    "slot",
+                    "fee",
+                    "account_count",
+                    "signers",
+                    "program_ids",
+                ] {
+                    assert_eq!(
+                        summary[field], expected[field],
+                        "analysis field {field} mismatch for {name}"
+                    );
+                }
+                let instructions = summary["instructions"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|instruction| {
+                        json!({
+                            "source": instruction["source"],
+                            "program_id": instruction["program_id"],
+                            "parsed_type": instruction["parsed_type"]
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    instructions,
+                    expected["instructions"],
+                    "instruction summary mismatch for {name}"
+                );
+            }
+
+            if let Some(expected) = case.get("expected_token_balance_changes") {
+                let actual = analyze_token_balance_changes(&transaction["meta"]);
+                assert_eq!(
+                    Value::Array(actual),
+                    *expected,
+                    "token balance changes mismatch for {name}"
+                );
+            }
+
+            if let Some(expected) = case.get("expected_outer_program_id") {
+                let summary = analyze_transaction(transaction).unwrap();
+                assert_eq!(
+                    summary["instructions"][0]["program_id"],
+                    *expected,
+                    "outer program ID mismatch for {name}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn missing_transaction_metadata_is_not_fabricated() {
         let result = analyze_transaction(&json!({"slot":1})).unwrap();
         assert_eq!(result["available"], false);

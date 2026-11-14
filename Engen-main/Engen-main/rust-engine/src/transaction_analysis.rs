@@ -1434,7 +1434,8 @@ mod tests {
                     })
                     .collect::<Vec<_>>();
                 assert_eq!(
-                    instructions, expected["instructions"],
+                    Value::Array(instructions),
+                    expected["instructions"],
                     "instruction summary mismatch for {name}"
                 );
             }

@@ -763,7 +763,8 @@ pub fn queue_paper_orders_at_with_policy(
                         open_positions.insert(pending.asset_mint.clone());
                     }
                 }
-                if !open_positions.contains(asset_mint) && open_positions.len() >= maximum_positions {
+                if !open_positions.contains(asset_mint) && open_positions.len() >= maximum_positions
+                {
                     continue;
                 }
             }

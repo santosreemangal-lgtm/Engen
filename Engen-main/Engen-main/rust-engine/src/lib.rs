@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod dashboard_server;
+pub mod health;
 pub mod latency;
 pub mod market_data;
 pub mod monitor_scheduler;

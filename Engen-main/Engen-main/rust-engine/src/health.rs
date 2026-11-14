@@ -134,7 +134,11 @@ mod tests {
         assert_eq!(report["engine_mode"], "read_only");
         assert_eq!(report["live_trading_enabled"], false);
         assert_eq!(report["emergency_stop_engaged"], true);
-        assert!(report["checks"].as_array().unwrap().iter().all(|item| item["passed"] == true));
+        assert!(report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|item| item["passed"] == true));
     }
 
     #[test]

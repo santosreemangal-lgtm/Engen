@@ -30,6 +30,7 @@ const REQUIRED_RUNTIME_FILES: &[&str] = &[
     "rust-engine/src/profile_store.rs",
     "rust-engine/src/paper_copy_runner.rs",
     "rust-engine/src/paper_simulator.rs",
+    "rust-engine/src/paper_trader.rs",
     "rust-engine/src/pnl.rs",
     "rust-engine/src/market_data.rs",
     "rust-engine/src/rpc_policy.rs",

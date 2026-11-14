@@ -45,36 +45,26 @@ pub fn redact(text: &str) -> String {
             for key in SECRET_KEYS {
                 let key_bytes = key.as_bytes();
                 let key_end = cursor + key_bytes.len();
-                if key_end > bytes.len()
-                    || &lowered_bytes[cursor..key_end] != key_bytes
-                {
+                if key_end > bytes.len() || &lowered_bytes[cursor..key_end] != key_bytes {
                     continue;
                 }
 
                 let mut separator_end = key_end;
-                while separator_end < bytes.len()
-                    && bytes[separator_end].is_ascii_whitespace()
-                {
+                while separator_end < bytes.len() && bytes[separator_end].is_ascii_whitespace() {
                     separator_end += 1;
                 }
 
-                if separator_end >= bytes.len()
-                    || !matches!(bytes[separator_end], b'=' | b':')
-                {
+                if separator_end >= bytes.len() || !matches!(bytes[separator_end], b'=' | b':') {
                     continue;
                 }
 
                 separator_end += 1;
-                while separator_end < bytes.len()
-                    && bytes[separator_end].is_ascii_whitespace()
-                {
+                while separator_end < bytes.len() && bytes[separator_end].is_ascii_whitespace() {
                     separator_end += 1;
                 }
 
                 let mut value_end = separator_end;
-                while value_end < bytes.len()
-                    && !bytes[value_end].is_ascii_whitespace()
-                {
+                while value_end < bytes.len() && !bytes[value_end].is_ascii_whitespace() {
                     value_end += 1;
                 }
 

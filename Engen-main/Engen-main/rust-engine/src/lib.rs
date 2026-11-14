@@ -7,6 +7,7 @@ pub mod config;
 pub mod dashboard_server;
 pub mod health;
 pub mod latency;
+pub mod logging;
 pub mod market_data;
 pub mod monitor_scheduler;
 pub mod monitor_service;

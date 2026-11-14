@@ -466,7 +466,10 @@ impl TelegramPaperBot {
     }
 
     fn poll_updates(&self) -> Result<Vec<Value>, String> {
-        let mut query = vec![("timeout".to_string(), "20".to_string())];
+        let mut query = vec![(
+            "timeout".to_string(),
+            TELEGRAM_LONG_POLL_SECONDS.to_string(),
+        )];
         if let Some(offset) = self.offset {
             query.push(("offset".to_string(), offset.to_string()));
         }

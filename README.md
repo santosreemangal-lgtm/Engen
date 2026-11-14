@@ -1,100 +1,80 @@
-# Engen — Solana Wallet Monitor
+# Engen — Rust-native Solana Monitor and Paper Simulator
 
-Engen is an early-stage, **read-only Solana wallet monitor** intended for offline tests and paper-trading development only.
+Engen monitors public Solana wallet activity and supports virtual paper execution only. The backend migration is in progress: Rust is the target runtime, but the migration PRs remain Draft until behavioral parity, data compatibility, restart recovery, and deployment gates are accepted.
 
-## Safety status
+## Safety boundary
 
-- Live trading must remain disabled; Stage 1 rejects attempts to enable it.
-- Never put seed phrases, private keys, or wallet passwords in source code or chat.
-- Monitoring is opt-in; starting the dashboard server does not automatically start a scan.
-- The dashboard API has no user authentication. Run it only in a trusted development environment and do not expose it publicly.
-- Paper-trading results are simulations, not evidence of real-world profitability.
-- The paper portfolio is in-memory and resets when the dashboard process restarts. It is not connected to live prices or wallet balances.
-- Telegram commands are implemented for the virtual paper portfolio only. Configure an authorized chat ID before running the bot; it does not mirror wallet transactions into trades.
-- The demo paper ledger is currently in-memory and resets when the dashboard or bot process restarts.
-- The dashboard currently has no authentication or CSRF protection. Keep it on localhost or behind trusted access controls.
+- Public Solana RPC reads only.
+- Balances, orders, fills, and P&L are virtual simulations; no real trade is submitted.
+- No private-key or seed-phrase ingestion, storage, or logging.
+- No transaction signing, live transaction construction, transaction broadcast, or live-mode switch.
+- Monitoring is opt-in; starting the dashboard does not automatically start a wallet scan.
+- Never run migration tests against user data databases. Tests must use temporary SQLite files.
+- Do not merge the migration PRs or cut over a deployment until every acceptance gate passes.
 
-## Repository layout
+## Migration status
 
-The canonical application is in `Engen-main/Engen-main/`. The repository-root `main.py` is a compatibility entry point. The test suite remains under `Engen-main/Engen-main/engine/engine/engine/tests/`. The audit branch removes two duplicate nested modules after matching their content against canonical modules and searching for references. Review CI before merging.
+The Rust candidate includes a native dashboard HTTP server, paper-copy execution, wallet monitoring, transaction processing, profile/signature stores, and a Rust CLI. The dashboard also exposes the pending_copy report field and loads its UI helper from the Rust server.
 
-## Requirements
+The migration is **not complete or approved for cutover**. Remaining acceptance areas include full Python/Rust differential coverage, cross-process monitor claims and crash recovery, Telegram parity or an explicit retirement decision, health/logging and operations-tool parity, whole-application database compatibility and restart tests, full E2E tests, and production deployment verification. Python files are retained as behavioral references until these gates pass.
 
-- CI uses Python 3.10.
-- The offline test suite uses the Python standard library; no package installation is required for mock tests.
-- Explicit public Solana RPC calls require network access.
+Review the Draft migration PRs before any merge:
+- [PR #48 — canonical Rust backend migration](https://github.com/santosreemangal-lgtm/Engen/pull/48)
+- [PR #49 — Rust dashboard runtime](https://github.com/santosreemangal-lgtm/Engen/pull/49)
 
-## Run offline checks
+## Run the Rust candidate locally
 
-From the repository root, compile the canonical project and run the mock analysis:
+From the repository root:
 
-```bash
-python -m compileall -q Engen-main/Engen-main
-python Engen-main/Engen-main/main.py --mock-analysis-test
-```
+~~~bash
+cargo build --release --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml
+bash scripts/run_engen_rust_dashboard.sh
+~~~
 
-Run the unit tests from the canonical project directory so Python can resolve the `engine` package:
+The candidate dashboard uses port 8000 by default. Open it only on localhost or through a trusted, authenticated Codespaces port-forwarding environment. The hosted Render candidate is configured in render.yaml; it uses the Rust runtime and launcher.
 
-```bash
+The launcher sets ENGEN_APP_ROOT and invokes the compiled engen-engine serve-dashboard binary. It does not start Python. Do not expose the backend directly to an untrusted network. For remote access, use a trusted HTTPS reverse proxy and configure a strong DASHBOARD_AUTH_TOKEN.
+
+## Rust CLI and checks
+
+~~~bash
+cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- check-config
+cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- health-check
+cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- --help
+~~~
+
+The native health check validates Rust runtime files, read-only configuration, and the unconditional live-execution block. It does not access user ledgers or make RPC requests.
+
+## Rust verification
+
+From the repository root:
+
+~~~bash
+cd Engen-main/Engen-main/rust-engine
+cargo fmt --all -- --check
+cargo test --all-targets
+cargo clippy --all-targets -- -D warnings
+~~~
+
+The Rust workflow also runs the localhost dashboard process E2E, a read-only public RPC smoke test, and selected Python behavioral-reference tests. A passing CI run is evidence for that exact commit only; it is not by itself authorization to cut over.
+
+## Python behavioral-reference tests (not production launchers)
+
+Python is retained temporarily to compare legacy behavior with Rust. These commands run reference tests only; do not use legacy Python entry points to launch the production candidate.
+
+~~~bash
 cd Engen-main/Engen-main
 PYTHONPATH=. python -m unittest discover -s engine/engine/engine/tests -v
-```
+~~~
 
-Test the root compatibility entry point from the canonical project directory:
-
-```bash
-python ../../main.py --mock-analysis-test
-```
-
-## Start today's manual paper-trading demo
-
-From the repository root, run:
-
-```bash
-cd Engen-main/Engen-main
-python -m dashboard.server
-```
-
-Open the forwarded port `8000` in your Codespaces environment if you are using Codespaces, or visit `http://127.0.0.1:8000` on the same computer. Keep the port private; the API has no authentication. In the Paper Portfolio panel, choose Buy or Sell, enter a demo token label, quantity, and a manually chosen price, then submit. The default virtual balance is 1,000 units. Use a small example such as token `DEMO`, quantity `1`, price `10` to test a simulated buy.
-
-**Scope of this demo:** it records manual virtual trades only. It does not yet automatically mirror monitored wallet transactions, fetch reliable token market prices, persist the paper portfolio across restarts, or share one ledger between dashboard and Telegram. Do not treat it as an automated copy-trading demo yet.
-
-## Paper trading API
-
-The dashboard exposes virtual-only endpoints:
-
-- `GET /api/paper/status` — virtual cash, positions, pause state, and live-trading-disabled flag.
-- `GET /api/paper/history` — recent simulated trade records.
-- `POST /api/paper/control` with `{"action":"pause"}` or `{"action":"resume"}`.
-- `POST /api/paper/trade` with `{"side":"buy","token":"DEMO","quantity":1,"price":10}` or the equivalent `sell` payload. These are manually priced simulations, not market orders.
-
-The default virtual starting balance is 1,000 units. Position cost is capped at 25% of the starting balance per token by default. These limits are basic demo guardrails, not a complete trading risk engine.
-
-## Telegram paper bot
-
-The bot uses the Python standard library and controls only the virtual paper portfolio. Set these environment variables in your private terminal session (do not commit them):
-
-- `TELEGRAM_BOT_TOKEN` — token from BotFather; keep it secret.
-- `TELEGRAM_ALLOWED_CHAT_IDS` — comma-separated numeric Telegram chat IDs allowed to use commands. If unset, the bot refuses to start.
-
-From `Engen-main/Engen-main/`, start it with:
-
-```bash
-python -m engine.telegram_bot
-```
-
-Supported commands: `/start`, `/help`, `/status`, `/balance`, `/settings`, `/history`, `/pause`, and `/resume`. These commands do not place trades; they only report/control the simulated ledger. The bot is a separate process from the dashboard, so its in-memory ledger is separate and resets on restart.
+Do not remove or move Python reference modules until their Rust equivalents have matching acceptance tests and the final migration audit passes.
 
 ## Configuration
 
-Defaults are `ENGINE_MODE=read_only`, `LOG_LEVEL=INFO`, and `LIVE_TRADING_ENABLED=false`. Stage 1 rejects other engine modes and any value that attempts to enable live trading. Do not commit local `.env` files.
+The Rust runtime defaults to ENGINE_MODE=read_only and requires LIVE_TRADING_ENABLED to be absent or false. Public RPC configuration uses ENGEN_RPC_URL (HTTPS for remote endpoints), with bounded timeout, retry, and pacing settings. Paper-only fee settings are ENGEN_PAPER_TRADING_FEE_BPS, ENGEN_PAPER_NETWORK_FEE_USD, and ENGEN_PAPER_PRIORITY_FEE_USD.
 
-The Rust paper executor also accepts global fee settings: `ENGEN_PAPER_TRADING_FEE_BPS` (default `10`, range `0..10000`), `ENGEN_PAPER_NETWORK_FEE_USD` (default `0`), and `ENGEN_PAPER_PRIORITY_FEE_USD` (default `0`). Network and priority values are fixed **USD estimates per simulated fill**, not live Solana fee quotes; each must be non-negative and their combined amount is capped at USD 1,000 per fill. `Config::paper_execution_policy()` supplies these global values to the paper-copy execution API. Copy profiles may override them with `trading_fee_bps`, `network_fee_usd`, and `priority_fee_usd`; the resolved values are stored with the order and fill so retries and restarts retain the same fee model.
+These are simulated accounting settings, not live network fee quotes. Do not commit RPC provider credentials or dashboard tokens.
 
-## Backups and duplicate files
+## Data preservation
 
-Do not delete local `.bak` or `.pre_*.bak` files automatically. Compare each backup with its current file, preserve unique changes, and only then decide whether to archive or remove it. Remote GitHub history cannot show untracked files in a Codespaces workspace.
-
-## Current audit
-
-Audit changes are proposed in [Draft PR #6](https://github.com/santosreemangal-lgtm/Engen/pull/6). Review the changes and CI results before merging.
+Never delete, rewrite, or automatically migrate the user's existing data/ SQLite databases as part of the code migration. Validate compatibility using disposable database copies first. Preserve audit history, old order references, and source transaction evidence. Keep backups until a separately reviewed backup/restore test proves they are recoverable.

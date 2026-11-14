@@ -55,7 +55,7 @@ impl Log for EngineLogger {
             "{} | {:<7} | {} | {}",
             timestamp,
             level,
-            record.target(),
+            "engine",
             message
         );
     }

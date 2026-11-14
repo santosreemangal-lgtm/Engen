@@ -58,6 +58,17 @@ cargo clippy --all-targets -- -D warnings
 
 The Rust workflow also runs the localhost dashboard process E2E, a read-only public RPC smoke test, and selected Python behavioral-reference tests. A passing CI run is evidence for that exact commit only; it is not by itself authorization to cut over.
 
+## Optional Telegram paper-bot candidate
+
+The Rust CLI exposes `serve-telegram-paper-bot` for the legacy allowlisted, virtual-only Telegram command adapter. It is a separate optional process, is not started by the dashboard, and is not enabled as a hosted worker. Configure `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_CHAT_IDS` only in a private environment; never commit the token. The bot's paper portfolio is in-memory and separate from the dashboard ledger, matching the legacy standalone-process boundary.
+
+Start it from the repository root with:
+
+~~~bash
+TELEGRAM_BOT_TOKEN=... TELEGRAM_ALLOWED_CHAT_IDS=12345 \
+  cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- serve-telegram-paper-bot
+~~~
+
 ## Python behavioral-reference tests (not production launchers)
 
 Python is retained temporarily to compare legacy behavior with Rust. These commands run reference tests only; do not use legacy Python entry points to launch the production candidate.

@@ -81,6 +81,17 @@ cargo clippy --all-targets -- -D warnings
 
 The GitHub workflow also performs a read-only public RPC smoke test, selected Python behavioral-reference tests, browser JavaScript syntax checks, and a localhost dashboard process E2E.
 
+## Optional Telegram paper bot
+
+The Rust CLI includes the optional allowlisted Telegram paper-bot process:
+
+~~~bash
+TELEGRAM_BOT_TOKEN=... TELEGRAM_ALLOWED_CHAT_IDS=12345 \
+  cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- serve-telegram-paper-bot
+~~~
+
+The command requires both environment values and ignores chats outside the allowlist. It is not started by the Dashboard or configured as a hosted worker. Its paper ledger is a separate in-memory portfolio, not shared with the dashboard's persistent paper simulator. Never commit a Telegram bot token. This adapter supports virtual-only commands and does not expose live trading, signing, or transaction broadcasting.
+
 ## Legacy Python behavioral references
 
 Python source files and tests are retained temporarily to compare behavior while the migration remains open. They are not the documented production launchers. Run only the reference tests from the canonical application directory:

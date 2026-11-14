@@ -51,7 +51,7 @@ impl Log for EngineLogger {
             Level::Debug => "DEBUG",
             Level::Trace => "TRACE",
         };
-        println!("{} | {:<7} | {} | {}", timestamp, level, "engine", message);
+        println!("{} | {:<7} | engine | {}", timestamp, level, message);
     }
 
     fn flush(&self) {}

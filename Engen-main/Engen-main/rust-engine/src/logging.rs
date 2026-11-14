@@ -225,16 +225,24 @@ mod tests {
 
     #[test]
     fn configured_levels_match_legacy_debug_info_warning_error_order() {
-        let logger = EngineLogger { max_level: std::sync::atomic::AtomicU8::new(INFO) };
+        let logger = EngineLogger {
+            max_level: std::sync::atomic::AtomicU8::new(INFO),
+        };
         assert!(logger.accepts(Level::Error));
         assert!(logger.accepts(Level::Warn));
         assert!(logger.accepts(Level::Info));
         assert!(!logger.accepts(Level::Debug));
-        logger.max_level.store(DEBUG, std::sync::atomic::Ordering::Relaxed);
+        logger
+            .max_level
+            .store(DEBUG, std::sync::atomic::Ordering::Relaxed);
         assert!(logger.accepts(Level::Debug));
-        logger.max_level.store(WARNING, std::sync::atomic::Ordering::Relaxed);
+        logger
+            .max_level
+            .store(WARNING, std::sync::atomic::Ordering::Relaxed);
         assert!(!logger.accepts(Level::Info));
-        logger.max_level.store(ERROR, std::sync::atomic::Ordering::Relaxed);
+        logger
+            .max_level
+            .store(ERROR, std::sync::atomic::Ordering::Relaxed);
         assert!(!logger.accepts(Level::Warn));
     }
 }

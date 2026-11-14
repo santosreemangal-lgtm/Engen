@@ -126,6 +126,9 @@ jobs:
             exit 1
           fi
           grep -F "<html" "$TEMP_DATA/index.html"
+          grep -F '<script src="/dashboard/pending_copy_ui.js"></script>' "$TEMP_DATA/index.html"
+          curl --fail --silent "http://127.0.0.1:$PORT/dashboard/pending_copy_ui.js" > "$TEMP_DATA/pending_copy_ui.js"
+          grep -F "EngenPendingCopy" "$TEMP_DATA/pending_copy_ui.js"
           curl --fail --silent "http://127.0.0.1:$PORT/api/wallets" > "$TEMP_DATA/wallets.json"
           grep -F '"wallets":[]' "$TEMP_DATA/wallets.json"
           curl --silent --show-error -D "$TEMP_DATA/headers.txt" -o /dev/null "http://127.0.0.1:$PORT/api/wallets"

@@ -59,10 +59,12 @@ fn main() {
         }
     };
 
+    let signatures = Arc::new(Mutex::new(signatures));
     let state = PaperApiState {
         sim: Arc::new(Mutex::new(sim)),
         monitor: Arc::new(Mutex::new(monitor)),
         profiles: Arc::new(Mutex::new(profiles)),
+        signatures: Arc::clone(&signatures),
         api_token: std::env::var("DASHBOARD_AUTH_TOKEN")
             .ok()
             .filter(|s| !s.is_empty()),
@@ -71,7 +73,7 @@ fn main() {
     let _worker = worker::spawn_poller(
         Arc::clone(&state.monitor),
         Arc::clone(&state.sim),
-        Arc::new(Mutex::new(signatures)),
+        signatures,
         config.poll_seconds,
     );
 

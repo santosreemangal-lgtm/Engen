@@ -14,6 +14,7 @@ pub mod paper_copy;
 pub mod paper_http;
 pub mod paper_simulator;
 pub mod parser;
+pub mod pipeline;
 pub mod profile_store;
 pub mod pumpfun;
 pub mod signature_store;

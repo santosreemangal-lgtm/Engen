@@ -24,6 +24,7 @@ Auth: if `DASHBOARD_AUTH_TOKEN` is set, every `/api/*` call needs `Authorization
 | GET | `/api/monitor` | | 200 `{enabled, wallets, real_trading:false}` |
 | GET | `/api/rpc-health` | | 200 `{available:false, status:paper_only}` |
 | POST | `/api/classify` | `{wallet, token_balance_changes, signature?}` | 200 classification |
+| POST | `/api/process` | classified balance changes plus `wallet`, `signature`, `block_time`, optional `price_usd` | 200 `PROCESSED` and paper fill, second call `DUPLICATE` |
 | POST | `/api/candidates` | array of monitor candidates | 200 `{queued}` |
 | POST | `/api/fill` | `{mint, price_usd, liquidity_usd?}` | 200 `{outcomes}` |
 

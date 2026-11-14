@@ -9,7 +9,9 @@ use crate::monitor_service::MonitorService;
 use crate::paper_copy::MonitorCandidate;
 use crate::paper_simulator::{MarketPrice, PaperSimulator};
 use crate::parser::classify_balance_changes;
+use crate::pipeline::process_observation;
 use crate::profile_store::ProfileStore;
+use crate::signature_store::SignatureStore;
 use rust_decimal::Decimal;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -23,6 +25,7 @@ pub struct PaperApiState {
     pub sim: Arc<Mutex<PaperSimulator>>,
     pub monitor: Arc<Mutex<MonitorService>>,
     pub profiles: Arc<Mutex<ProfileStore>>,
+    pub signatures: Arc<Mutex<SignatureStore>>,
     pub api_token: Option<String>,
     pub hits: Arc<Mutex<Vec<u64>>>,
 }
@@ -30,10 +33,12 @@ pub struct PaperApiState {
 impl PaperApiState {
     pub fn for_tests() -> Self {
         let path = std::env::temp_dir().join(format!("engen-http-{}.db", uuid::Uuid::new_v4()));
+        let sig = std::env::temp_dir().join(format!("engen-sig-{}.db", uuid::Uuid::new_v4()));
         Self {
             sim: Arc::new(Mutex::new(PaperSimulator::new())),
             monitor: Arc::new(Mutex::new(MonitorService::new())),
-            profiles: Arc::new(Mutex::new(ProfileStore::open(path).expect("profile db"))),
+            profiles: Arc::new(Mutex::new(ProfileStore::open(&path).expect("profile db"))),
+            signatures: Arc::new(Mutex::new(SignatureStore::open(&sig).expect("sig db"))),
             api_token: None,
             hits: Arc::new(Mutex::new(Vec::new())),
         }
@@ -157,7 +162,17 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
                     }
                 };
                 match store.set_monitor(id, enabled) {
-                    Ok(body) => (200, body),
+                    Ok(body) => {
+                        if enabled {
+                            if let Ok(Some(profile)) = store.get(id) {
+                                let mut monitor = state.monitor.lock().unwrap_or_else(|e| e.into_inner());
+                                for wallet in profile.source_wallets {
+                                    monitor.add_wallet(wallet);
+                                }
+                            }
+                        }
+                        (200, body)
+                    }
                     Err(err) => status_for_profile(err),
                 }
             }
@@ -198,6 +213,19 @@ pub fn handle_http(request: &str, state: &PaperApiState) -> String {
                     let _ = store.record_swap(signature, wallet, class, asset, quote);
                 }
                 (200, signal)
+            }
+            Err(err) => (400, serde_json::json!({"error": err.to_string()})),
+        },
+        ("POST", "/api/process") => match serde_json::from_str::<serde_json::Value>(body) {
+            Ok(value) => {
+                let mut monitor = state.monitor.lock().unwrap_or_else(|e| e.into_inner());
+                let mut sim = state.sim.lock().unwrap_or_else(|e| e.into_inner());
+                let signatures = state.signatures.lock().unwrap_or_else(|e| e.into_inner());
+                let profiles = state.profiles.lock().unwrap_or_else(|e| e.into_inner());
+                match process_observation(&mut monitor, &mut sim, &signatures, &profiles, &value) {
+                    Ok(body) => (200, body),
+                    Err(err) => (500, serde_json::json!({"error": err.to_string()})),
+                }
             }
             Err(err) => (400, serde_json::json!({"error": err.to_string()})),
         },
@@ -609,5 +637,31 @@ mod tests {
         );
         assert!(status.contains("\"enabled\":true"), "{status}");
         assert!(status.contains("\"transaction_broadcast\":false"));
+    }
+
+    #[test]
+    fn process_fills_once_and_dedupes_in_sqlite() {
+        let state = PaperApiState::for_tests();
+        state.sim.lock().unwrap().set_virtual_balance("100", "USD").unwrap();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+        let wallet = "11111111111111111111111111111111";
+        let body = format!(
+            r#"{{"wallet":"{wallet}","signature":"sig-process-1","block_time":{now},"confirmation_status":"finalized","target_notional_usd":"10","price_usd":"2","liquidity_usd":"20000","token_balance_changes":[{{"owner":"{wallet}","mint":"TokenMint111111111111111111111111111111","delta_amount":"1000"}},{{"owner":"{wallet}","mint":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","delta_amount":"-500"}}]}}"#
+        );
+        let first = handle_http(
+            &format!("POST /api/process HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{body}", body.len()),
+            &state,
+        );
+        assert!(first.contains("PROCESSED"), "{first}");
+        assert!(first.contains("FILLED"), "{first}");
+        assert!(first.contains("\"transaction_broadcast\":false"));
+        let second = handle_http(
+            &format!("POST /api/process HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{body}", body.len()),
+            &state,
+        );
+        assert!(second.contains("DUPLICATE"), "{second}");
+        assert!(state.signatures.lock().unwrap().is_processed(wallet, "sig-process-1").unwrap());
+        let history = handle_http("GET /api/profile-transactions HTTP/1.1\r\nHost: x\r\n\r\n", &state);
+        assert!(history.contains("BUY_CANDIDATE"), "{history}");
     }
 }

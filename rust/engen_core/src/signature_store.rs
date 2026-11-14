@@ -50,6 +50,16 @@ impl SignatureStore {
         Ok(())
     }
 
+    pub fn is_processed(&self, wallet: &str, signature: &str) -> Result<bool> {
+        let conn = self.conn()?;
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM signatures WHERE wallet=?1 AND signature=?2 AND processed=1",
+            params![wallet, signature],
+            |row| row.get(0),
+        )?;
+        Ok(n > 0)
+    }
+
     pub fn mark_processed(&self, wallet: &str, signature: &str) -> Result<()> {
         self.conn()?.execute(
             "UPDATE signatures SET processed=1 WHERE wallet=?1 AND signature=?2",

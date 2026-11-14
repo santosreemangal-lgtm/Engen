@@ -52,6 +52,7 @@ API writes update local watchlists, profile metadata, monitor state, or virtual 
 The application reads environment variables directly; it does not automatically load a .env file. Important settings include:
 
 - ENGINE_MODE=read_only
+- ENGEN_MAX_SOURCE_AGE_SECONDS=60 (default; stale source transactions are never copied)
 - LIVE_TRADING_ENABLED=false
 - ENGEN_RPC_URL — optional HTTPS public Solana RPC endpoint
 - DASHBOARD_HOST and PORT

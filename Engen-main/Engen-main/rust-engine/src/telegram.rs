@@ -274,8 +274,7 @@ impl TelegramPaperBot {
             .collect::<HashSet<_>>();
         if allowed_chat_ids.is_empty() {
             return Err(
-                "TELEGRAM_ALLOWED_CHAT_IDS must contain at least one allowed chat ID."
-                    .to_string(),
+                "TELEGRAM_ALLOWED_CHAT_IDS must contain at least one allowed chat ID.".to_string(),
             );
         }
 
@@ -340,9 +339,7 @@ impl TelegramPaperBot {
 
     fn chat_id_string(value: &Value) -> Option<String> {
         match value {
-            Value::String(value) if !value.trim().is_empty() => {
-                Some(value.trim().to_string())
-            }
+            Value::String(value) if !value.trim().is_empty() => Some(value.trim().to_string()),
             Value::Number(value) => Some(value.to_string()),
             _ => None,
         }
@@ -547,12 +544,9 @@ mod tests {
             PaperTrader::default()
         )
         .is_err());
-        assert!(TelegramPaperBot::new(
-            "token".to_string(),
-            vec![],
-            PaperTrader::default()
-        )
-        .is_err());
+        assert!(
+            TelegramPaperBot::new("token".to_string(), vec![], PaperTrader::default()).is_err()
+        );
     }
 
     #[test]

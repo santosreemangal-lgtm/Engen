@@ -1,5 +1,6 @@
 //! Conservative source-wallet copy orchestration using virtual paper orders only.
 
+use std::collections::BTreeSet;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 
@@ -93,6 +94,11 @@ pub struct CopySettings {
     pub sizing_mode: SizingMode,
     pub sizing_value: String,
     pub max_buy_usd: Option<String>,
+    /// Optional legacy profile risk cap: maximum BUY spend as a percentage of
+    /// the currently available virtual quote balance.
+    pub max_position_pct: Option<String>,
+    /// Optional profile risk cap for distinct open virtual token positions.
+    pub max_open_positions: Option<usize>,
     /// Optional profile-level override for global trading fee basis points.
     pub trading_fee_bps: Option<u16>,
     /// Optional fixed base-network fee override, USD per paper fill.
@@ -107,6 +113,8 @@ impl Default for CopySettings {
             sizing_mode: SizingMode::SourcePercent,
             sizing_value: "5".to_string(),
             max_buy_usd: Some("10".to_string()),
+            max_position_pct: None,
+            max_open_positions: None,
             trading_fee_bps: None,
             network_fee_usd: None,
             priority_fee_usd: None,
@@ -176,6 +184,41 @@ impl CopySettings {
                 )
             })?),
         };
+        let max_position_pct = match settings.get("max_position_pct") {
+            None | Some(Value::Null) => None,
+            Some(value) => {
+                let raw = number_to_string(value).ok_or_else(|| {
+                    PaperCopyError::InvalidInput(
+                        "max_position_pct must be a number greater than 0 and at most 100."
+                            .to_string(),
+                    )
+                })?;
+                let percentage = decimal(&raw, "Maximum position percentage")?;
+                if percentage <= 0 || percentage > 100 {
+                    return Err(PaperCopyError::InvalidInput(
+                        "max_position_pct must be a number greater than 0 and at most 100."
+                            .to_string(),
+                    ));
+                }
+                Some(percentage.normalized().to_plain_string())
+            }
+        };
+        let max_open_positions = match settings.get("max_open_positions") {
+            None | Some(Value::Null) => None,
+            Some(value) => {
+                let parsed = value.as_u64().ok_or_else(|| {
+                    PaperCopyError::InvalidInput(
+                        "max_open_positions must be an integer from 1 to 100.".to_string(),
+                    )
+                })?;
+                if !(1..=100).contains(&parsed) {
+                    return Err(PaperCopyError::InvalidInput(
+                        "max_open_positions must be an integer from 1 to 100.".to_string(),
+                    ));
+                }
+                Some(parsed as usize)
+            }
+        };
         let trading_fee_bps = match settings.get("trading_fee_bps") {
             None | Some(Value::Null) => None,
             Some(value) => {
@@ -204,6 +247,8 @@ impl CopySettings {
             sizing_mode,
             sizing_value,
             max_buy_usd,
+            max_position_pct,
+            max_open_positions,
             trading_fee_bps,
             network_fee_usd,
             priority_fee_usd,
@@ -236,6 +281,20 @@ impl CopySettings {
                     "Maximum BUY amount must be positive and at most $1,000,000.".to_string(),
                 ));
             }
+        }
+        if let Some(maximum_position_pct) = &self.max_position_pct {
+            let percentage = decimal(maximum_position_pct, "Maximum position percentage")?;
+            if percentage <= 0 || percentage > 100 {
+                return Err(PaperCopyError::InvalidInput(
+                    "max_position_pct must be a number greater than 0 and at most 100."
+                        .to_string(),
+                ));
+            }
+        }
+        if self.max_open_positions.is_some_and(|value| !(1..=100).contains(&value)) {
+            return Err(PaperCopyError::InvalidInput(
+                "max_open_positions must be an integer from 1 to 100.".to_string(),
+            ));
         }
         if self.trading_fee_bps.is_some_and(|value| value > 10_000) {
             return Err(PaperCopyError::InvalidInput(
@@ -684,6 +743,30 @@ pub fn queue_paper_orders_at_with_policy(
             if target_budget <= 0 {
                 continue;
             }
+            if let Some(maximum_position_pct) = &settings.max_position_pct {
+                let maximum_spend =
+                    &virtual_usd * decimal(maximum_position_pct, "Maximum position percentage")?
+                        / BigDecimal::from(100);
+                if target_budget > maximum_spend {
+                    continue;
+                }
+            }
+            if let Some(maximum_positions) = settings.max_open_positions {
+                // Existing holdings and already-reserved pending BUYs both count.
+                // This prevents one scan batch from queuing several orders above the cap.
+                let mut open_positions: BTreeSet<String> =
+                    simulator.open_position_mints()?.into_iter().collect();
+                for pending in simulator.orders().values() {
+                    if pending.status == "CREATED" && pending.side == "BUY" {
+                        open_positions.insert(pending.asset_mint.clone());
+                    }
+                }
+                if !open_positions.contains(asset_mint)
+                    && open_positions.len() >= maximum_positions
+                {
+                    continue;
+                }
+            }
             target_notional_usd = Some(target_budget);
             order_quantity = "1".to_string();
         } else {
@@ -768,6 +851,8 @@ pub fn queue_paper_orders_at_with_policy(
                 "reservation_mint":reservation_amount.as_ref().map(|_| reservation_mint),
                 "reservation_amount":reservation_amount.as_ref().map(raw_to_string),
                 "max_buy_usd": settings.max_buy_usd,
+                "max_position_pct": settings.max_position_pct,
+                "max_open_positions": settings.max_open_positions,
                 "asset_decimals": asset_change.decimals,
                 "minimum_order_quantity": minimum_quantity_for_decimals(asset_change.decimals)?,
                 "asset_quantity_step": minimum_quantity_for_decimals(asset_change.decimals)?,
@@ -801,6 +886,8 @@ pub fn queue_paper_orders_at_with_policy(
             "sizing_value":if side == "BUY" {Some(settings.sizing_value.clone())} else {None},
             "target_notional_usd":target_notional_usd.as_ref().map(raw_to_string),
             "target_budget_usd":target_notional_usd.as_ref().map(raw_to_string),
+            "max_position_pct":settings.max_position_pct,
+            "max_open_positions":settings.max_open_positions,
             "trading_fee_bps":resolved_trading_fee_bps,
             "network_fee_usd":resolved_network_fee_usd,
             "priority_fee_usd":resolved_priority_fee_usd,
@@ -1975,6 +2062,89 @@ mod tests {
         .unwrap();
         assert!(queued.is_empty());
         assert!(simulator.orders().is_empty());
+    }
+
+    #[test]
+    fn legacy_profile_position_risk_limits_parse_and_validate() {
+        let settings = CopySettings::from_json(Some(&json!({
+            "max_position_pct":"25.5",
+            "max_open_positions":3
+        })))
+        .unwrap();
+        assert_eq!(settings.max_position_pct.as_deref(), Some("25.5"));
+        assert_eq!(settings.max_open_positions, Some(3));
+
+        for value in ["0", "-1", "100.01", "NaN", "not-a-number"] {
+            assert!(
+                CopySettings::from_json(Some(&json!({"max_position_pct":value}))).is_err(),
+                "accepted invalid max_position_pct {value}"
+            );
+        }
+        for value in [0, 101] {
+            assert!(
+                CopySettings::from_json(Some(&json!({"max_open_positions":value}))).is_err(),
+                "accepted invalid max_open_positions {value}"
+            );
+        }
+        assert!(CopySettings::from_json(Some(&json!({"max_open_positions":true}))).is_err());
+        assert!(CopySettings::from_json(Some(&json!({"max_open_positions":"3"}))).is_err());
+    }
+
+    #[test]
+    fn legacy_max_position_percentage_rejects_oversized_virtual_buy() {
+        let mut simulator = simulator();
+        let settings = CopySettings::from_json(Some(&json!({
+            "sizing_mode":"FIXED_USD",
+            "sizing_value":"30",
+            "max_buy_usd":null,
+            "max_position_pct":"20"
+        })))
+        .unwrap();
+        let queued = queue_paper_orders(
+            WALLET,
+            &[buy_signal(&"d".repeat(64))],
+            &mut simulator,
+            AllowedSides::Buy,
+            &settings,
+            None,
+        )
+        .unwrap();
+        assert!(queued.is_empty());
+        assert!(simulator.orders().is_empty());
+        assert_eq!(simulator.available_balance("USD"), BigDecimal::from(100));
+    }
+
+    #[test]
+    fn legacy_max_open_positions_counts_pending_new_asset_buys_once() {
+        let mut simulator = simulator();
+        let settings = CopySettings::from_json(Some(&json!({
+            "sizing_mode":"FIXED_USD",
+            "sizing_value":"5",
+            "max_buy_usd":null,
+            "max_open_positions":1
+        })))
+        .unwrap();
+        let rows = vec![
+            buy_signal(&"e".repeat(64)),
+            {
+                let mut row = buy_signal(&"f".repeat(64));
+                row["trade_signal"]["asset_mints"] = json!(["SecondAsset"]);
+                row["token_balance_changes"][0]["mint"] = json!("SecondAsset");
+                row
+            }
+        ];
+        let queued = queue_paper_orders(
+            WALLET,
+            &rows,
+            &mut simulator,
+            AllowedSides::Buy,
+            &settings,
+            None,
+        )
+        .unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(simulator.orders().len(), 1);
+        assert_eq!(simulator.reserved_balance("USD"), BigDecimal::from(5));
     }
 
     #[test]

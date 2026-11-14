@@ -1,8 +1,8 @@
 //! Bounded, local-stage latency recorder. No end-to-end latency is inferred.
 
 use std::collections::BTreeMap;
-use std::time::Instant;
 use std::sync::Mutex;
+use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LatencySummary {

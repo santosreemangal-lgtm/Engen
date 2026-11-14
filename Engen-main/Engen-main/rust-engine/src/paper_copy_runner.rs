@@ -286,12 +286,14 @@ impl CopySettings {
             let percentage = decimal(maximum_position_pct, "Maximum position percentage")?;
             if percentage <= 0 || percentage > 100 {
                 return Err(PaperCopyError::InvalidInput(
-                    "max_position_pct must be a number greater than 0 and at most 100."
-                        .to_string(),
+                    "max_position_pct must be a number greater than 0 and at most 100.".to_string(),
                 ));
             }
         }
-        if self.max_open_positions.is_some_and(|value| !(1..=100).contains(&value)) {
+        if self
+            .max_open_positions
+            .is_some_and(|value| !(1..=100).contains(&value))
+        {
             return Err(PaperCopyError::InvalidInput(
                 "max_open_positions must be an integer from 1 to 100.".to_string(),
             ));
@@ -744,9 +746,9 @@ pub fn queue_paper_orders_at_with_policy(
                 continue;
             }
             if let Some(maximum_position_pct) = &settings.max_position_pct {
-                let maximum_spend =
-                    &virtual_usd * decimal(maximum_position_pct, "Maximum position percentage")?
-                        / BigDecimal::from(100);
+                let maximum_spend = &virtual_usd
+                    * decimal(maximum_position_pct, "Maximum position percentage")?
+                    / BigDecimal::from(100);
                 if target_budget > maximum_spend {
                     continue;
                 }
@@ -761,9 +763,7 @@ pub fn queue_paper_orders_at_with_policy(
                         open_positions.insert(pending.asset_mint.clone());
                     }
                 }
-                if !open_positions.contains(asset_mint)
-                    && open_positions.len() >= maximum_positions
-                {
+                if !open_positions.contains(asset_mint) && open_positions.len() >= maximum_positions {
                     continue;
                 }
             }
@@ -2124,15 +2124,12 @@ mod tests {
             "max_open_positions":1
         })))
         .unwrap();
-        let rows = vec![
-            buy_signal(&"e".repeat(64)),
-            {
-                let mut row = buy_signal(&"f".repeat(64));
-                row["trade_signal"]["asset_mints"] = json!(["SecondAsset"]);
-                row["token_balance_changes"][0]["mint"] = json!("SecondAsset");
-                row
-            }
-        ];
+        let rows = vec![buy_signal(&"e".repeat(64)), {
+            let mut row = buy_signal(&"f".repeat(64));
+            row["trade_signal"]["asset_mints"] = json!(["SecondAsset"]);
+            row["token_balance_changes"][0]["mint"] = json!("SecondAsset");
+            row
+        }];
         let queued = queue_paper_orders(
             WALLET,
             &rows,

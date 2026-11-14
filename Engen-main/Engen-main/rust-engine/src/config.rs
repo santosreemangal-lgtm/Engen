@@ -84,7 +84,12 @@ impl Config {
     pub fn from_map(values: &BTreeMap<String, String>) -> Result<Self, ConfigError> {
         let mut problems = Vec::new();
 
-        let mode = read(values, "ENGINE_MODE", "read_only").to_ascii_lowercase();
+        let raw_mode = read(values, "ENGINE_MODE", "read_only");
+        let mode = if raw_mode.is_empty() {
+            "read_only".to_string()
+        } else {
+            raw_mode.to_ascii_lowercase()
+        };
         if mode != "read_only" {
             problems.push(
                 "ENGINE_MODE must be read_only; this release does not support other modes."
@@ -92,7 +97,14 @@ impl Config {
             );
         }
 
-        let raw_level = read(values, "LOG_LEVEL", "INFO");
+        let raw_level = {
+            let configured = read(values, "LOG_LEVEL", "INFO");
+            if configured.is_empty() {
+                "INFO".to_string()
+            } else {
+                configured
+            }
+        };
         let log_level = match LogLevel::parse(&raw_level) {
             Some(level) => level,
             None => {
@@ -316,6 +328,15 @@ mod tests {
         assert_eq!(config.engine_mode, "read_only");
         assert!(!config.live_trading_enabled);
         assert_eq!(config.rpc_retries, 2);
+    }
+
+    #[test]
+    fn empty_mode_and_log_level_match_legacy_python_defaults() {
+        let values = map(&[("ENGINE_MODE", ""), ("LOG_LEVEL", "")]);
+        let config = Config::from_map(&values).unwrap();
+        assert_eq!(config.engine_mode, "read_only");
+        assert_eq!(config.log_level, LogLevel::Info);
+        assert!(!config.live_trading_enabled);
     }
 
     #[test]

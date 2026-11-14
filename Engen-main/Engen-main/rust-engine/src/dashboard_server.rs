@@ -1381,8 +1381,10 @@ impl DashboardApp {
             };
             return match report_with_verified_market_prices(&simulator, Duration::from_secs(5)) {
                 Ok(report) => {
-                    match merge_legacy_profile_paper_report(enrich_paper_report(report, &id, Some(&simulator)), &path)
-                    {
+                    match merge_legacy_profile_paper_report(
+                        enrich_paper_report(report, &id, Some(&simulator)),
+                        &path,
+                    ) {
                         Ok(report) => HttpResponse::json(200, report),
                         Err(error) => HttpResponse::json(503, json!({"error":error})),
                     }
@@ -1395,7 +1397,9 @@ impl DashboardApp {
             Err(_) => return HttpResponse::json(503, json!({"error":"Paper ledger unavailable."})),
         };
         match report_with_verified_market_prices(&simulator, Duration::from_secs(5)) {
-            Ok(report) => HttpResponse::json(200, enrich_paper_report(report, "", Some(&simulator))),
+            Ok(report) => {
+                HttpResponse::json(200, enrich_paper_report(report, "", Some(&simulator)))
+            }
             Err(_) => HttpResponse::json(503, json!({"error":"Paper report unavailable."})),
         }
     }
@@ -1895,7 +1899,11 @@ fn merge_legacy_profile_paper_report(mut report: Value, path: &Path) -> Result<V
     Ok(report)
 }
 
-fn enrich_paper_report(mut report: Value, profile_id: &str, simulator: Option<&PaperSimulator>) -> Value {
+fn enrich_paper_report(
+    mut report: Value,
+    profile_id: &str,
+    simulator: Option<&PaperSimulator>,
+) -> Value {
     if !report.is_object() {
         report = json!({});
     }
@@ -1911,7 +1919,10 @@ fn enrich_paper_report(mut report: Value, profile_id: &str, simulator: Option<&P
     let mut pending_copy = simulator
         .map(|paper| get_pending_copy_status(paper, None))
         .unwrap_or_else(|| json!({"pending_count":0,"pending_orders":[],"real_trading":false,"transaction_broadcast":false}));
-    if let Some(orders) = pending_copy.get_mut("pending_orders").and_then(Value::as_array_mut) {
+    if let Some(orders) = pending_copy
+        .get_mut("pending_orders")
+        .and_then(Value::as_array_mut)
+    {
         orders.truncate(20);
     }
     report["pending_copy"] = pending_copy;

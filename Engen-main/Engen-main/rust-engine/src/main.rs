@@ -244,7 +244,7 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             let mut bot =
                 engen_engine::telegram::TelegramPaperBot::from_env().map_err(invalid_input)?;
             bot.run_forever().map_err(invalid_input)
-        },
+        }
         "scan-wallet-once" => run_scan(parse_scan_options(&args[1..])?),
         "serve-dashboard" => engen_engine::dashboard_server::serve_dashboard(),
         _ => Err(invalid_input(format!(

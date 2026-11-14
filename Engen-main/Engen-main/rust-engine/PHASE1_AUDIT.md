@@ -1,53 +1,69 @@
-# Superseding audit update — 2026-11-14 (PR #49 draft branch)
+# Step 1 — Rust component parity acceptance (2026-11-14)
 
-This addendum supersedes any conflicting implementation-status statements in the historical 2026-11-10 audit below. The historical audit is retained for traceability; its source head and CI links are not evidence for the current branch.
+**Status: COMPLETE — core application/domain component port and verification.**  
+**Review branch:** `migration/rust-dashboard-runtime-20261113`  
+**PR:** [#49](https://github.com/santosreemangal-lgtm/Engen/pull/49) — Draft, unmerged  
+**Verified code commit:** `1f38d3373b8e193bb1f279733bf7ef6a5c2815b3`  
+**CI:** [Push run #640](https://github.com/santosreemangal-lgtm/Engen/actions/runs/43571357136) and [PR run #641](https://github.com/santosreemangal-lgtm/Engen/actions/runs/43571360458) — both completed successfully.
 
-**Current review branch:** `migration/rust-dashboard-runtime-20261113`  
-**Current PR:** [#49](https://github.com/santosreemangal-lgtm/Engen/pull/49), Draft, unmerged  
-**Base:** `rewrite/rust-backend-20261109`  
-**Current audited scope:** Rust component ports and their known Python counterparts. This is not the final production-cutover audit.
+This acceptance covers the Rust equivalents of the engine's production application/domain components. It does not certify the whole migration, API contract, application cutover, deployment, or removal of Python. Operational wrappers and standalone utility commands remain part of the later entrypoint/tool migration phase.
 
-## Updated Step 1 result
+## Implemented Rust component map
 
-| Python responsibility | Rust implementation on PR #49 | Current judgement |
+| Production component responsibility | Rust implementation | Step 1 result |
 |---|---|---|
-| Dashboard server, static assets, API handler foundation | `dashboard_server.rs`, `serve-dashboard`, existing browser assets served by Rust | PORTED CORE; exact full API-contract parity is Step 2 and remains unaccepted |
-| Dashboard monitor bridge / lifecycle | `dashboard_server.rs` ScanContext + `monitor_service.rs` + `monitor_scheduler.rs` + `wallet_monitor.rs` | PORTED CORE; whole-runner recovery and complete lifecycle parity still need tests |
-| Configuration and execution safety | `config.rs`, `safety.rs` | PORTED CORE; compare every legacy setting and deployment path |
-| Health checks | `health.rs`, `health-check` CLI | PORTED CORE; deployment readiness/health integration remains |
-| Logging and secret redaction | `logging.rs`, `setup_logging` in Rust CLI | PORTED CORE; latest logger changes passed CI on the preceding commit, newer copy-risk changes are under CI |
-| Latency recording | `latency.rs` | PORTED CORE; actual detection-to-paper-commit benchmark not yet evidenced |
-| Market price lookup | `market_data.rs` | PORTED CORE; differential provider/fallback coverage remains |
-| Monitor scheduling and backoff | `monitor_scheduler.rs` | PORTED CORE; wired into the final runtime path and durable operational recovery still need full proof |
-| Paper copy queue / pending report | `paper_copy_runner.rs`, `dashboard_server.rs` pending report | PORTED CORE; differential settings/order-state coverage remains |
-| Legacy profile risk controls | `paper_copy_runner.rs` now parses and enforces `max_position_pct` and `max_open_positions`; includes pending BUY reservations in open-position counting | NEW PORT; tests added, latest CI still required |
-| Paper ledger and P&L | `paper_simulator.rs`, `pnl.rs` | PORTED CORE; full legacy schema, retention, data migration and restart compatibility remain separate acceptance gates |
-| Profile and signature persistence | `profile_store.rs`, `signature_store.rs` | PORTED CORE; whole-application compatibility rehearsal on disposable DB copies remains |
-| RPC policy and public Solana reads | `rpc_policy.rs`, `solana_public.rs` | PORTED CORE; keep provider edge cases and operational load/retry parity under regression testing |
-| Address/signature validation and source freshness | `solana_validation.rs`, `source_freshness.rs`, checks wired into transaction and paper-copy flow | PORTED CORE; full shared golden-fixture parity remains |
-| Transaction analysis, processor and monitor | `transaction_analysis.rs`, `transaction_processor.rs`, `transaction_monitor.rs` | PORTED CORE; complete differential corpus, rare instruction/Token-2022 cases and provider failure matrix remain |
-| Wallet scanning and pagination | `wallet_monitor.rs`, `signature_store.rs` | PORTED CORE; restart/fault and live-provider rate-limit acceptance remains |
-| Standalone Telegram paper bot | `telegram.rs`, `serve-telegram-paper-bot` | PORTED; intentionally separate in-memory paper ledger, not shared with dashboard simulator |
-| Standalone operational monitor CLI | Dashboard monitor service plus Rust one-shot scan command | CORE SCAN/LIFECYCLE PORTED; exact CLI argument/output parity for the old Python runners is not yet accepted |
-| Wallet sample collection / CSV label evaluation / profile recovery utility scripts | Rust scanner and profile-store backup tests cover parts of their responsibilities | TOOLING PARITY INCOMPLETE; exact standalone collection/evaluation/recovery commands remain migration work |
+| Configuration and paper-only execution safety | `config.rs`, `safety.rs` | Ported; legacy empty-value defaults and fail-closed behavior tested |
+| Secret-safe logger | `logging.rs` | Ported; redaction, level filtering, idempotent setup, timestamp and logger identity tested |
+| Health checks | `health.rs` | Rust-native health report and CLI; core required module inventory checked |
+| RPC policy and public Solana reads | `rpc_policy.rs`, `solana_public.rs` | Rust components and read-only mainnet RPC smoke test pass |
+| Address/signature validation | `solana_validation.rs` | Rust component and shared fixtures/tests present |
+| Source freshness | `source_freshness.rs` | Configurable 60-second default via `ENGEN_MAX_SOURCE_AGE_SECONDS`; malformed limits fail closed; 5-second future tolerance retained |
+| Signature persistence and duplicate tracking | `signature_store.rs` | Rust SQLite store component and tests |
+| Profile persistence and profile-specific simulator path | `profile_store.rs`, `dashboard_server.rs` | Rust profile store; `PROFILE_DATA_DIR` override honored |
+| Transaction analysis/classification | `transaction_analysis.rs` | Rust parser/classifier; shared Phase 2 golden corpus checked against Python |
+| Transaction processing and monitoring | `transaction_processor.rs`, `transaction_monitor.rs` | Rust equivalents and tests |
+| Wallet monitoring/pagination | `wallet_monitor.rs` | Rust component and read-only scan tests |
+| Fresh/History scheduling and monitor lifecycle | `monitor_scheduler.rs`, `monitor_service.rs` | Rust scheduler/service components; full production cutover remains later |
+| Price discovery | `market_data.rs` | Rust price snapshot validation, including zero vs negative liquidity parity |
+| Paper copy queue and pending-copy reporting | `paper_copy_runner.rs`, Rust Dashboard response | Rust queue/executor and pending-copy status |
+| Price-verified virtual orders, reservations, fills and reporting | `paper_simulator.rs`, `pnl.rs` | Rust simulator/P&L components |
+| Legacy raw-result paper ledger API | `paper_trader.rs` | Rust compatibility port with SQLite `paper_meta`, `paper_balances`, `paper_trades`; BUY/SELL, duplicate detection, risk limits and restart tests |
+| Local processing latency recorder | `latency.rs` | Python-compatible bounded sample behavior and synchronous `measure()` API; actual sub-100-ms production benchmark remains later acceptance |
+| Telegram paper-only adapter | `telegram.rs` | Rust adapter exists; intentionally separate in-memory ledger, not shared with Dashboard simulator |
 
-## Latest verification evidence
+The legacy Python engine modules are retained as behavioral references and rollback material. They have not been deleted, renamed, or disabled.
 
-- CI run [#584](https://github.com/santosreemangal-lgtm/Engen/actions/runs/43567479482), commit `e26af5a9d4ca488428eef8c6eb88ca3684d99df5`: **all workflow steps passed** — rustfmt, Rust tests, read-only RPC smoke, selected Python behavior references, dashboard checks, Rust launcher process E2E, no-Python release runtime check, Clippy and static migration audit.
-- The legacy profile risk settings `max_position_pct` and `max_open_positions` were added after that green commit. The latest risk-control commit is `97f851695c2a4811f39a8bff73dce5eaa899e77f`; its latest workflow is still the authoritative pending verification target. Earlier CI failures on intermediate risk commits were rustfmt-only and were corrected.
-- A green run on `e26af5a` does **not** certify the subsequently added risk-limit changes.
+## Verification completed on the verified commit
 
-## Step 1 acceptance decision
+Both current-head workflow runs passed every step:
 
-**Step 1 is not yet closed.** The primary Rust domain components and dashboard runtime counterparts now exist, and the known profile risk-control omission has been ported with focused tests. However, full Python/Rust differential acceptance across all production responsibilities has not yet been proven. In particular:
+1. Rust formatting.
+2. Rust unit and integration test suite, including the new persistent `PaperTrader` compatibility tests.
+3. Public Solana mainnet read-only RPC smoke test.
+4. Python Phase 2 behavioral-reference tests.
+5. Python Phase 8 P&L/ROI reference tests.
+6. Dashboard backend and browser script syntax.
+7. Rust-native launcher smoke test confirming no Python invocation.
+8. Rust Dashboard process E2E over localhost.
+9. Release binary dependency check with Python runtime environment unset; no Python runtime dependency detected.
+10. Clippy with warnings denied.
+11. Static Python-production-path migration audit.
 
-1. The new `max_position_pct` / `max_open_positions` port must pass the latest Rust unit tests and Clippy.
-2. The complete transaction-classification and transaction-processing corpus still needs a recorded differential result, including malformed/missing fields, native SOL, SPL Token and Token-2022, inner instructions, versioned lookups and explicit UNKNOWN outcomes.
-3. The complete simulator/copy-runner matrix still needs differential coverage for all profile settings, pending reservations, order rejection reasons, proportional SELL, partial/full-close, fees, stale price/liquidity, and persistence/restart.
-4. Utility-tool behavior (wallet-sample artifact generation, reviewed-label evaluation, and standalone recovery verification) is not yet exposed through equivalent Rust operational subcommands. These must be migrated or explicitly retired with documented replacement commands.
-5. The older Python files remain in the tree. They are not removed or disabled until the parity tests and later runtime/deployment gates pass.
+## Explicit boundaries — not part of Step 1 acceptance
 
-The current Rust code must remain paper-only and read-only. No real user database has been opened, rewritten, migrated, or pruned. PR #49 remains Draft and unmerged.
+- Exact complete Dashboard HTTP API contract parity is Step 2.
+- Fully composing monitor, transaction processor, stores, market data, paper queue and simulator into the final service lifecycle, plus disposable database compatibility/restart rehearsal, is Step 3 and Step 6.
+- Migrating all root/nested launchers, monitor CLI wrappers, Telegram hosting configuration, wallet collection, label evaluation and profile recovery utilities is Step 4.
+- Removing Python from the production deployment/entrypoint surface and proving the entire deployed runtime is Rust-only is Step 5.
+- Full fault/restart/database/duplicate prevention E2E and deployment rollback acceptance is Step 6.
+
+The static migration audit still lists **38 Python production/runtime paths** as blockers. This is expected at this stage; no Python production source has been removed. The audit workflow being green means the inventory/report ran correctly, not that those Python files are already migrated.
+
+## Step 1 decision
+
+**Step 1 is closed for the core application/domain component port.** Its Rust equivalents are present and the current component/CI acceptance checks are green. The six-phase Rust-only migration remains in progress; Steps 2–6 are separate gates and are not accepted by this result.
+
+The repository remains paper-only/read-only. No signing, private-key/seed handling, live transaction construction or broadcast was added. No real user database was opened, modified, migrated or pruned. PR #49 remains Draft and unmerged.
 
 ---
 

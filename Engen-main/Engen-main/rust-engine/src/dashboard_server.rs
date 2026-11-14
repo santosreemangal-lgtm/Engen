@@ -1496,7 +1496,7 @@ impl DashboardApp {
                     match simulator.set_initial_virtual_balance(&amount, mint) {
                         Ok(result) => HttpResponse::json(
                             200,
-                            json!({"result":result,"report":simulator.report().unwrap_or(Value::Null)}),
+                            json!({"result":result,"report":enrich_paper_report(simulator.report().unwrap_or(Value::Null),"",Some(&simulator))}),
                         ),
                         Err(error) => HttpResponse::json(400, json!({"error":error.to_string()})),
                     }
@@ -1512,7 +1512,7 @@ impl DashboardApp {
                     match simulator.add_virtual_balance(mint, &amount) {
                         Ok(result) => HttpResponse::json(
                             200,
-                            json!({"result":result,"report":simulator.report().unwrap_or(Value::Null)}),
+                            json!({"result":result,"report":enrich_paper_report(simulator.report().unwrap_or(Value::Null),"",Some(&simulator))}),
                         ),
                         Err(error) => HttpResponse::json(400, json!({"error":error.to_string()})),
                     }
@@ -2507,7 +2507,7 @@ mod tests {
         let page = app.handle(api_request("GET", "/", Value::Null));
         assert_eq!(page.status, 200);
         let page = String::from_utf8(page.body).unwrap();
-        assert!(page.contains("<script src=\\"/dashboard/pending_copy_ui.js\\"></script>"));
+        assert!(page.contains("<script src=\"/dashboard/pending_copy_ui.js\"></script>"));
 
         let script = app.handle(api_request(
             "GET",

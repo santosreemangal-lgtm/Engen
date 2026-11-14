@@ -1,3 +1,56 @@
+# Superseding audit update — 2026-11-14 (PR #49 draft branch)
+
+This addendum supersedes any conflicting implementation-status statements in the historical 2026-11-10 audit below. The historical audit is retained for traceability; its source head and CI links are not evidence for the current branch.
+
+**Current review branch:** `migration/rust-dashboard-runtime-20261113`  
+**Current PR:** [#49](https://github.com/santosreemangal-lgtm/Engen/pull/49), Draft, unmerged  
+**Base:** `rewrite/rust-backend-20261109`  
+**Current audited scope:** Rust component ports and their known Python counterparts. This is not the final production-cutover audit.
+
+## Updated Step 1 result
+
+| Python responsibility | Rust implementation on PR #49 | Current judgement |
+|---|---|---|
+| Dashboard server, static assets, API handler foundation | `dashboard_server.rs`, `serve-dashboard`, existing browser assets served by Rust | PORTED CORE; exact full API-contract parity is Step 2 and remains unaccepted |
+| Dashboard monitor bridge / lifecycle | `dashboard_server.rs` ScanContext + `monitor_service.rs` + `monitor_scheduler.rs` + `wallet_monitor.rs` | PORTED CORE; whole-runner recovery and complete lifecycle parity still need tests |
+| Configuration and execution safety | `config.rs`, `safety.rs` | PORTED CORE; compare every legacy setting and deployment path |
+| Health checks | `health.rs`, `health-check` CLI | PORTED CORE; deployment readiness/health integration remains |
+| Logging and secret redaction | `logging.rs`, `setup_logging` in Rust CLI | PORTED CORE; latest logger changes passed CI on the preceding commit, newer copy-risk changes are under CI |
+| Latency recording | `latency.rs` | PORTED CORE; actual detection-to-paper-commit benchmark not yet evidenced |
+| Market price lookup | `market_data.rs` | PORTED CORE; differential provider/fallback coverage remains |
+| Monitor scheduling and backoff | `monitor_scheduler.rs` | PORTED CORE; wired into the final runtime path and durable operational recovery still need full proof |
+| Paper copy queue / pending report | `paper_copy_runner.rs`, `dashboard_server.rs` pending report | PORTED CORE; differential settings/order-state coverage remains |
+| Legacy profile risk controls | `paper_copy_runner.rs` now parses and enforces `max_position_pct` and `max_open_positions`; includes pending BUY reservations in open-position counting | NEW PORT; tests added, latest CI still required |
+| Paper ledger and P&L | `paper_simulator.rs`, `pnl.rs` | PORTED CORE; full legacy schema, retention, data migration and restart compatibility remain separate acceptance gates |
+| Profile and signature persistence | `profile_store.rs`, `signature_store.rs` | PORTED CORE; whole-application compatibility rehearsal on disposable DB copies remains |
+| RPC policy and public Solana reads | `rpc_policy.rs`, `solana_public.rs` | PORTED CORE; keep provider edge cases and operational load/retry parity under regression testing |
+| Address/signature validation and source freshness | `solana_validation.rs`, `source_freshness.rs`, checks wired into transaction and paper-copy flow | PORTED CORE; full shared golden-fixture parity remains |
+| Transaction analysis, processor and monitor | `transaction_analysis.rs`, `transaction_processor.rs`, `transaction_monitor.rs` | PORTED CORE; complete differential corpus, rare instruction/Token-2022 cases and provider failure matrix remain |
+| Wallet scanning and pagination | `wallet_monitor.rs`, `signature_store.rs` | PORTED CORE; restart/fault and live-provider rate-limit acceptance remains |
+| Standalone Telegram paper bot | `telegram.rs`, `serve-telegram-paper-bot` | PORTED; intentionally separate in-memory paper ledger, not shared with dashboard simulator |
+| Standalone operational monitor CLI | Dashboard monitor service plus Rust one-shot scan command | CORE SCAN/LIFECYCLE PORTED; exact CLI argument/output parity for the old Python runners is not yet accepted |
+| Wallet sample collection / CSV label evaluation / profile recovery utility scripts | Rust scanner and profile-store backup tests cover parts of their responsibilities | TOOLING PARITY INCOMPLETE; exact standalone collection/evaluation/recovery commands remain migration work |
+
+## Latest verification evidence
+
+- CI run [#584](https://github.com/santosreemangal-lgtm/Engen/actions/runs/43567479482), commit `e26af5a9d4ca488428eef8c6eb88ca3684d99df5`: **all workflow steps passed** — rustfmt, Rust tests, read-only RPC smoke, selected Python behavior references, dashboard checks, Rust launcher process E2E, no-Python release runtime check, Clippy and static migration audit.
+- The legacy profile risk settings `max_position_pct` and `max_open_positions` were added after that green commit. The latest risk-control commit is `97f851695c2a4811f39a8bff73dce5eaa899e77f`; its latest workflow is still the authoritative pending verification target. Earlier CI failures on intermediate risk commits were rustfmt-only and were corrected.
+- A green run on `e26af5a` does **not** certify the subsequently added risk-limit changes.
+
+## Step 1 acceptance decision
+
+**Step 1 is not yet closed.** The primary Rust domain components and dashboard runtime counterparts now exist, and the known profile risk-control omission has been ported with focused tests. However, full Python/Rust differential acceptance across all production responsibilities has not yet been proven. In particular:
+
+1. The new `max_position_pct` / `max_open_positions` port must pass the latest Rust unit tests and Clippy.
+2. The complete transaction-classification and transaction-processing corpus still needs a recorded differential result, including malformed/missing fields, native SOL, SPL Token and Token-2022, inner instructions, versioned lookups and explicit UNKNOWN outcomes.
+3. The complete simulator/copy-runner matrix still needs differential coverage for all profile settings, pending reservations, order rejection reasons, proportional SELL, partial/full-close, fees, stale price/liquidity, and persistence/restart.
+4. Utility-tool behavior (wallet-sample artifact generation, reviewed-label evaluation, and standalone recovery verification) is not yet exposed through equivalent Rust operational subcommands. These must be migrated or explicitly retired with documented replacement commands.
+5. The older Python files remain in the tree. They are not removed or disabled until the parity tests and later runtime/deployment gates pass.
+
+The current Rust code must remain paper-only and read-only. No real user database has been opened, rewritten, migrated, or pruned. PR #49 remains Draft and unmerged.
+
+---
+
 # Phase 1 — Current-Head Rust Architecture, Parity & Runtime Audit
 
 Audit date: 2026-11-10  

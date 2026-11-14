@@ -98,6 +98,9 @@ fi
 if [[ ! -f "$MAIN" ]] || ! grep -q 'health-check' "$MAIN"; then
   report_blocker "Rust binary does not expose the native health-check command."
 fi
+if [[ ! -f "$MAIN" ]] || ! grep -q 'serve-telegram-paper-bot' "$MAIN"; then
+  report_blocker "Rust CLI does not expose the optional Telegram paper-bot command."
+fi
 if [[ ! -f "$LIB" ]] || ! grep -q 'pub mod dashboard_server' "$LIB"; then
   report_blocker "Rust library does not expose an integrated dashboard-server module."
 fi
@@ -106,6 +109,9 @@ if [[ ! -f "$LIB" ]] || ! grep -q 'pub mod health' "$LIB"; then
 fi
 if [[ ! -f "$LIB" ]] || ! grep -q 'pub mod logging' "$LIB"; then
   report_blocker "Rust library does not expose native secret redaction."
+fi
+if [[ ! -f "$LIB" ]] || ! grep -q 'pub mod telegram' "$LIB"; then
+  report_blocker "Rust library does not expose the optional Telegram paper-bot module."
 fi
 
 RENDER="$ROOT/render.yaml"

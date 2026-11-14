@@ -13,6 +13,7 @@ pub mod monitor_scheduler;
 pub mod monitor_service;
 pub mod paper_copy_runner;
 pub mod paper_simulator;
+pub mod paper_trader;
 pub mod pnl;
 pub mod profile_store;
 pub mod rpc_policy;

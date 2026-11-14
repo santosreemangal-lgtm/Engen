@@ -88,7 +88,7 @@ impl PaperTrader {
             let amount = BigDecimal::from_str(raw_amount.trim()).map_err(|_| {
                 PaperTraderError::InvalidConfiguration("Invalid initial balance.".to_string())
             })?;
-            if amount < BigDecimal::from(0) {
+            if amount < 0 {
                 return Err(PaperTraderError::InvalidConfiguration(
                     "Initial balances must be finite and non-negative.".to_string(),
                 ));
@@ -103,7 +103,7 @@ impl PaperTrader {
                         "Maximum position percentage must be numeric.".to_string(),
                     )
                 })?;
-                if limit <= BigDecimal::from(0) || limit > BigDecimal::from(100) {
+                if limit <= 0 || limit > 100 {
                     return Err(PaperTraderError::InvalidConfiguration(
                         "Maximum position percentage must be greater than 0 and at most 100."
                             .to_string(),

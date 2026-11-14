@@ -136,6 +136,22 @@ jobs:
           grep -F '"wallets":[]' "$TEMP_DATA/wallets.json"
           curl --silent --show-error -D "$TEMP_DATA/headers.txt" -o /dev/null "http://127.0.0.1:$PORT/api/wallets"
           grep -iF "Content-Security-Policy:" "$TEMP_DATA/headers.txt"
+      - name: Verify release runtime has no Python dependency
+        working-directory: .
+        run: |
+          cargo build --release --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml
+          RUST_BIN="Engen-main/Engen-main/rust-engine/target/release/engen-engine"
+          if ldd "$RUST_BIN" | grep -Eiq 'libpython|python[0-9]'; then
+            echo "Rust production binary unexpectedly links to Python."
+            ldd "$RUST_BIN"
+            exit 1
+          fi
+          env -u PYTHONHOME -u PYTHONPATH \
+            ENGEN_APP_ROOT="$GITHUB_WORKSPACE/Engen-main/Engen-main" \
+            ENGINE_MODE=read_only LIVE_TRADING_ENABLED=false \
+            "$RUST_BIN" health-check > /tmp/engen-rust-health-no-python-env.json
+          grep -F '"status": "ok"' /tmp/engen-rust-health-no-python-env.json
+
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 

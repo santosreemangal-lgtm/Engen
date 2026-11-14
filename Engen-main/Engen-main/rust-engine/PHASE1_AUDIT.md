@@ -1,3 +1,72 @@
+# Step 1 — Rust component parity acceptance (2026-11-14)
+
+**Status: COMPLETE — core application/domain component port and verification.**  
+**Review branch:** `migration/rust-dashboard-runtime-20261113`  
+**PR:** [#49](https://github.com/santosreemangal-lgtm/Engen/pull/49) — Draft, unmerged  
+**Verified code commit:** `1f38d3373b8e193bb1f279733bf7ef6a5c2815b3`  
+**CI:** [Push run #640](https://github.com/santosreemangal-lgtm/Engen/actions/runs/43571357136) and [PR run #641](https://github.com/santosreemangal-lgtm/Engen/actions/runs/43571360458) — both completed successfully.
+
+This acceptance covers the Rust equivalents of the engine's production application/domain components. It does not certify the whole migration, API contract, application cutover, deployment, or removal of Python. Operational wrappers and standalone utility commands remain part of the later entrypoint/tool migration phase.
+
+## Implemented Rust component map
+
+| Production component responsibility | Rust implementation | Step 1 result |
+|---|---|---|
+| Configuration and paper-only execution safety | `config.rs`, `safety.rs` | Ported; legacy empty-value defaults and fail-closed behavior tested |
+| Secret-safe logger | `logging.rs` | Ported; redaction, level filtering, idempotent setup, timestamp and logger identity tested |
+| Health checks | `health.rs` | Rust-native health report and CLI; core required module inventory checked |
+| RPC policy and public Solana reads | `rpc_policy.rs`, `solana_public.rs` | Rust components and read-only mainnet RPC smoke test pass |
+| Address/signature validation | `solana_validation.rs` | Rust component and shared fixtures/tests present |
+| Source freshness | `source_freshness.rs` | Configurable 60-second default via `ENGEN_MAX_SOURCE_AGE_SECONDS`; malformed limits fail closed; 5-second future tolerance retained |
+| Signature persistence and duplicate tracking | `signature_store.rs` | Rust SQLite store component and tests |
+| Profile persistence and profile-specific simulator path | `profile_store.rs`, `dashboard_server.rs` | Rust profile store; `PROFILE_DATA_DIR` override honored |
+| Transaction analysis/classification | `transaction_analysis.rs` | Rust parser/classifier; shared Phase 2 golden corpus checked against Python |
+| Transaction processing and monitoring | `transaction_processor.rs`, `transaction_monitor.rs` | Rust equivalents and tests |
+| Wallet monitoring/pagination | `wallet_monitor.rs` | Rust component and read-only scan tests |
+| Fresh/History scheduling and monitor lifecycle | `monitor_scheduler.rs`, `monitor_service.rs` | Rust scheduler/service components; full production cutover remains later |
+| Price discovery | `market_data.rs` | Rust price snapshot validation, including zero vs negative liquidity parity |
+| Paper copy queue and pending-copy reporting | `paper_copy_runner.rs`, Rust Dashboard response | Rust queue/executor and pending-copy status |
+| Price-verified virtual orders, reservations, fills and reporting | `paper_simulator.rs`, `pnl.rs` | Rust simulator/P&L components |
+| Legacy raw-result paper ledger API | `paper_trader.rs` | Rust compatibility port with SQLite `paper_meta`, `paper_balances`, `paper_trades`; BUY/SELL, duplicate detection, risk limits and restart tests |
+| Local processing latency recorder | `latency.rs` | Python-compatible bounded sample behavior and synchronous `measure()` API; actual sub-100-ms production benchmark remains later acceptance |
+| Telegram paper-only adapter | `telegram.rs` | Rust adapter exists; intentionally separate in-memory ledger, not shared with Dashboard simulator |
+
+The legacy Python engine modules are retained as behavioral references and rollback material. They have not been deleted, renamed, or disabled.
+
+## Verification completed on the verified commit
+
+Both current-head workflow runs passed every step:
+
+1. Rust formatting.
+2. Rust unit and integration test suite, including the new persistent `PaperTrader` compatibility tests.
+3. Public Solana mainnet read-only RPC smoke test.
+4. Python Phase 2 behavioral-reference tests.
+5. Python Phase 8 P&L/ROI reference tests.
+6. Dashboard backend and browser script syntax.
+7. Rust-native launcher smoke test confirming no Python invocation.
+8. Rust Dashboard process E2E over localhost.
+9. Release binary dependency check with Python runtime environment unset; no Python runtime dependency detected.
+10. Clippy with warnings denied.
+11. Static Python-production-path migration audit.
+
+## Explicit boundaries — not part of Step 1 acceptance
+
+- Exact complete Dashboard HTTP API contract parity is Step 2.
+- Fully composing monitor, transaction processor, stores, market data, paper queue and simulator into the final service lifecycle, plus disposable database compatibility/restart rehearsal, is Step 3 and Step 6.
+- Migrating all root/nested launchers, monitor CLI wrappers, Telegram hosting configuration, wallet collection, label evaluation and profile recovery utilities is Step 4.
+- Removing Python from the production deployment/entrypoint surface and proving the entire deployed runtime is Rust-only is Step 5.
+- Full fault/restart/database/duplicate prevention E2E and deployment rollback acceptance is Step 6.
+
+The static migration audit still lists **38 Python production/runtime paths** as blockers. This is expected at this stage; no Python production source has been removed. The audit workflow being green means the inventory/report ran correctly, not that those Python files are already migrated.
+
+## Step 1 decision
+
+**Step 1 is closed for the core application/domain component port.** Its Rust equivalents are present and the current component/CI acceptance checks are green. The six-phase Rust-only migration remains in progress; Steps 2–6 are separate gates and are not accepted by this result.
+
+The repository remains paper-only/read-only. No signing, private-key/seed handling, live transaction construction or broadcast was added. No real user database was opened, modified, migrated or pruned. PR #49 remains Draft and unmerged.
+
+---
+
 # Phase 1 — Current-Head Rust Architecture, Parity & Runtime Audit
 
 Audit date: 2026-11-10  

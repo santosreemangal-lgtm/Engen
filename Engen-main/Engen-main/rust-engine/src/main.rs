@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use engen_engine::config::Config;
+use engen_engine::logging::{redact, setup_logging};
 use engen_engine::signature_store::SignatureStore;
 use engen_engine::solana_public::{RpcConfig, SolanaRpcClient};
 use engen_engine::solana_validation::{is_valid_solana_address, is_valid_transaction_signature};
@@ -38,10 +39,13 @@ USAGE:\n\
   engen-engine --help\n\
   engen-engine version\n\
   engen-engine check-config\n\
+  engen-engine health-check\n\
   engen-engine validate-wallet <PUBLIC_ADDRESS>\n\
   engen-engine validate-signature <TRANSACTION_SIGNATURE>\n\
   engen-engine classify-transaction <PUBLIC_WALLET> <TRANSACTION_JSON_FILE>\n\
   engen-engine scan-wallet-once --wallet <PUBLIC_ADDRESS> --signature-db <EXPLICIT_DB_PATH> [--limit <1..1000>]\n\
+  engen-engine serve-dashboard\n\
+  engen-engine serve-telegram-paper-bot\n\
 \n\
 ENVIRONMENT:\n\
   ENGEN_RPC_URL                       Optional read-only HTTPS Solana RPC endpoint\n\
@@ -225,7 +229,24 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             Ok(())
         }
         "classify-transaction" => run_classification(&args[1..]),
+        "health-check" => {
+            let config = Config::from_process_env()?;
+            let report =
+                engen_engine::health::get_status(&config, &engen_engine::health::project_root());
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if report["status"] != "ok" {
+                return Err(invalid_input("Rust runtime health checks failed."));
+            }
+            Ok(())
+        }
+        "serve-telegram-paper-bot" => {
+            Config::from_process_env()?;
+            let mut bot =
+                engen_engine::telegram::TelegramPaperBot::from_env().map_err(invalid_input)?;
+            bot.run_forever().map_err(invalid_input)
+        }
         "scan-wallet-once" => run_scan(parse_scan_options(&args[1..])?),
+        "serve-dashboard" => engen_engine::dashboard_server::serve_dashboard(),
         _ => Err(invalid_input(format!(
             "Unknown command: {command}. Use --help to see supported commands."
         ))),
@@ -233,8 +254,10 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 }
 
 fn main() {
+    let configured_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "INFO".to_string());
+    let _ = setup_logging(&configured_level);
     if let Err(error) = run(std::env::args().skip(1).collect()) {
-        eprintln!("engen: {error}");
+        eprintln!("engen: {}", redact(&error.to_string()));
         std::process::exit(2);
     }
 }

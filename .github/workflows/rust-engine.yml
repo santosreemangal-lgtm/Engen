@@ -11,19 +11,25 @@ on:
       - "Engen-main/Engen-main/engine/**"
       - "Engen-main/Engen-main/dashboard/**"
       - ".github/workflows/rust-engine.yml"
+      - "docs/RUST_ONLY_RUNTIME_MIGRATION.md"
+      - "scripts/audit_rust_runtime_migration.sh"
+      - "scripts/run_engen_rust_dashboard.sh"
   push:
     branches:
       - "rewrite/rust-backend-20261109"
+      - "migration/rust-dashboard-runtime-20261113"
     paths:
       - "Engen-main/Engen-main/rust-engine/**"
       - "Engen-main/Engen-main/engine/**"
       - "Engen-main/Engen-main/dashboard/**"
       - ".github/workflows/rust-engine.yml"
+      - "docs/RUST_ONLY_RUNTIME_MIGRATION.md"
+      - "scripts/audit_rust_runtime_migration.sh"
+      - "scripts/run_engen_rust_dashboard.sh"
   workflow_dispatch:
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 jobs:
   rust:
@@ -37,42 +43,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Produce formatted Rust source artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/rewrite/rust-backend-20261109'
-        run: cargo fmt --all
-      - name: Upload formatted Rust source
-        if: github.event_name == 'push' && github.ref == 'refs/heads/rewrite/rust-backend-20261109'
-        uses: actions/upload-artifact@v4
-        with:
-          name: rustfmt-current-source
-          path: |
-            Engen-main/Engen-main/rust-engine/src/*.rs
-            Engen-main/Engen-main/rust-engine/tests/**/*.rs
-          if-no-files-found: error
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
-      - name: Commit canonical rustfmt normalization and dispatch verification
-        if: github.event_name == 'push' && github.ref == 'refs/heads/rewrite/rust-backend-20261109'
-        working-directory: .
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if git diff --quiet -- Engen-main/Engen-main/rust-engine; then
-            echo "Rust sources already match rustfmt."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -- 'Engen-main/Engen-main/rust-engine/src/*.rs' 'Engen-main/Engen-main/rust-engine/tests/*.rs'
-            git commit -m "chore(rust): apply canonical rustfmt normalization"
-            git push origin "HEAD:rewrite/rust-backend-20261109"
-            curl --fail-with-body --silent --show-error \
-              --request POST \
-              --header "Accept: application/vnd.github+json" \
-              --header "Authorization: Bearer ${GH_TOKEN}" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/rust-engine.yml/dispatches \
-              --data '{"ref":"rewrite/rust-backend-20261109"}'
-          fi
       - name: Rust unit and integration tests
         run: cargo test --all-targets
       - name: Public Solana mainnet read-only RPC smoke test
@@ -108,5 +80,82 @@ jobs:
           Path("/tmp/engen-dashboard.js").write_text(scripts[0], encoding="utf-8")
           PY
           node --check /tmp/engen-dashboard.js
+      - name: Rust-native dashboard launcher smoke test (no Python invocation)
+        working-directory: .
+        run: |
+          bash -n scripts/run_engen_rust_dashboard.sh
+          if grep -Eq '(^|[[:space:]])python(3)?([[:space:]]|$)' scripts/run_engen_rust_dashboard.sh; then
+            echo "Rust dashboard launcher must not invoke Python."
+            exit 1
+          fi
+          cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- --help | grep -F "engen-engine serve-dashboard"
+          cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- --help | grep -F "engen-engine serve-telegram-paper-bot"
+          cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- check-config > /tmp/engen-rust-config.json
+          grep -F '"live_trading_enabled": false' /tmp/engen-rust-config.json
+          grep -F '"signing_available": false' /tmp/engen-rust-config.json
+          cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- health-check > /tmp/engen-rust-health.json
+          grep -F '"status": "ok"' /tmp/engen-rust-health.json
+          grep -F '"emergency_stop_engaged": true' /tmp/engen-rust-health.json
+      - name: Rust dashboard launcher process E2E (localhost only)
+        working-directory: .
+        run: |
+          set -euo pipefail
+          TEMP_DATA="$(mktemp -d)"
+          export ENGEN_APP_ROOT="$GITHUB_WORKSPACE/Engen-main/Engen-main"
+          export ENGEN_RUST_BINARY="$GITHUB_WORKSPACE/Engen-main/Engen-main/rust-engine/target/debug/engen-engine"
+          export PROFILE_STORE_DB="$TEMP_DATA/profiles.db"
+          export SIGNATURE_DB="$TEMP_DATA/signatures.db"
+          export PAPER_SIMULATOR_DB="$TEMP_DATA/paper_simulator.db"
+          export WALLETS_FILE="$TEMP_DATA/wallets.json"
+          export MONITOR_STATE_FILE="$TEMP_DATA/monitoring_state.json"
+          export PORT=18763
+          bash scripts/run_engen_rust_dashboard.sh >"$TEMP_DATA/server.log" 2>&1 &
+          SERVER_PID=$!
+          cleanup() {
+            kill "$SERVER_PID" 2>/dev/null || true
+            wait "$SERVER_PID" 2>/dev/null || true
+            rm -rf "$TEMP_DATA"
+          }
+          trap cleanup EXIT
+          READY=0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent "http://127.0.0.1:$PORT/" -o "$TEMP_DATA/index.html"; then
+              READY=1
+              break
+            fi
+            sleep 0.5
+          done
+          if [[ "$READY" != "1" ]]; then
+            cat "$TEMP_DATA/server.log"
+            exit 1
+          fi
+          grep -F "<html" "$TEMP_DATA/index.html"
+          grep -F '<script src="/dashboard/pending_copy_ui.js"></script>' "$TEMP_DATA/index.html"
+          curl --fail --silent "http://127.0.0.1:$PORT/dashboard/pending_copy_ui.js" > "$TEMP_DATA/pending_copy_ui.js"
+          grep -F "EngenPendingCopy" "$TEMP_DATA/pending_copy_ui.js"
+          curl --fail --silent "http://127.0.0.1:$PORT/api/wallets" > "$TEMP_DATA/wallets.json"
+          grep -F '"wallets":[]' "$TEMP_DATA/wallets.json"
+          curl --silent --show-error -D "$TEMP_DATA/headers.txt" -o /dev/null "http://127.0.0.1:$PORT/api/wallets"
+          grep -iF "Content-Security-Policy:" "$TEMP_DATA/headers.txt"
+      - name: Verify release runtime has no Python dependency
+        working-directory: .
+        run: |
+          cargo build --release --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml
+          RUST_BIN="Engen-main/Engen-main/rust-engine/target/release/engen-engine"
+          if ldd "$RUST_BIN" | grep -Eiq 'libpython|python[0-9]'; then
+            echo "Rust production binary unexpectedly links to Python."
+            ldd "$RUST_BIN"
+            exit 1
+          fi
+          env -u PYTHONHOME -u PYTHONPATH \
+            ENGEN_APP_ROOT="$GITHUB_WORKSPACE/Engen-main/Engen-main" \
+            ENGINE_MODE=read_only LIVE_TRADING_ENABLED=false \
+            "$RUST_BIN" health-check > /tmp/engen-rust-health-no-python-env.json
+          grep -F '"status": "ok"' /tmp/engen-rust-health-no-python-env.json
+
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+
+      - name: Audit Rust-only production runtime migration (report-only until cutover)
+        working-directory: .
+        run: bash scripts/audit_rust_runtime_migration.sh

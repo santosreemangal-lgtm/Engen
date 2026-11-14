@@ -58,7 +58,7 @@ fn snapshot_from_payload(payload: &Value, mint: &str, observed_at: &str) -> Opti
         let Some(liquidity_usd) = liquidity.get("usd").and_then(parse_decimal) else {
             continue;
         };
-        if price <= 0 || liquidity_usd <= 0 {
+        if price <= 0 || liquidity_usd < 0 {
             continue;
         }
         let replace = best
@@ -189,7 +189,7 @@ mod tests {
                 "chainId":"solana",
                 "baseToken":{"address":MINT},
                 "priceUsd":"1",
-                "liquidity":{"usd":"0"}
+                "liquidity":{"usd":"-0.01"}
             },
             {
                 "chainId":"solana",
@@ -199,6 +199,19 @@ mod tests {
             }
         ]);
         assert!(snapshot_from_payload(&payload, MINT, OBSERVED).is_none());
+    }
+
+    #[test]
+    fn preserves_zero_liquidity_snapshot_like_python_reference() {
+        let payload = json!([{
+            "chainId":"solana",
+            "baseToken":{"address":MINT},
+            "priceUsd":"0.25",
+            "liquidity":{"usd":"0"}
+        }]);
+        let price = snapshot_from_payload(&payload, MINT, OBSERVED).unwrap();
+        assert_eq!(price.price.to_string(), "0.25");
+        assert_eq!(price.liquidity_usd.unwrap().to_string(), "0");
     }
 
     #[test]

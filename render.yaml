@@ -1,25 +1,28 @@
 services:
   - type: web
     name: engen-paper-copy
-    runtime: python
+    runtime: rust
     plan: starter
-    rootDir: Engen-main/Engen-main
-    buildCommand: python -m pip install --upgrade pip
-    startCommand: python -m dashboard.server
+    buildCommand: cargo build --release --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml
+    startCommand: bash scripts/run_engen_rust_dashboard.sh
     healthCheckPath: /
     disk:
       name: engen-paper-data
       mountPath: /var/data
       sizeGB: 1
     envVars:
-      - key: PYTHONUNBUFFERED
-        value: "1"
+      - key: ENGINE_MODE
+        value: read_only
+      - key: LIVE_TRADING_ENABLED
+        value: "false"
       - key: DASHBOARD_HOST
         value: "0.0.0.0"
       - key: DASHBOARD_TRUST_PROXY
         value: "true"
       - key: DASHBOARD_AUTH_TOKEN
         generateValue: true
+      - key: SIGNATURE_DB
+        value: /var/data/signatures.db
       - key: MONITOR_STATE_FILE
         value: /var/data/monitoring_state.json
       - key: WALLETS_FILE

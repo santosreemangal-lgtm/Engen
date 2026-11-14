@@ -4,12 +4,16 @@
 //! implementation. Paper fills are virtual ledger events only.
 
 pub mod config;
+pub mod dashboard_server;
+pub mod health;
 pub mod latency;
+pub mod logging;
 pub mod market_data;
 pub mod monitor_scheduler;
 pub mod monitor_service;
 pub mod paper_copy_runner;
 pub mod paper_simulator;
+pub mod paper_trader;
 pub mod pnl;
 pub mod profile_store;
 pub mod rpc_policy;
@@ -18,6 +22,7 @@ pub mod signature_store;
 pub mod solana_public;
 pub mod solana_validation;
 pub mod source_freshness;
+pub mod telegram;
 pub mod transaction_analysis;
 pub mod transaction_monitor;
 pub mod transaction_processor;

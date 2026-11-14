@@ -201,6 +201,7 @@ footer.hint{padding:10px 4px;line-height:1.7}
 <details id="api-auth-details" class="api-auth-details"><summary>Optional API authentication</summary><div class="field"><label for="api-token">Dashboard API token</label><input id="api-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste bearer token (at least 32 characters)"><div class="row"><button id="save-api-token" type="button">Use Token</button><button id="clear-api-token" type="button" class="secondary">Clear Token</button></div><p id="api-auth-message" class="message" role="status">Only needed when DASHBOARD_AUTH_TOKEN is configured. The token is kept in this browser tab’s session storage.</p></div></details>
 <footer class="hint">Paper mode only. No private keys, signing, or live transactions. Portfolio prices and P&amp;L may remain unavailable when verified market prices are not available.</footer>
 </main>
+<script src="/dashboard/pending_copy_ui.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 let wallets = [], profiles = [], selectedProfile = "", deleteTargetProfileId = "", backendReady = false, currentMonitor = false, balanceInputDirty = false, balanceSaveInProgress = false;

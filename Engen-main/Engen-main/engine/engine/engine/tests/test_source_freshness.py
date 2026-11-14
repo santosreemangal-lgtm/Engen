@@ -1,6 +1,8 @@
 """Tests for source_freshness window used before paper-copy queueing."""
+import os
 import time
 import unittest
+from unittest.mock import patch
 
 from engine.source_freshness import (
     CLOCK_SKEW_SECONDS,
@@ -27,6 +29,24 @@ class SourceFreshnessTests(unittest.TestCase):
         self.assertFalse(
             source_block_time_ok({"block_time": stale}, now_ts=now)
         )
+
+    def test_configured_max_source_age_is_honored(self):
+        now = 1_700_000_000
+        with patch.dict(os.environ, {"ENGEN_MAX_SOURCE_AGE_SECONDS": "15"}):
+            self.assertTrue(
+                source_block_time_ok({"block_time": now - 15}, now_ts=now)
+            )
+            self.assertFalse(
+                source_block_time_ok({"block_time": now - 16}, now_ts=now)
+            )
+
+    def test_invalid_configured_max_source_age_fails_closed(self):
+        now = 1_700_000_000
+        for value in ("", "0", "-1", "not-an-integer"):
+            with patch.dict(os.environ, {"ENGEN_MAX_SOURCE_AGE_SECONDS": value}):
+                self.assertFalse(
+                    source_block_time_ok({"block_time": now}, now_ts=now)
+                )
 
     def test_future_block_time_rejected(self):
         now = int(time.time())

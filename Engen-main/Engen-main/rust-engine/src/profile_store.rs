@@ -421,6 +421,11 @@ impl ProfileStore {
         self.get_profile(profile_id)
     }
 
+    /// Validate settings without changing persistent profile data.
+    pub fn validate_settings(settings: &Value) -> Result<(), ProfileStoreError> {
+        serialize_settings(settings).map(|_| ())
+    }
+
     pub fn set_settings(
         &self,
         profile_id: &str,
@@ -1092,6 +1097,15 @@ mod tests {
         assert!(store
             .create_profile("Invalid", Some("not-a-wallet"), None)
             .is_err());
+    }
+
+    #[test]
+    fn settings_can_be_validated_without_writing_and_reject_secret_fields() {
+        assert!(ProfileStore::validate_settings(&serde_json::json!({"risk":"low"})).is_ok());
+        assert!(ProfileStore::validate_settings(
+            &serde_json::json!({"credentials":{"seed_phrase":"must-not-be-stored"}})
+        )
+        .is_err());
     }
 
     #[test]

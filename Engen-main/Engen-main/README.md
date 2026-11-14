@@ -1,85 +1,113 @@
-# Engen — Solana Wallet Monitoring and Paper Simulation
+# Engen — Rust Wallet Monitoring and Paper Simulation
 
-Engen is a read-only monitoring and research project for public Solana wallet activity. The dashboard provides public-wallet watchlists, monitoring status, RPC health, destination-profile management, transaction-history filters, and paper-simulation reporting.
+This project monitors public Solana wallet activity and supports virtual paper execution. Rust is the target backend runtime. The migration remains under Draft review; production cutover is not approved until every API, behavioral, persistence, recovery, security, and deployment acceptance gate has passed.
 
-> **Safety boundary:** This repository must not store wallet seed phrases or private keys, sign transactions, or broadcast trades. Paper-trading outputs are virtual and are not real wallet balances or evidence of profitability.
+> **Safety boundary:** Public RPC reads only. No private-key or seed-phrase handling, signing, live transaction construction, or transaction broadcast exists. All orders, balances, fills, and P&L are virtual.
 
-## Dashboard features
+## Rust dashboard candidate
 
-- **Engine overview:** read-only mode, monitor status, last successful scan, and RPC health.
-- **Wallet watchlist:** add/remove public addresses; address input is validated and the saved list is bounded.
-- **Independent wallet profiles:** each profile stores its own public wallet address, monitored-trader list, settings, stored balance observations, transaction history, and read-only monitor lifecycle.
-- **Profile paper ledger:** when the paper-only runner is started with a saved profile ID, that profile uses its own persistent virtual balances and paper-trade history; configured position-size and open-position limits are enforced by the simulator.
-- **Transaction history:** paginated records with classification, status, and token-mint filters.
-- **Paper simulation:** separate simulated balances, orders, fills, realized P&L, and fee-aware unrealized mark-to-market using fresh public USD price snapshots; missing/stale prices and unknown cost basis remain explicitly unavailable.
-- **Failure handling:** backend/API failures are surfaced to the UI; no stale transaction-history results should be treated as fresh after a failed request.
+Build and start from the repository root:
 
-## Run locally
+~~~bash
+cargo build --release --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml
+bash scripts/run_engen_rust_dashboard.sh
+~~~
 
-Use Python 3.10 or newer. From the repository root:
+The launcher invokes the Rust engen-engine serve-dashboard command and never starts Python. The dashboard uses port 8000 by default. Keep it on localhost or behind a trusted HTTPS reverse proxy with authentication. Do not expose a direct unauthenticated backend.
 
-```bash
-python -m pip install -r Engen-main/Engen-main/requirements.txt
-cd Engen-main/Engen-main
-python -m dashboard.server
-```
+The candidate Render service is described in the repository-root render.yaml. It uses the Rust runtime, a persistent disk, and the Rust launcher. Deployment configuration in a Draft branch is not a production cutover.
 
-The backend defaults to `127.0.0.1:8000` and refuses to bind to non-loopback interfaces. Do not change this boundary to expose the backend directly to a network. For remote access, keep the backend bound to localhost behind a trusted reverse proxy that enforces HTTPS and user authentication.
+## CLI and health checks
 
-An optional API bearer token can be configured with the `DASHBOARD_AUTH_TOKEN` environment variable (at least 32 characters). When configured, every `/api/*` request requires `Authorization: Bearer <token>`; the dashboard's token field keeps the value in the current browser tab's session storage. Use a randomly generated secret, never commit it, and clear it when finished. If the variable is unset, the API is intended only for localhost use. This is a single-user dashboard, not a multi-user authorization system: do not treat a shared token as per-profile access control.
+~~~bash
+cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- check-config
+cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- health-check
+cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- --help
+~~~
 
-State-changing browser requests with a mismatched `Origin` are rejected. Request bodies are capped at 10,000 bytes, write requests must use JSON, and the API applies an in-memory limit of 120 requests per client IP per 60 seconds. This rate limiter is process-local; deployments with multiple workers or reverse proxies need a proxy/shared-store limit and load testing. These controls are defense in depth, not a substitute for a properly configured authenticated HTTPS proxy when remote access is required. Monitoring is opt-in; check status before starting and stop it when finished.
+The native health check confirms required Rust runtime files exist, engine mode is read_only, live trading is disabled, and the live-execution guard always rejects execution.
 
-## Configuration and architecture
-
-The safe example settings are in [`.env.example`](.env.example); the application does not automatically load a `.env` file, so configure variables in your shell or Codespaces environment. The public RPC endpoint can be overridden with `ENGEN_RPC_URL`; remote endpoints must use HTTPS. Invalid RPC URLs, timeouts, retry counts, and pacing values are rejected or bounded before requests are sent. Never commit provider credentials.
-
-Architecture boundaries, data conventions, API behavior, the threat model, acceptance criteria, and open decisions are documented in the repository-root [`ARCHITECTURE_DECISIONS.md`](../../ARCHITECTURE_DECISIONS.md). It explicitly lists requirements that are defined but not yet implemented or certified.
-
-## API reference
+## Dashboard API
 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
-| GET | `/api/wallets` | Read saved public wallet addresses |
-| POST | `/api/wallets` | Add/remove a public address |
-| GET | `/api/monitor` | Read monitor status |
-| POST | `/api/monitor` | Start/stop read-only monitoring |
-| GET | `/api/rpc-health` | Read public RPC health |
-| GET | `/api/profiles` | Read destination profiles |
-| POST | `/api/profiles` | Create/update/delete profiles, settings, and source-wallet associations |
-| GET | `/api/profile-transactions` | Read filtered, paginated transaction history |
-| GET | `/api/paper-simulation` | Read the legacy paper-simulation report; add `?profile_id=<UUID>` for one profile's isolated paper ledger |
-| GET | `/api/profile-monitor?profile_id=<UUID>` | Read one profile's monitor status |
-| POST | `/api/profile-monitor` | Start/stop read-only monitoring for one active profile |
+| GET | /api/wallets | Read saved public wallet addresses |
+| POST | /api/wallets | Add/remove a public address |
+| GET | /api/monitor | Read global monitor status |
+| POST | /api/monitor | Start/stop read-only monitoring |
+| GET | /api/rpc-health | Read public RPC health |
+| GET | /api/profiles | Read destination profiles |
+| POST | /api/profiles | Create/update/delete profiles, settings, and source-wallet associations |
+| GET | /api/profile-transactions | Read filtered, paginated transaction history |
+| GET | /api/profile-monitor?profile_id=<UUID> | Read one profile's monitor status |
+| POST | /api/profile-monitor | Start/stop read-only monitoring for one active profile |
+| GET | /api/paper-simulation | Read global or profile-scoped virtual-ledger report |
 
-API write operations update local profile/watchlist data or monitor state. They do not enable live trading. Profile history, monitor lifecycle, and paper ledger requests are scoped by a canonical profile UUID. The paper-only runner requires an existing active profile and a monitored public wallet associated with that profile, and stores its virtual ledger under `data/profiles/<profile-id>/` by default. Profile settings may contain a `paper_trading` object with `initial_quote_balance`, `max_position_pct` (1–100), and `max_open_positions` (1–100); only these keys are supported by the runner. These limits are simulation controls, not financial advice or guarantees. JSON request bodies are bounded; public addresses and profile settings are validated by the backend. Browser security headers, optional bearer authentication, same-origin write checks, and loopback-only binding provide defense in depth. This remains a single-user localhost dashboard: a shared bearer token is not a multi-user identity system and does not separate different people's accounts.
+Paper-simulation reports include the pending_copy summary (pending_count, up to 20 pending orders, and explicit false live/broadcast flags). The dashboard loads /dashboard/pending_copy_ui.js to display that count.
 
-## Validation
+API writes update local watchlists, profile metadata, monitor state, or virtual paper state only. They cannot enable live trading. Profile history, monitor lifecycle, and paper-ledger requests are scoped by canonical profile UUID. Missing or stale verified prices must remain unavailable rather than being fabricated.
 
-Run these commands from the repository root, one at a time:
+## Configuration and security
 
-```bash
-python -m compileall -q Engen-main/Engen-main
+The application reads environment variables directly; it does not automatically load a .env file. Important settings include:
+
+- ENGINE_MODE=read_only
+- ENGEN_MAX_SOURCE_AGE_SECONDS=60 (default; stale source transactions are never copied)
+- LIVE_TRADING_ENABLED=false
+- ENGEN_RPC_URL — optional HTTPS public Solana RPC endpoint
+- DASHBOARD_HOST and PORT
+- DASHBOARD_AUTH_TOKEN — optional bearer token, at least 32 characters
+- DASHBOARD_TRUST_PROXY — only when running behind the configured trusted proxy
+- SIGNATURE_DB, PROFILE_STORE_DB, PAPER_SIMULATOR_DB, PROFILE_DATA_DIR, WALLETS_FILE, and MONITOR_STATE_FILE
+
+Never commit provider credentials or dashboard tokens. The dashboard uses bounded request bodies, same-origin write checks, security headers, and an in-memory API rate limit. The in-memory limit is not a substitute for a shared/proxy rate limit in a multi-worker deployment.
+
+Paper fee configuration is virtual accounting only:
+
+- ENGEN_PAPER_TRADING_FEE_BPS (default 10; range 0–10,000)
+- ENGEN_PAPER_NETWORK_FEE_USD (default 0)
+- ENGEN_PAPER_PRIORITY_FEE_USD (default 0)
+
+The network and priority fee fields are fixed USD estimates per simulated fill; they are not live Solana fee quotes. Profile overrides are stored with the simulated order/fill so a retry does not silently change its fee model.
+
+## Rust verification
+
+Run from Engen-main/Engen-main/rust-engine:
+
+~~~bash
+cargo fmt --all -- --check
+cargo test --all-targets
+cargo clippy --all-targets -- -D warnings
+~~~
+
+The GitHub workflow also performs a read-only public RPC smoke test, selected Python behavioral-reference tests, browser JavaScript syntax checks, and a localhost dashboard process E2E.
+
+## Optional Telegram paper bot
+
+The Rust CLI includes the optional allowlisted Telegram paper-bot process:
+
+~~~bash
+TELEGRAM_BOT_TOKEN=... TELEGRAM_ALLOWED_CHAT_IDS=12345 \
+  cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- serve-telegram-paper-bot
+~~~
+
+The command requires both environment values and ignores chats outside the allowlist. It is not started by the Dashboard or configured as a hosted worker. Its paper ledger is a separate in-memory portfolio, not shared with the dashboard's persistent paper simulator. Never commit a Telegram bot token. This adapter supports virtual-only commands and does not expose live trading, signing, or transaction broadcasting.
+
+## Legacy Python behavioral references
+
+Python source files and tests are retained temporarily to compare behavior while the migration remains open. They are not the documented production launchers. Run only the reference tests from the canonical application directory:
+
+~~~bash
 cd Engen-main/Engen-main
-python -m unittest discover -s engine/engine/engine/tests -v
-cd ../..
-python main.py --mock-analysis-test
-```
+PYTHONPATH=. python -m unittest discover -s engine/engine/engine/tests -v
+~~~
 
-The GitHub Actions workflow checks compilation, offline unit tests, and the mock-analysis command on pull requests. Confirm that its run succeeds before merging.
+Outstanding migration work includes full Python/Rust output parity, cross-process monitor claims and crash recovery, Telegram adapter parity or a reviewed retirement decision, remaining operational utility ports, full application restart/data-compatibility E2E, latency measurements, and final Python-free deployment verification. Keep the migration PRs Draft; do not remove Python reference files or cut over the user's existing runtime before the acceptance matrix is green.
 
-## Important limitations
+## Data safety and rollback
 
-- The dashboard backend supports optional single shared bearer-token authentication. Profile-scoped data and monitor APIs are implemented for one trusted local user, but user identities and cross-user authorization are not implemented.
-- Unrealized P&L must remain unavailable unless a verified, fresh market-price source exists.
-- Transaction fee fields must not be fabricated when the stored schema does not supply verified fee data.
-- Backup/restore, HTTPS, secret management, and access control need deployment-specific testing.
-- Passing unit tests does not establish profitability or production security.
+Migration tests must use temporary SQLite databases. Do not open, migrate, rewrite, prune, or delete the user's data/ databases as a side effect. Preserve audit records and source transaction evidence. A rollback plan must identify the prior deployment artifact and prove the database remains compatible before a Rust deployment can replace an existing runtime.
 
-## Future live-mode gate
+## Live execution
 
-Live signing and broadcasting are not implemented or authorized. The requirements for any separate future proposal—including explicit approval, order/exposure limits, slippage and price-age checks, duplicate prevention, emergency stop, RPC fail-closed behavior, and independent testing—are documented in [`LIVE_MODE_SAFETY_GATE.md`](../../LIVE_MODE_SAFETY_GATE.md). That document is a safety specification only and does not enable live mode.
-
-## Change policy
-
-Preserve working functionality and use small reviewable changes. Do not commit secrets. Keep monitoring read-only and live trading disabled. Do not merge until the relevant checks and deployment assumptions are verified.
+Live signing and broadcasting are not implemented or authorized. No environment variable or API action can turn them on in this release.

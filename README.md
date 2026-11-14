@@ -82,7 +82,7 @@ Do not remove or move Python reference modules until their Rust equivalents have
 
 ## Configuration
 
-The Rust runtime defaults to ENGINE_MODE=read_only and requires LIVE_TRADING_ENABLED to be absent or false. Public RPC configuration uses ENGEN_RPC_URL (HTTPS for remote endpoints), with bounded timeout, retry, and pacing settings. Paper-only fee settings are ENGEN_PAPER_TRADING_FEE_BPS, ENGEN_PAPER_NETWORK_FEE_USD, and ENGEN_PAPER_PRIORITY_FEE_USD.
+The Rust runtime defaults to ENGINE_MODE=read_only and requires LIVE_TRADING_ENABLED to be absent or false. Public RPC configuration uses ENGEN_RPC_URL (HTTPS for remote endpoints), with bounded timeout, retry, and pacing settings. Source transactions older than ENGEN_MAX_SOURCE_AGE_SECONDS (default 60 seconds) are not copied; a 5-second future clock-skew tolerance is allowed. Paper-only fee settings are ENGEN_PAPER_TRADING_FEE_BPS, ENGEN_PAPER_NETWORK_FEE_USD, and ENGEN_PAPER_PRIORITY_FEE_USD.
 
 These are simulated accounting settings, not live network fee quotes. Do not commit RPC provider credentials or dashboard tokens.
 

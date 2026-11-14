@@ -557,4 +557,57 @@ mod tests {
         assert!(updated.contains("200"));
         assert!(updated.contains("\"status\":\"active\""));
     }
+
+    #[test]
+    fn dashboard_flow_create_fund_monitor() {
+        let state = PaperApiState::for_tests();
+        let wallet = "11111111111111111111111111111111";
+        let created = handle_http(
+            "POST /api/profiles HTTP/1.1\r\nHost: x\r\nContent-Length: 27\r\n\r\n{\"action\":\"create\",\"name\":\"alpha\"}",
+            &state,
+        );
+        let id = created
+            .split("\"profile_id\":\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
+        let add = format!("{{\"action\":\"add\",\"address\":\"{wallet}\"}}");
+        let added = handle_http(
+            &format!("POST /api/wallets HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{add}", add.len()),
+            &state,
+        );
+        assert!(added.contains("200"), "{added}");
+        let assoc = format!("{{\"action\":\"associate-source-wallet\",\"profile_id\":\"{id}\",\"wallet_address\":\"{wallet}\"}}");
+        let associated = handle_http(
+            &format!("POST /api/profiles HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{assoc}", assoc.len()),
+            &state,
+        );
+        assert!(associated.contains("200"), "{associated}");
+        let activate = format!("{{\"action\":\"update\",\"profile_id\":\"{id}\",\"status\":\"active\"}}");
+        assert!(handle_http(
+            &format!("POST /api/profiles HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{activate}", activate.len()),
+            &state,
+        )
+        .contains("200"));
+        let fund = format!("{{\"action\":\"set-profile-initial-balance\",\"profile_id\":\"{id}\",\"amount\":\"100\"}}");
+        let funded = handle_http(
+            &format!("POST /api/paper-simulation HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{fund}", fund.len()),
+            &state,
+        );
+        assert!(funded.contains("\"available_balance\":\"100\""), "{funded}");
+        let start = format!("{{\"action\":\"start\",\"profile_id\":\"{id}\"}}");
+        let started = handle_http(
+            &format!("POST /api/profile-monitor HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{start}", start.len()),
+            &state,
+        );
+        assert!(started.contains("\"enabled\":true"), "{started}");
+        let status = handle_http(
+            &format!("GET /api/profile-monitor?profile_id={id} HTTP/1.1\r\nHost: x\r\n\r\n"),
+            &state,
+        );
+        assert!(status.contains("\"enabled\":true"), "{status}");
+        assert!(status.contains("\"transaction_broadcast\":false"));
+    }
 }

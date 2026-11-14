@@ -1,3 +1,7 @@
+# Scope of this binary
+
+`engen_paper` is the finished paper dashboard runtime. The routes below are the supported API. Live signing, transaction broadcast, and Yellowstone gRPC are not in this binary and will not be added here.
+
 # Engen paper dashboard API
 
 Served by `engen_paper`. Paper only. `real_trading` is false. No signing, no broadcast.

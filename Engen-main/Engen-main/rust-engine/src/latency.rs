@@ -1,6 +1,7 @@
 //! Bounded, local-stage latency recorder. No end-to-end latency is inferred.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
+use std::time::Instant;
 use std::sync::Mutex;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -16,7 +17,7 @@ pub struct LatencySummary {
 #[derive(Debug)]
 pub struct LatencyRecorder {
     max_samples: usize,
-    samples: Mutex<BTreeMap<String, VecDeque<f64>>>,
+    samples: Mutex<BTreeMap<String, Vec<f64>>>,
 }
 
 impl Default for LatencyRecorder {
@@ -50,13 +51,27 @@ impl LatencyRecorder {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let stage_samples = guard
             .entry(stage.to_string())
-            .or_insert_with(|| VecDeque::with_capacity(self.max_samples));
+            .or_insert_with(|| Vec::with_capacity(self.max_samples));
 
-        if stage_samples.len() == self.max_samples {
-            stage_samples.pop_front();
+        // Match the legacy recorder: retain the first bounded sample window.
+        if stage_samples.len() < self.max_samples {
+            stage_samples.push(elapsed_ms);
         }
-        stage_samples.push_back(elapsed_ms);
         Ok(())
+    }
+
+    /// Measure a synchronous local stage and record its elapsed milliseconds.
+    pub fn measure<T, F>(&self, stage: &str, operation: F) -> Result<T, &'static str>
+    where
+        F: FnOnce() -> T,
+    {
+        if stage.trim().is_empty() {
+            return Err("A non-empty latency stage name is required.");
+        }
+        let started = Instant::now();
+        let result = operation();
+        self.record(stage, started.elapsed().as_secs_f64() * 1_000.0)?;
+        Ok(result)
     }
 
     pub fn summary(&self) -> BTreeMap<String, LatencySummary> {
@@ -123,14 +138,25 @@ mod tests {
     }
 
     #[test]
-    fn retains_only_the_newest_bounded_samples() {
+    fn retains_first_bounded_samples_like_python_reference() {
         let recorder = LatencyRecorder::new(2).unwrap();
         recorder.record("scan", 1.0).unwrap();
         recorder.record("scan", 2.0).unwrap();
         recorder.record("scan", 3.0).unwrap();
         let summary = recorder.summary().remove("scan").unwrap();
         assert_eq!(summary.count, 2);
-        assert_eq!(summary.mean_ms, 2.5);
+        assert_eq!(summary.mean_ms, 1.5);
+        assert_eq!(summary.max_ms, 2.0);
+    }
+
+    #[test]
+    fn measures_local_operation_and_records_its_stage() {
+        let recorder = LatencyRecorder::new(4).unwrap();
+        let output = recorder.measure("decode", || 42).unwrap();
+        assert_eq!(output, 42);
+        let summary = recorder.summary().remove("decode").unwrap();
+        assert_eq!(summary.count, 1);
+        assert!(summary.mean_ms >= 0.0);
     }
 
     #[test]

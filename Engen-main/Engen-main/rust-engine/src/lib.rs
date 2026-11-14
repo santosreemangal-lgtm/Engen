@@ -22,6 +22,7 @@ pub mod solana_public;
 pub mod solana_validation;
 pub mod source_freshness;
 pub mod transaction_analysis;
+pub mod telegram;
 pub mod transaction_monitor;
 pub mod transaction_processor;
 pub mod wallet_monitor;

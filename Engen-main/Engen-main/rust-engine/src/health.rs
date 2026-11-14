@@ -18,6 +18,7 @@ const REQUIRED_RUNTIME_FILES: &[&str] = &[
     "rust-engine/src/main.rs",
     "rust-engine/src/lib.rs",
     "rust-engine/src/logging.rs",
+    "rust-engine/src/telegram.rs",
     "rust-engine/src/dashboard_server.rs",
     "rust-engine/src/monitor_service.rs",
     "rust-engine/src/transaction_processor.rs",

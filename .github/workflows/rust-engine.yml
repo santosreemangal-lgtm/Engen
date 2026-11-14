@@ -92,6 +92,9 @@ jobs:
           cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- check-config > /tmp/engen-rust-config.json
           grep -F '"live_trading_enabled": false' /tmp/engen-rust-config.json
           grep -F '"signing_available": false' /tmp/engen-rust-config.json
+          cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- health-check > /tmp/engen-rust-health.json
+          grep -F '"status": "ok"' /tmp/engen-rust-health.json
+          grep -F '"emergency_stop_engaged": true' /tmp/engen-rust-health.json
       - name: Rust dashboard launcher process E2E (localhost only)
         working-directory: .
         run: |

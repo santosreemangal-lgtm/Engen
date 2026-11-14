@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use engen_engine::config::Config;
-use engen_engine::logging::redact;
+use engen_engine::logging::{redact, setup_logging};
 use engen_engine::signature_store::SignatureStore;
 use engen_engine::solana_public::{RpcConfig, SolanaRpcClient};
 use engen_engine::solana_validation::{is_valid_solana_address, is_valid_transaction_signature};
@@ -254,6 +254,8 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 }
 
 fn main() {
+    let configured_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "INFO".to_string());
+    let _ = setup_logging(&configured_level);
     if let Err(error) = run(std::env::args().skip(1).collect()) {
         eprintln!("engen: {}", redact(&error.to_string()));
         std::process::exit(2);

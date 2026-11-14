@@ -1,7 +1,92 @@
-//! Secret-safe logging helpers for the Rust runtime.
+//! Secret-safe console logging for the Rust runtime.
 //!
-//! This module deliberately avoids logging configuration that could expose
-//! environment values. Callers redact untrusted error text before writing it.
+//! Mirrors the legacy engine logger: one idempotent stdout handler, the
+//! configured DEBUG/INFO/WARNING/ERROR threshold, a consistent timestamped
+//! format, and redaction before any message is emitted.
+
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::OnceLock;
+
+use chrono::Utc;
+use log::{Level, LevelFilter, Log, Metadata, Record};
+
+const ERROR: u8 = 1;
+const WARNING: u8 = 2;
+const INFO: u8 = 3;
+const DEBUG: u8 = 4;
+
+struct EngineLogger {
+    max_level: AtomicU8,
+}
+
+impl EngineLogger {
+    fn accepts(&self, level: Level) -> bool {
+        let severity = match level {
+            Level::Error => ERROR,
+            Level::Warn => WARNING,
+            Level::Info => INFO,
+            Level::Debug => DEBUG,
+            Level::Trace => DEBUG + 1,
+        };
+        severity <= self.max_level.load(Ordering::Relaxed)
+    }
+}
+
+impl Log for EngineLogger {
+    fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+        self.accepts(metadata.level())
+    }
+
+    fn log(&self, record: &Record<'_>) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+
+        let message = redact(&format!("{}", record.args()));
+        let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let level = match record.level() {
+            Level::Error => "ERROR",
+            Level::Warn => "WARNING",
+            Level::Info => "INFO",
+            Level::Debug => "DEBUG",
+            Level::Trace => "TRACE",
+        };
+        println!(
+            "{} | {:<7} | {} | {}",
+            timestamp,
+            level,
+            record.target(),
+            message
+        );
+    }
+
+    fn flush(&self) {}
+}
+
+static LOGGER: EngineLogger = EngineLogger {
+    max_level: AtomicU8::new(INFO),
+};
+static LOGGER_READY: OnceLock<()> = OnceLock::new();
+
+/// Configure the single global engine logger. Safe to call repeatedly.
+pub fn setup_logging(level: &str) -> Result<(), String> {
+    let (threshold, filter) = match level.trim().to_ascii_uppercase().as_str() {
+        "DEBUG" => (DEBUG, LevelFilter::Debug),
+        "INFO" => (INFO, LevelFilter::Info),
+        "WARNING" => (WARNING, LevelFilter::Warn),
+        "ERROR" => (ERROR, LevelFilter::Error),
+        _ => return Err("LOG_LEVEL must be DEBUG, INFO, WARNING, or ERROR.".to_string()),
+    };
+
+    LOGGER_READY.get_or_init(|| {
+        // If another logger has already been installed by an embedding host,
+        // do not replace it. The local CLI installs this logger first.
+        let _ = log::set_logger(&LOGGER);
+    });
+    LOGGER.max_level.store(threshold, Ordering::Relaxed);
+    log::set_max_level(filter);
+    Ok(())
+}
 
 const SECRET_KEYS: &[&str] = &[
     "api_key",
@@ -95,7 +180,8 @@ pub fn redact(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::redact;
+    use super::{redact, EngineLogger, DEBUG, ERROR, INFO, WARNING};
+    use log::Level;
 
     #[test]
     fn redacts_secret_assignment_variants_case_insensitively() {
@@ -135,5 +221,20 @@ mod tests {
         assert!(!result.contains("SECRET"));
         assert!(result.starts_with("সংযোগ ব্যর্থ token="));
         assert!(result.ends_with(" — আবার চেষ্টা করুন"));
+    }
+
+    #[test]
+    fn configured_levels_match_legacy_debug_info_warning_error_order() {
+        let logger = EngineLogger { max_level: std::sync::atomic::AtomicU8::new(INFO) };
+        assert!(logger.accepts(Level::Error));
+        assert!(logger.accepts(Level::Warn));
+        assert!(logger.accepts(Level::Info));
+        assert!(!logger.accepts(Level::Debug));
+        logger.max_level.store(DEBUG, std::sync::atomic::Ordering::Relaxed);
+        assert!(logger.accepts(Level::Debug));
+        logger.max_level.store(WARNING, std::sync::atomic::Ordering::Relaxed);
+        assert!(!logger.accepts(Level::Info));
+        logger.max_level.store(ERROR, std::sync::atomic::Ordering::Relaxed);
+        assert!(!logger.accepts(Level::Warn));
     }
 }

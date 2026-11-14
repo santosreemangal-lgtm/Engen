@@ -7,7 +7,7 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
 
-use chrono::Utc;
+use chrono::Local;
 use log::{Level, LevelFilter, Log, Metadata, Record};
 
 const ERROR: u8 = 1;
@@ -43,7 +43,7 @@ impl Log for EngineLogger {
         }
 
         let message = redact(&format!("{}", record.args()));
-        let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S,%3f");
         let level = match record.level() {
             Level::Error => "ERROR",
             Level::Warn => "WARNING",

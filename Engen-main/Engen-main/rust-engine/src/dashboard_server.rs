@@ -1429,14 +1429,18 @@ impl DashboardApp {
             let Some((id, simulator)) = profile_simulator else {
                 return HttpResponse::json(400, json!({"error":"profile_id is required."}));
             };
-            let report = simulator
-                .lock()
-                .ok()
-                .and_then(|sim| sim.report().ok())
-                .unwrap_or_else(|| empty_paper_report(&id, true));
+            let report = match simulator.lock() {
+                Ok(simulator) => {
+                    let report = simulator
+                        .report()
+                        .unwrap_or_else(|_| empty_paper_report(&id, true));
+                    enrich_paper_report(report, &id, Some(&simulator))
+                }
+                Err(_) => enrich_paper_report(empty_paper_report(&id, true), &id, None),
+            };
             return HttpResponse::json(
                 200,
-                json!({"profile_id":id,"database_available":true,"initialized":true,"report":enrich_paper_report(report,&id,Some(&simulator)),"real_trading":false,"transaction_broadcast":false}),
+                json!({"profile_id":id,"database_available":true,"initialized":true,"report":report,"real_trading":false,"transaction_broadcast":false}),
             );
         }
         if action == "set-profile-initial-balance" {

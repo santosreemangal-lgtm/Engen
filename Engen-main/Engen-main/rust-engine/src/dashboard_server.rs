@@ -1381,7 +1381,7 @@ impl DashboardApp {
             };
             return match report_with_verified_market_prices(&simulator, Duration::from_secs(5)) {
                 Ok(report) => {
-                    match merge_legacy_profile_paper_report(enrich_paper_report(report, &id), &path)
+                    match merge_legacy_profile_paper_report(enrich_paper_report(report, &id, Some(&simulator)), &path)
                     {
                         Ok(report) => HttpResponse::json(200, report),
                         Err(error) => HttpResponse::json(503, json!({"error":error})),
@@ -1395,7 +1395,7 @@ impl DashboardApp {
             Err(_) => return HttpResponse::json(503, json!({"error":"Paper ledger unavailable."})),
         };
         match report_with_verified_market_prices(&simulator, Duration::from_secs(5)) {
-            Ok(report) => HttpResponse::json(200, enrich_paper_report(report, "")),
+            Ok(report) => HttpResponse::json(200, enrich_paper_report(report, "", Some(&simulator))),
             Err(_) => HttpResponse::json(503, json!({"error":"Paper report unavailable."})),
         }
     }
@@ -1432,7 +1432,7 @@ impl DashboardApp {
                 .unwrap_or_else(|| empty_paper_report(&id, true));
             return HttpResponse::json(
                 200,
-                json!({"profile_id":id,"database_available":true,"initialized":true,"report":report,"real_trading":false,"transaction_broadcast":false}),
+                json!({"profile_id":id,"database_available":true,"initialized":true,"report":enrich_paper_report(report,&id,Some(&simulator)),"real_trading":false,"transaction_broadcast":false}),
             );
         }
         if action == "set-profile-initial-balance" {
@@ -1470,7 +1470,7 @@ impl DashboardApp {
                         .unwrap_or_else(|_| empty_paper_report(&id, true));
                     HttpResponse::json(
                         200,
-                        json!({"result":result,"report":enrich_paper_report(report,&id)}),
+                        json!({"result":result,"report":enrich_paper_report(report,&id,Some(&simulator))}),
                     )
                 }
                 Err(error) => HttpResponse::json(400, json!({"error":error.to_string()})),
@@ -1517,7 +1517,7 @@ impl DashboardApp {
                         Err(error) => HttpResponse::json(400, json!({"error":error.to_string()})),
                     }
                 }
-                "create-order" => self.create_manual_paper_order(&mut simulator, body),
+                "create-order" => self.create_manual_paper_order(&mut simulator, body, ""),
                 _ => HttpResponse::json(400, json!({"error":"Unknown paper-simulation action."})),
             }
         }
@@ -1547,7 +1547,7 @@ impl DashboardApp {
                 ) {
                     Ok(result) => HttpResponse::json(
                         200,
-                        json!({"result":result,"report":enrich_paper_report(simulator.report().unwrap_or(Value::Null),&id)}),
+                        json!({"result":result,"report":enrich_paper_report(simulator.report().unwrap_or(Value::Null),&id,Some(&simulator))}),
                     ),
                     Err(error) => HttpResponse::json(400, json!({"error":error.to_string()})),
                 }
@@ -1563,12 +1563,12 @@ impl DashboardApp {
                 match simulator.add_virtual_balance(mint, &amount) {
                     Ok(result) => HttpResponse::json(
                         200,
-                        json!({"result":result,"report":enrich_paper_report(simulator.report().unwrap_or(Value::Null),&id)}),
+                        json!({"result":result,"report":enrich_paper_report(simulator.report().unwrap_or(Value::Null),&id,Some(&simulator))}),
                     ),
                     Err(error) => HttpResponse::json(400, json!({"error":error.to_string()})),
                 }
             }
-            "create-order" => self.create_manual_paper_order(&mut simulator, body),
+            "create-order" => self.create_manual_paper_order(&mut simulator, body, &id),
             _ => HttpResponse::json(400, json!({"error":"Unknown paper-simulation action."})),
         }
     }
@@ -1577,6 +1577,7 @@ impl DashboardApp {
         &self,
         simulator: &mut PaperSimulator,
         body: &Value,
+        profile_id: &str,
     ) -> HttpResponse {
         let Some(side) = body.get("side").and_then(Value::as_str) else {
             return HttpResponse::json(400, json!({"error":"Order side is required."}));
@@ -1658,7 +1659,7 @@ impl DashboardApp {
         };
         HttpResponse::json(
             200,
-            json!({"result":result,"report":simulator.report().unwrap_or(Value::Null)}),
+            json!({"result":result,"report":enrich_paper_report(simulator.report().unwrap_or(Value::Null),profile_id,Some(simulator))}),
         )
     }
 }
@@ -1668,6 +1669,7 @@ fn empty_paper_report(profile_id: &str, initialized: bool) -> Value {
         "mode":"PAPER_SIMULATION","simulated":true,"real_wallet_balances_included":false,
         "real_trading":false,"transaction_broadcast":false,"profile_id":if profile_id.is_empty(){Value::Null}else{json!(profile_id)},
         "database_available":initialized,"balances":{},"orders":[],"fills":[],
+        "pending_copy":{"pending_count":0,"pending_orders":[],"real_trading":false,"transaction_broadcast":false},
         "available_balance":null,"available_balance_usd":null,"initial_balance":null,
         "cash_balance_usd":null,"token_holdings_value_usd":null,"token_holdings":[],
         "portfolio_value_usd":null,"total_portfolio_value_usd":null,
@@ -1893,7 +1895,7 @@ fn merge_legacy_profile_paper_report(mut report: Value, path: &Path) -> Result<V
     Ok(report)
 }
 
-fn enrich_paper_report(mut report: Value, profile_id: &str) -> Value {
+fn enrich_paper_report(mut report: Value, profile_id: &str, simulator: Option<&PaperSimulator>) -> Value {
     if !report.is_object() {
         report = json!({});
     }
@@ -1906,6 +1908,13 @@ fn enrich_paper_report(mut report: Value, profile_id: &str) -> Value {
         report["profile_id"] = json!(profile_id);
     }
     report["database_available"] = json!(true);
+    let mut pending_copy = simulator
+        .map(|paper| get_pending_copy_status(paper, None))
+        .unwrap_or_else(|| json!({"pending_count":0,"pending_orders":[],"real_trading":false,"transaction_broadcast":false}));
+    if let Some(orders) = pending_copy.get_mut("pending_orders").and_then(Value::as_array_mut) {
+        orders.truncate(20);
+    }
+    report["pending_copy"] = pending_copy;
     let cash = report
         .get("cash_balance_usd")
         .cloned()
@@ -2470,9 +2479,44 @@ mod tests {
 
     #[test]
     fn paper_report_is_never_marked_as_real_trading() {
-        let report = enrich_paper_report(json!({"balances":{}}), "profile-id");
+        let report = enrich_paper_report(json!({"balances":{}}), "profile-id", None);
         assert_eq!(report["real_trading"], false);
         assert_eq!(report["transaction_broadcast"], false);
         assert_eq!(report["simulated"], true);
+        assert_eq!(report["pending_copy"]["pending_count"], 0);
+        assert_eq!(report["pending_copy"]["pending_orders"], json!([]));
+        assert_eq!(report["pending_copy"]["real_trading"], false);
+        assert_eq!(report["pending_copy"]["transaction_broadcast"], false);
+    }
+
+    #[test]
+    fn dashboard_page_references_and_serves_pending_copy_ui_asset() {
+        let (directory, app) = dashboard_app_fixture();
+        let dashboard_dir = directory.path().join("dashboard");
+        fs::write(
+            dashboard_dir.join("index.html"),
+            include_str!("../../dashboard/index.html"),
+        )
+        .unwrap();
+        fs::write(
+            dashboard_dir.join("pending_copy_ui.js"),
+            "window.EngenPendingCopy = {};",
+        )
+        .unwrap();
+
+        let page = app.handle(api_request("GET", "/", Value::Null));
+        assert_eq!(page.status, 200);
+        let page = String::from_utf8(page.body).unwrap();
+        assert!(page.contains("<script src=\\"/dashboard/pending_copy_ui.js\\"></script>"));
+
+        let script = app.handle(api_request(
+            "GET",
+            "/dashboard/pending_copy_ui.js",
+            Value::Null,
+        ));
+        assert_eq!(script.status, 200);
+        assert!(String::from_utf8(script.body)
+            .unwrap()
+            .contains("window.EngenPendingCopy"));
     }
 }

@@ -1,0 +1,18 @@
+[Unit]
+Description=Engen paper dashboard (no signing, no broadcast)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/engen
+EnvironmentFile=-/opt/engen/engen.env
+Environment=ENGEN_BIND=127.0.0.1:8787
+Environment=ENGEN_PAPER_DB=/opt/engen/data/paper_simulator.db
+Environment=ENGEN_PROFILE_DB=/opt/engen/data/profiles.db
+ExecStart=/opt/engen/rust/engen_core/target/release/engen_paper
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

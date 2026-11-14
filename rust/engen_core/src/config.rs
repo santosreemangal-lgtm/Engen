@@ -39,6 +39,9 @@ impl Config {
             .and_then(|s| s.parse().ok())
             .unwrap_or(15)
             .clamp(5, 300);
+        let token = env::var("DASHBOARD_AUTH_TOKEN").ok();
+        let trust_proxy = env::var("DASHBOARD_TRUST_PROXY").ok().as_deref() == Some("true");
+        validate_bind(&bind, trust_proxy, token.as_deref())?;
         Ok(Self {
             bind,
             paper_db,
@@ -47,5 +50,42 @@ impl Config {
             wallets,
             poll_seconds,
         })
+    }
+}
+
+/// Localhost may run without a token. Any other bind needs an explicit proxy
+/// trust flag and a bearer token of at least 32 characters.
+pub fn validate_bind(bind: &str, trust_proxy: bool, token: Option<&str>) -> Result<()> {
+    let host = bind.split(':').next().unwrap_or("");
+    if host == "127.0.0.1" || host == "localhost" || host == "::1" {
+        return Ok(());
+    }
+    if !trust_proxy {
+        return Err(EngenError::InvalidInput(
+            "Non-local bind requires DASHBOARD_TRUST_PROXY=true".into(),
+        ));
+    }
+    if token.map(|t| t.len()).unwrap_or(0) < 32 {
+        return Err(EngenError::InvalidInput(
+            "Non-local bind requires DASHBOARD_AUTH_TOKEN of at least 32 characters".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn localhost_needs_no_token() {
+        assert!(validate_bind("127.0.0.1:8787", false, None).is_ok());
+    }
+
+    #[test]
+    fn public_bind_is_refused_without_proxy_and_token() {
+        assert!(validate_bind("0.0.0.0:8787", false, None).is_err());
+        assert!(validate_bind("0.0.0.0:8787", true, Some("short")).is_err());
+        assert!(validate_bind("0.0.0.0:8787", true, Some(&"x".repeat(32))).is_ok());
     }
 }

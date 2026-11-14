@@ -45,6 +45,7 @@ USAGE:\n\
   engen-engine classify-transaction <PUBLIC_WALLET> <TRANSACTION_JSON_FILE>\n\
   engen-engine scan-wallet-once --wallet <PUBLIC_ADDRESS> --signature-db <EXPLICIT_DB_PATH> [--limit <1..1000>]\n\
   engen-engine serve-dashboard\n\
+  engen-engine serve-telegram-paper-bot\n\
 \n\
 ENVIRONMENT:\n\
   ENGEN_RPC_URL                       Optional read-only HTTPS Solana RPC endpoint\n\
@@ -238,6 +239,12 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             }
             Ok(())
         }
+        "serve-telegram-paper-bot" => {
+            Config::from_process_env()?;
+            let mut bot = engen_engine::telegram::TelegramPaperBot::from_env()
+                .map_err(invalid_input)?;
+            bot.run_forever().map_err(invalid_input)
+        },
         "scan-wallet-once" => run_scan(parse_scan_options(&args[1..])?),
         "serve-dashboard" => engen_engine::dashboard_server::serve_dashboard(),
         _ => Err(invalid_input(format!(

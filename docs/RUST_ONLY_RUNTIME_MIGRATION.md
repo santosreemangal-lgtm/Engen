@@ -1,3 +1,18 @@
+# Current-head update — 2026-11-14
+
+Step 1 core application/domain component parity has been accepted on draft branch `migration/rust-dashboard-runtime-20261113`, verified code commit `1f38d3373b8e193bb1f279733bf7ef6a5c2815b3`.
+- [CI push run #640](https://github.com/santosreemangal-lgtm/Engen/actions/runs/43571357136): success.
+- [CI PR run #641](https://github.com/santosreemangal-lgtm/Engen/actions/runs/43571360458): success.
+- [PR #49](https://github.com/santosreemangal-lgtm/Engen/pull/49) remains Draft and unmerged.
+
+The verified code includes Rust-native Dashboard server foundation, monitor/transaction/store components, Rust paper-copy/simulator/P&L, persistent legacy PaperTrader compatibility, health, logging/redaction, source freshness configuration, market data and latency parity. The workflow proves Rust tests, read-only RPC, current Python reference suites, local Dashboard process E2E, no-Python Rust release runtime, Clippy and migration audit execution on that commit.
+
+**This does not mean the whole migration is complete.** The static migration audit still reports 38 Python production/runtime paths. Step 2 full API contract parity, Step 3 integrated monitor/paper/DB service acceptance, Step 4 all CLI/utility/deployment entrypoint migration, Step 5 complete Python-free production deployment, and Step 6 full DB/restart/duplicate/fault/rollback E2E remain open. Keep Python sources as references/rollback until their later gates pass.
+
+Paper/read-only safety remains mandatory. No signing, private keys, seed phrases, live transaction construction or broadcast. No user database has been modified. No production cutover is authorized by this update.
+
+---
+
 # Rust-Only Production Runtime Migration
 
 ## Acceptance target

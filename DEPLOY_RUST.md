@@ -1,6 +1,9 @@
 # Rust paper deployment
 
-The supported entry point is the `engen_paper` binary. It does not sign or broadcast.
+The supported runtime is `engen_paper`. Python is not required to build, test, or run it. Old Python files may still be in the repository; they are not the service entry point.
+
+The `rust-paper` GitHub Action runs `cargo test`, builds the release binary, and fails if `scripts/engen-paper.sh` or the systemd unit calls Python.
+
 
 ## Run
 

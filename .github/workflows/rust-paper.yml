@@ -1,16 +1,25 @@
 name: rust-paper
 on:
   push:
-    paths:
-      - "rust/**"
-      - ".github/workflows/rust-paper.yml"
+    branches: [main, feature/rust-engine-core]
   pull_request:
-    paths:
-      - "rust/**"
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --offline --manifest-path rust/engen_core/Cargo.toml || cargo test --manifest-path rust/engen_core/Cargo.toml
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust/engen_core
+      - name: Runtime entry does not call Python
+        run: |
+          if grep -E -i 'python|pip ' scripts/engen-paper.sh deploy/engen-paper.service; then
+            echo "paper runtime still depends on Python"
+            exit 1
+          fi
+          test -x scripts/engen-paper.sh
+      - name: Test
+        run: cargo test --manifest-path rust/engen_core/Cargo.toml
+      - name: Release binary
+        run: cargo build --release --manifest-path rust/engen_core/Cargo.toml

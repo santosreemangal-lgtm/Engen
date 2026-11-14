@@ -11,7 +11,11 @@ pub const CLOCK_SKEW_SECONDS: i64 = 5;
 fn configured_max_source_age_seconds(value: Option<&str>) -> Option<i64> {
     match value {
         None => Some(MAX_SOURCE_AGE_SECONDS),
-        Some(raw) => raw.trim().parse::<i64>().ok().filter(|seconds| *seconds > 0),
+        Some(raw) => raw
+            .trim()
+            .parse::<i64>()
+            .ok()
+            .filter(|seconds| *seconds > 0),
     }
 }
 

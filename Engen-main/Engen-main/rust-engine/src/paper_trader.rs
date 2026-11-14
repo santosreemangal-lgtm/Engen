@@ -133,16 +133,9 @@ impl PaperTrader {
         Ok(trader)
     }
 
-    fn connect(&self) -> Result<Connection, PaperTraderError> {
-        match &self.db_path {
-            Some(path) => Ok(Connection::open(path)?),
-            None => unreachable!("in-memory ledgers do not open a database"),
-        }
-    }
-
     fn initialize_storage(&mut self) -> Result<(), PaperTraderError> {
         let path = self.db_path.as_ref().expect("checked by caller");
-        if let Some(parent) = path.parent() {
+        if let Some(parent) = path.parent().filter(|value| !value.as_os_str().is_empty()) {
             fs::create_dir_all(parent)?;
         }
         let mut connection = Connection::open(path)?;

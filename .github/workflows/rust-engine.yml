@@ -89,6 +89,7 @@ jobs:
             exit 1
           fi
           cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- --help | grep -F "engen-engine serve-dashboard"
+          cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- --help | grep -F "engen-engine serve-telegram-paper-bot"
           cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- check-config > /tmp/engen-rust-config.json
           grep -F '"live_trading_enabled": false' /tmp/engen-rust-config.json
           grep -F '"signing_available": false' /tmp/engen-rust-config.json

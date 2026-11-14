@@ -38,7 +38,7 @@ USAGE:\n\
   engen-engine --help\n\
   engen-engine version\n\
   engen-engine check-config\n\
-  engen-engine health-check\\n\\
+  engen-engine health-check\n\
   engen-engine validate-wallet <PUBLIC_ADDRESS>\n\
   engen-engine validate-signature <TRANSACTION_SIGNATURE>\n\
   engen-engine classify-transaction <PUBLIC_WALLET> <TRANSACTION_JSON_FILE>\n\

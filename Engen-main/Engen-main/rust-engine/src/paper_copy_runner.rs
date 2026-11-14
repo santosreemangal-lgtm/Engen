@@ -740,7 +740,7 @@ pub fn queue_paper_orders_at_with_policy(
                     continue;
                 }
             } else {
-                target_budget = target_budget.min(virtual_usd);
+                target_budget = target_budget.min(virtual_usd.clone());
             }
             if target_budget <= 0 {
                 continue;

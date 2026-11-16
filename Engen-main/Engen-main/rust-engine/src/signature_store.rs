@@ -1139,6 +1139,98 @@ mod tests {
     const SIGNATURE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
 
     #[test]
+    fn monitor_lease_child_process_claim_helper() {
+        let Ok(directory) = std::env::var("ENGEN_MONITOR_LEASE_CHILD_DIR") else {
+            return;
+        };
+        let owner = std::env::var("ENGEN_MONITOR_LEASE_CHILD_OWNER").unwrap();
+        let directory = std::path::PathBuf::from(directory);
+        std::fs::write(directory.join(format!("ready-{owner}")), b"ready").unwrap();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !directory.join("start").exists() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "parent did not release the process-level lease test barrier"
+            );
+            thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        let store = SignatureStore::open(directory.join("monitor-leases.db")).unwrap();
+        let claimed = store
+            .claim_monitor_lease("process:profile-wallet", &owner, 7_000, 90)
+            .unwrap();
+        std::fs::write(
+            directory.join(format!("result-{owner}")),
+            if claimed { "claimed" } else { "denied" },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn concurrent_os_processes_claim_one_monitor_lease() {
+        use std::process::{Command, Stdio};
+
+        let dir = tempdir().unwrap();
+        SignatureStore::open(dir.path().join("monitor-leases.db")).unwrap();
+        let executable = std::env::current_exe().unwrap();
+        let owners = ["os-process-a", "os-process-b"];
+        let mut children = Vec::new();
+
+        for owner in owners {
+            let child = Command::new(&executable)
+                .args([
+                    "--exact",
+                    "signature_store::tests::monitor_lease_child_process_claim_helper",
+                    "--nocapture",
+                ])
+                .env("ENGEN_MONITOR_LEASE_CHILD_DIR", dir.path())
+                .env("ENGEN_MONITOR_LEASE_CHILD_OWNER", owner)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn independent monitor-lease test process");
+            children.push(child);
+        }
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while owners
+            .iter()
+            .any(|owner| !dir.path().join(format!("ready-{owner}")).exists())
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "child processes did not become ready for the lease race"
+            );
+            thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        std::fs::write(dir.path().join("start"), b"go").unwrap();
+        for mut child in children {
+            assert!(
+                child.wait().unwrap().success(),
+                "monitor lease child process failed"
+            );
+        }
+
+        let outcomes = owners
+            .iter()
+            .map(|owner| {
+                std::fs::read_to_string(dir.path().join(format!("result-{owner}"))).unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            outcomes.iter().filter(|value| value.as_str() == "claimed").count(),
+            1,
+            "exactly one independent OS process must acquire the same monitor lease"
+        );
+        assert_eq!(
+            outcomes.iter().filter(|value| value.as_str() == "denied").count(),
+            1
+        );
+    }
+
+    #[test]
     fn monitor_lease_is_exclusive_across_independent_connections_and_recovers_after_restart() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("monitor-leases.db");

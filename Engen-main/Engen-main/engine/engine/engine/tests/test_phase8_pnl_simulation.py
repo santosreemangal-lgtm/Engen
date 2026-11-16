@@ -304,6 +304,19 @@ class PaperSimulatorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             simulator.add_virtual_balance(QUOTE, "NaN")
 
+    def test_updated_order_quantity_survives_database_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = Path(directory) / "simulator.db"
+            simulator = PaperSimulator({QUOTE: "1000"}, db_path=db_path)
+            order = self.create(simulator, signal="quantity-persistence", quantity="1")
+            order["quantity"] = "2.5"
+            simulator._persist(order)
+
+            restarted = PaperSimulator({}, db_path=db_path)
+            self.assertEqual(
+                restarted.orders[order["order_id"]]["quantity"], "2.5"
+            )
+
     def test_report_explicitly_separates_simulation_from_real_balances(self):
         report = self.make_simulator().report()
         self.assertEqual(report["mode"], "PAPER_SIMULATION")

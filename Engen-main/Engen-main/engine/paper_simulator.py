@@ -91,8 +91,8 @@ class PaperSimulator:
         with closing(self._connect()) as db:
             with db:
                 db.execute("""INSERT INTO simulated_orders VALUES(?,?,?,?,?,?,?,?,?,?)
-                    ON CONFLICT(order_id) DO UPDATE SET status=excluded.status,reason=excluded.reason,
-                    details_json=excluded.details_json""",
+                    ON CONFLICT(order_id) DO UPDATE SET quantity=excluded.quantity,status=excluded.status,
+                    reason=excluded.reason,details_json=excluded.details_json""",
                     (order["order_id"],order["signal_id"],order["side"],order["asset_mint"],
                      order["quantity"],order["quote_mint"],order["status"],order.get("reason"),
                      order["created_at"],json.dumps(order.get("details",{}),sort_keys=True)))

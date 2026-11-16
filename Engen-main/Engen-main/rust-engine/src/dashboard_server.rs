@@ -96,10 +96,7 @@ impl MonitorLeaseGuard {
         i64::try_from(seconds).map_err(|_| "System clock timestamp is out of range.".to_string())
     }
 
-    fn try_acquire(
-        store: Arc<SignatureStore>,
-        scope: String,
-    ) -> Result<Option<Self>, String> {
+    fn try_acquire(store: Arc<SignatureStore>, scope: String) -> Result<Option<Self>, String> {
         let owner = Uuid::new_v4().to_string();
         let now = Self::unix_epoch_seconds()?;
         let acquired = store
@@ -257,7 +254,10 @@ impl ScanContext {
         .map_err(|_| "Read-only wallet scan failed; retry is scheduled.".to_string())?;
 
         if !lease.renew()? {
-            return Err("Monitor ownership expired during wallet scan; paper execution was skipped.".to_string());
+            return Err(
+                "Monitor ownership expired during wallet scan; paper execution was skipped."
+                    .to_string(),
+            );
         }
 
         if let Some(profile_id) = profile_id {
@@ -294,7 +294,9 @@ impl ScanContext {
                 .collect();
 
             if !lease.renew()? {
-                return Err("Monitor ownership expired before paper-order queueing.".to_string());
+                return Err(
+                    "Monitor ownership expired before paper-order queueing.".to_string(),
+                );
             }
             let queued = queue_paper_orders_with_policy(
                 wallet,
@@ -310,7 +312,9 @@ impl ScanContext {
             })?;
 
             if !lease.renew()? {
-                return Err("Monitor ownership expired before paper-order execution.".to_string());
+                return Err(
+                    "Monitor ownership expired before paper-order execution.".to_string(),
+                );
             }
             let outcomes = execute_pending_paper_orders_with_policy(
                 &mut simulator,

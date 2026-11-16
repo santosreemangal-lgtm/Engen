@@ -136,6 +136,12 @@ impl SignatureStore {
                 signature TEXT,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS monitor_leases (
+                scope TEXT PRIMARY KEY,
+                owner TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS transaction_records (
                 wallet_address TEXT NOT NULL,
                 signature TEXT NOT NULL,
@@ -378,6 +384,112 @@ impl SignatureStore {
         )?;
         transaction.commit()?;
         Ok(changed == 1)
+    }
+
+    /// Atomically acquire a durable monitor-cycle lease for a profile/wallet scope.
+    ///
+    /// The lease lives in SQLite, so independent server processes sharing this database
+    /// cannot run the same scoped monitor cycle concurrently. Expired leases are reclaimable
+    /// after a crashed process. All timestamps are injected to keep tests deterministic.
+    pub fn claim_monitor_lease(
+        &self,
+        scope: &str,
+        owner: &str,
+        now_epoch: i64,
+        lease_seconds: u64,
+    ) -> Result<bool, SignatureStoreError> {
+        if scope.trim().is_empty()
+            || scope.len() > 512
+            || owner.trim().is_empty()
+            || owner.len() > 128
+            || now_epoch < 0
+        {
+            return Err(SignatureStoreError::InvalidInput(
+                "Monitor lease scope, owner, or timestamp is invalid.".to_string(),
+            ));
+        }
+        let lease_seconds = i64::try_from(lease_seconds).map_err(|_| {
+            SignatureStoreError::InvalidInput("Monitor lease is out of range.".to_string())
+        })?;
+        if !(1..=3_600).contains(&lease_seconds) {
+            return Err(SignatureStoreError::InvalidInput(
+                "Monitor lease must be between 1 and 3600 seconds.".to_string(),
+            ));
+        }
+        let expires_at = now_epoch.checked_add(lease_seconds).ok_or_else(|| {
+            SignatureStoreError::InvalidInput("Monitor lease expiry is out of range.".to_string())
+        })?;
+        let connection = self.connect()?;
+        let claimed = connection.execute(
+            "INSERT INTO monitor_leases(scope,owner,expires_at)
+             VALUES(?1,?2,?3)
+             ON CONFLICT(scope) DO UPDATE SET
+               owner=excluded.owner,
+               expires_at=excluded.expires_at,
+               updated_at=CURRENT_TIMESTAMP
+             WHERE monitor_leases.expires_at<=?4",
+            params![scope, owner, expires_at, now_epoch],
+        )?;
+        Ok(claimed == 1)
+    }
+
+    /// Extend a live lease only when the caller still owns it.
+    /// An expired lease cannot be resurrected after another worker may have acquired it.
+    pub fn renew_monitor_lease(
+        &self,
+        scope: &str,
+        owner: &str,
+        now_epoch: i64,
+        lease_seconds: u64,
+    ) -> Result<bool, SignatureStoreError> {
+        if scope.trim().is_empty()
+            || scope.len() > 512
+            || owner.trim().is_empty()
+            || owner.len() > 128
+            || now_epoch < 0
+        {
+            return Err(SignatureStoreError::InvalidInput(
+                "Monitor lease scope, owner, or timestamp is invalid.".to_string(),
+            ));
+        }
+        let lease_seconds = i64::try_from(lease_seconds).map_err(|_| {
+            SignatureStoreError::InvalidInput("Monitor lease is out of range.".to_string())
+        })?;
+        if !(1..=3_600).contains(&lease_seconds) {
+            return Err(SignatureStoreError::InvalidInput(
+                "Monitor lease must be between 1 and 3600 seconds.".to_string(),
+            ));
+        }
+        let expires_at = now_epoch.checked_add(lease_seconds).ok_or_else(|| {
+            SignatureStoreError::InvalidInput("Monitor lease expiry is out of range.".to_string())
+        })?;
+        let connection = self.connect()?;
+        let changed = connection.execute(
+            "UPDATE monitor_leases
+             SET expires_at=?3,updated_at=CURRENT_TIMESTAMP
+             WHERE scope=?1 AND owner=?2 AND expires_at>?4",
+            params![scope, owner, expires_at, now_epoch],
+        )?;
+        Ok(changed == 1)
+    }
+
+    /// Release only the monitor lease owned by this worker.
+    pub fn release_monitor_lease(
+        &self,
+        scope: &str,
+        owner: &str,
+    ) -> Result<bool, SignatureStoreError> {
+        if scope.trim().is_empty() || scope.len() > 512 || owner.trim().is_empty() || owner.len() > 128 {
+            return Err(SignatureStoreError::InvalidInput(
+                "Monitor lease scope or owner is invalid.".to_string(),
+            ));
+        }
+        let connection = self.connect()?;
+        let released = connection.execute(
+            "DELETE FROM monitor_leases WHERE scope=?1 AND owner=?2",
+            params![scope, owner],
+        )?;
+        Ok(released == 1)
     }
 
     /// Atomically claim one pending signature. Expired leases are reclaimable after a crash.
@@ -1021,6 +1133,76 @@ mod tests {
 
     const WALLET: &str = "11111111111111111111111111111111";
     const SIGNATURE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+
+    #[test]
+    fn monitor_lease_is_exclusive_across_independent_connections_and_recovers_after_restart() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("monitor-leases.db");
+        let first = SignatureStore::open(&path).unwrap();
+
+        assert!(first
+            .claim_monitor_lease("profile:abc:wallet:111", "process-a", 1_000, 90)
+            .unwrap());
+
+        let second_process = SignatureStore::open(&path).unwrap();
+        assert!(!second_process
+            .claim_monitor_lease("profile:abc:wallet:111", "process-b", 1_001, 90)
+            .unwrap());
+        assert!(!second_process
+            .renew_monitor_lease("profile:abc:wallet:111", "process-b", 1_002, 90)
+            .unwrap());
+        assert!(!second_process
+            .release_monitor_lease("profile:abc:wallet:111", "process-b")
+            .unwrap());
+
+        assert!(first
+            .renew_monitor_lease("profile:abc:wallet:111", "process-a", 1_050, 90)
+            .unwrap());
+        drop(first);
+
+        // Reopening the same SQLite file models a new process after the old owner crashed.
+        let restarted_process = SignatureStore::open(&path).unwrap();
+        assert!(!restarted_process
+            .claim_monitor_lease("profile:abc:wallet:111", "process-b", 1_139, 90)
+            .unwrap());
+        assert!(restarted_process
+            .claim_monitor_lease("profile:abc:wallet:111", "process-b", 1_140, 90)
+            .unwrap());
+        assert!(!restarted_process
+            .release_monitor_lease("profile:abc:wallet:111", "process-a")
+            .unwrap());
+        assert!(restarted_process
+            .release_monitor_lease("profile:abc:wallet:111", "process-b")
+            .unwrap());
+    }
+
+    #[test]
+    fn concurrent_monitor_lease_claims_from_separate_connections_have_one_winner() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("monitor-lease-race.db");
+        SignatureStore::open(&path).unwrap();
+        let barrier = Arc::new(Barrier::new(3));
+        let workers = ["process-a", "process-b"]
+            .into_iter()
+            .map(|owner| {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let store = SignatureStore::open(path).unwrap();
+                    barrier.wait();
+                    store
+                        .claim_monitor_lease("global:wallet:111", owner, 5_000, 90)
+                        .unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        barrier.wait();
+        let winners = workers
+            .into_iter()
+            .map(|worker| usize::from(worker.join().unwrap()))
+            .sum::<usize>();
+        assert_eq!(winners, 1);
+    }
 
     #[test]
     fn atomic_claim_prevents_duplicate_workers_and_recovers_expired_lease_after_restart() {

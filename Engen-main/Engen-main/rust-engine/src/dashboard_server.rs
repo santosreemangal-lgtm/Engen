@@ -10,7 +10,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -40,6 +40,8 @@ const MAX_HEADERS_BYTES: usize = 16_384;
 const MAX_HISTORY_PAGE_SIZE: usize = 100;
 const MONITOR_INTERVAL_SECONDS: u64 = 30;
 const MONITOR_SCAN_LIMIT: usize = 50;
+const MONITOR_CYCLE_LEASE_SECONDS: u64 = 90;
+const MONITOR_CYCLE_LEASE_RENEW_SECONDS: u64 = 20;
 
 #[derive(Debug)]
 struct HttpRequest {
@@ -73,6 +75,118 @@ impl HttpResponse {
             content_type,
             body,
         }
+    }
+}
+
+/// Holds a durable SQLite lease while a single profile/wallet monitor cycle runs.
+struct MonitorLeaseGuard {
+    store: Arc<SignatureStore>,
+    scope: String,
+    owner: String,
+    stop_signal: Arc<(Mutex<bool>, Condvar)>,
+    renewal_worker: Option<thread::JoinHandle<()>>,
+}
+
+impl MonitorLeaseGuard {
+    fn unix_epoch_seconds() -> Result<i64, String> {
+        let seconds = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "System clock is before the Unix epoch.".to_string())?
+            .as_secs();
+        i64::try_from(seconds).map_err(|_| "System clock timestamp is out of range.".to_string())
+    }
+
+    fn try_acquire(
+        store: Arc<SignatureStore>,
+        scope: String,
+    ) -> Result<Option<Self>, String> {
+        let owner = Uuid::new_v4().to_string();
+        let now = Self::unix_epoch_seconds()?;
+        let acquired = store
+            .claim_monitor_lease(&scope, &owner, now, MONITOR_CYCLE_LEASE_SECONDS)
+            .map_err(|_| "Monitor ownership could not be acquired safely.".to_string())?;
+        if !acquired {
+            return Ok(None);
+        }
+
+        let stop_signal = Arc::new((Mutex::new(false), Condvar::new()));
+        let worker_store = Arc::clone(&store);
+        let worker_scope = scope.clone();
+        let worker_owner = owner.clone();
+        let worker_signal = Arc::clone(&stop_signal);
+        let renewal_worker = match thread::Builder::new()
+            .name("engen-monitor-lease-renewal".to_string())
+            .spawn(move || loop {
+                let (stop, wake) = &*worker_signal;
+                let guard = match stop.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => break,
+                };
+                let (guard, _) = match wake.wait_timeout(
+                    guard,
+                    Duration::from_secs(MONITOR_CYCLE_LEASE_RENEW_SECONDS),
+                ) {
+                    Ok(waited) => waited,
+                    Err(_) => break,
+                };
+                if *guard {
+                    break;
+                }
+                drop(guard);
+                let now = match MonitorLeaseGuard::unix_epoch_seconds() {
+                    Ok(now) => now,
+                    Err(_) => break,
+                };
+                match worker_store.renew_monitor_lease(
+                    &worker_scope,
+                    &worker_owner,
+                    now,
+                    MONITOR_CYCLE_LEASE_SECONDS,
+                ) {
+                    Ok(true) => {}
+                    _ => break,
+                }
+            }) {
+            Ok(worker) => worker,
+            Err(_) => {
+                let _ = store.release_monitor_lease(&scope, &owner);
+                return Err("Monitor lease renewal worker could not start.".to_string());
+            }
+        };
+
+        Ok(Some(Self {
+            store,
+            scope,
+            owner,
+            stop_signal,
+            renewal_worker: Some(renewal_worker),
+        }))
+    }
+
+    fn renew(&self) -> Result<bool, String> {
+        let now = Self::unix_epoch_seconds()?;
+        self.store
+            .renew_monitor_lease(
+                &self.scope,
+                &self.owner,
+                now,
+                MONITOR_CYCLE_LEASE_SECONDS,
+            )
+            .map_err(|_| "Monitor ownership could not be verified.".to_string())
+    }
+}
+
+impl Drop for MonitorLeaseGuard {
+    fn drop(&mut self) {
+        let (stop, wake) = &*self.stop_signal;
+        if let Ok(mut stopped) = stop.lock() {
+            *stopped = true;
+            wake.notify_all();
+        }
+        if let Some(worker) = self.renewal_worker.take() {
+            let _ = worker.join();
+        }
+        let _ = self.store.release_monitor_lease(&self.scope, &self.owner);
     }
 }
 
@@ -121,6 +235,17 @@ impl ScanContext {
     }
 
     fn scan_wallet(&self, wallet: &str, profile_id: Option<&str>) -> Result<Vec<Value>, String> {
+        let lease_scope = match profile_id {
+            Some(profile_id) => format!("profile:{profile_id}:wallet:{wallet}"),
+            None => format!("global:wallet:{wallet}"),
+        };
+        let Some(lease) =
+            MonitorLeaseGuard::try_acquire(Arc::clone(&self.signature_store), lease_scope)?
+        else {
+            // Another process owns this exact monitoring scope; skip rather than overlap scans.
+            return Ok(Vec::new());
+        };
+
         let mut results = monitor_wallet(
             &self.rpc,
             &self.signature_store,
@@ -130,6 +255,10 @@ impl ScanContext {
             None,
         )
         .map_err(|_| "Read-only wallet scan failed; retry is scheduled.".to_string())?;
+
+        if !lease.renew()? {
+            return Err("Monitor ownership expired during wallet scan; paper execution was skipped.".to_string());
+        }
 
         if let Some(profile_id) = profile_id {
             self.persist_profile_observations(profile_id, wallet, &results)?;
@@ -164,6 +293,9 @@ impl ScanContext {
                 .cloned()
                 .collect();
 
+            if !lease.renew()? {
+                return Err("Monitor ownership expired before paper-order queueing.".to_string());
+            }
             let queued = queue_paper_orders_with_policy(
                 wallet,
                 &fresh_results,
@@ -177,6 +309,9 @@ impl ScanContext {
                 "Paper-copy queue failed; eligible signatures remain retryable.".to_string()
             })?;
 
+            if !lease.renew()? {
+                return Err("Monitor ownership expired before paper-order execution.".to_string());
+            }
             let outcomes = execute_pending_paper_orders_with_policy(
                 &mut simulator,
                 Some(wallet),

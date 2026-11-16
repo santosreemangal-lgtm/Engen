@@ -479,7 +479,11 @@ impl SignatureStore {
         scope: &str,
         owner: &str,
     ) -> Result<bool, SignatureStoreError> {
-        if scope.trim().is_empty() || scope.len() > 512 || owner.trim().is_empty() || owner.len() > 128 {
+        if scope.trim().is_empty()
+            || scope.len() > 512
+            || owner.trim().is_empty()
+            || owner.len() > 128
+        {
             return Err(SignatureStoreError::InvalidInput(
                 "Monitor lease scope or owner is invalid.".to_string(),
             ));
@@ -1138,27 +1142,28 @@ mod tests {
     fn monitor_lease_is_exclusive_across_independent_connections_and_recovers_after_restart() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("monitor-leases.db");
-        let first = SignatureStore::open(&path).unwrap();
+        {
+            let first = SignatureStore::open(&path).unwrap();
 
-        assert!(first
-            .claim_monitor_lease("profile:abc:wallet:111", "process-a", 1_000, 90)
-            .unwrap());
+            assert!(first
+                .claim_monitor_lease("profile:abc:wallet:111", "process-a", 1_000, 90)
+                .unwrap());
 
-        let second_process = SignatureStore::open(&path).unwrap();
-        assert!(!second_process
-            .claim_monitor_lease("profile:abc:wallet:111", "process-b", 1_001, 90)
-            .unwrap());
-        assert!(!second_process
-            .renew_monitor_lease("profile:abc:wallet:111", "process-b", 1_002, 90)
-            .unwrap());
-        assert!(!second_process
-            .release_monitor_lease("profile:abc:wallet:111", "process-b")
-            .unwrap());
+            let second_process = SignatureStore::open(&path).unwrap();
+            assert!(!second_process
+                .claim_monitor_lease("profile:abc:wallet:111", "process-b", 1_001, 90)
+                .unwrap());
+            assert!(!second_process
+                .renew_monitor_lease("profile:abc:wallet:111", "process-b", 1_002, 90)
+                .unwrap());
+            assert!(!second_process
+                .release_monitor_lease("profile:abc:wallet:111", "process-b")
+                .unwrap());
 
-        assert!(first
-            .renew_monitor_lease("profile:abc:wallet:111", "process-a", 1_050, 90)
-            .unwrap());
-        drop(first);
+            assert!(first
+                .renew_monitor_lease("profile:abc:wallet:111", "process-a", 1_050, 90)
+                .unwrap());
+        }
 
         // Reopening the same SQLite file models a new process after the old owner crashed.
         let restarted_process = SignatureStore::open(&path).unwrap();

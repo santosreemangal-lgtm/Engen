@@ -163,12 +163,7 @@ impl MonitorLeaseGuard {
     fn renew(&self) -> Result<bool, String> {
         let now = Self::unix_epoch_seconds()?;
         self.store
-            .renew_monitor_lease(
-                &self.scope,
-                &self.owner,
-                now,
-                MONITOR_CYCLE_LEASE_SECONDS,
-            )
+            .renew_monitor_lease(&self.scope, &self.owner, now, MONITOR_CYCLE_LEASE_SECONDS)
             .map_err(|_| "Monitor ownership could not be verified.".to_string())
     }
 }
@@ -294,9 +289,7 @@ impl ScanContext {
                 .collect();
 
             if !lease.renew()? {
-                return Err(
-                    "Monitor ownership expired before paper-order queueing.".to_string(),
-                );
+                return Err("Monitor ownership expired before paper-order queueing.".to_string());
             }
             let queued = queue_paper_orders_with_policy(
                 wallet,
@@ -312,9 +305,7 @@ impl ScanContext {
             })?;
 
             if !lease.renew()? {
-                return Err(
-                    "Monitor ownership expired before paper-order execution.".to_string(),
-                );
+                return Err("Monitor ownership expired before paper-order execution.".to_string());
             }
             let outcomes = execute_pending_paper_orders_with_policy(
                 &mut simulator,

@@ -1220,12 +1220,18 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(
-            outcomes.iter().filter(|value| value.as_str() == "claimed").count(),
+            outcomes
+                .iter()
+                .filter(|value| value.as_str() == "claimed")
+                .count(),
             1,
             "exactly one independent OS process must acquire the same monitor lease"
         );
         assert_eq!(
-            outcomes.iter().filter(|value| value.as_str() == "denied").count(),
+            outcomes
+                .iter()
+                .filter(|value| value.as_str() == "denied")
+                .count(),
             1
         );
     }

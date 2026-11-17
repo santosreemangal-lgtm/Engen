@@ -1281,7 +1281,11 @@ impl DashboardApp {
                     Err(error) => HttpResponse::json(400, json!({"error":error.to_string()})),
                 }
             }
-            "update" | "settings" | "associate-source-wallet" | "disassociate-source-wallet" | "delete" => {
+            "update"
+            | "settings"
+            | "associate-source-wallet"
+            | "disassociate-source-wallet"
+            | "delete" => {
                 let Some(raw_id) = body.get("profile_id").and_then(Value::as_str) else {
                     return HttpResponse::json(
                         400,

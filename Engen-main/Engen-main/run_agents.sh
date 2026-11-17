@@ -14,6 +14,8 @@ fi
 export ENGEN_AGENTS_ENABLED=true
 export ENGINE_MODE=read_only
 export LIVE_TRADING_ENABLED=false
+# Give the coding tool write access only to the canonical app directory.
+export ENGEN_CODEX_WORKDIR="$SCRIPT_DIR"
 
 if ! python -c 'import agents' >/dev/null 2>&1; then
   echo "Installing the optional Engen Agents SDK dependency..."
@@ -30,6 +32,7 @@ system = build_agent_system(settings)
 assert system.coordinator.name == "Engen Master Coordinator"
 assert len(system.specialists) == 5
 print("PREFLIGHT PASSED: configuration and all six agent definitions initialized.")
+print("Workspace writes are limited to the canonical Engen application directory.")
 print("No OpenAI API request was made; no key value was displayed.")
 PY
   exit 0

@@ -19,9 +19,34 @@ The Coordinator uses Agents SDK Agent.as_tool() to connect the specialists. Each
 run is bounded. The Workspace Coding Agent delegates actual workspace operations to the
 Agents SDK's experimental Codex tool.
 
+## Codespaces quick start
+
+The agent foundation is on the draft branch
+`feature/engen-agent-foundation-20261117`, not on `main`.
+
+If the Codespace was created from `main`, switch to the agent branch in its terminal:
+
+    git fetch origin feature/engen-agent-foundation-20261117
+    git switch --track origin/feature/engen-agent-foundation-20261117
+
+Then run a no-API preflight from this directory:
+
+    bash run_agents.sh --preflight
+
+The preflight confirms that the Codespaces secret is available without printing it,
+constructs the coordinator and five specialists, and makes no OpenAI API request.
+
+To run one bounded engineering task:
+
+    bash run_agents.sh "Inspect the Rust and Python pipeline and report the next verified engineering blockers. Do not change files."
+
+The launcher installs the optional dependency only when it is missing. It sets
+`ENGEN_AGENTS_ENABLED=true`, `ENGINE_MODE=read_only`, and
+`LIVE_TRADING_ENABLED=false` for the process.
+
 ## Install
 
-Run from the canonical app directory, Engen-main/Engen-main:
+Manual installation from this directory is also supported:
 
     python -m pip install -r requirements-agents.txt
 
@@ -33,10 +58,10 @@ offline engine tests do not need the Agents SDK.
 Set these in Codespaces secret/environment settings, not in source files:
 
 - OPENAI_API_KEY — an OpenAI Platform API key for the coordinator and model requests.
-- ENGEN_AGENTS_ENABLED=true — explicit opt-in to run the agent service.
+- ENGEN_AGENTS_ENABLED=true — explicit opt-in to run the agent service (the launcher sets it).
 - ENGEN_CODEX_ENABLED=true — enable the Codespaces workspace tool (defaults to true).
-- ENGINE_MODE=read_only
-- LIVE_TRADING_ENABLED=false
+- ENGINE_MODE=read_only (the launcher sets it).
+- LIVE_TRADING_ENABLED=false (the launcher sets it).
 - Optional: ENGEN_CODEX_WORKDIR — an existing directory inside the current Engen checkout;
   defaults to the repository root.
 - Optional: ENGEN_AGENT_MODEL=gpt-5.6-sol
@@ -49,15 +74,6 @@ environment, but its shell children use an explicit non-secret environment allow
 allowlist does not include OPENAI_API_KEY, CODEX_API_KEY, GitHub tokens, or Telegram tokens.
 Codex also runs with a private temporary HOME so it does not use the user's normal GitHub
 credential store.
-
-## Run one task
-
-From Engen-main/Engen-main:
-
-    python -m engen_agents "Inspect the Rust and Python pipeline, fix the failing unit tests, and report exact test output."
-
-Each invocation performs one bounded run and exits. It does not run in the background or
-resume itself. API usage is billed separately from a ChatGPT subscription.
 
 ## Workspace and terminal permissions
 
@@ -96,6 +112,9 @@ diff after editing. Never grant the agent live wallet, signing, or broadcast cap
 
 No shell, wallet, database, live-execution, push, merge, or deployment permissions are given
 to the other specialist agents. They remain source/research/review agents.
+
+Each invocation performs one bounded run and exits. It does not run in the background or
+resume itself. API usage is billed separately from a ChatGPT subscription.
 
 ## Mobile control roadmap
 

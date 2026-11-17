@@ -6,10 +6,11 @@
 use std::error::Error;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use engen_engine::config::Config;
+use engen_engine::label_evaluation::{evaluate, format_report, load_reviewed_rows};
 use engen_engine::logging::{redact, setup_logging};
 use engen_engine::signature_store::SignatureStore;
 use engen_engine::solana_public::{RpcConfig, SolanaRpcClient};
@@ -43,6 +44,7 @@ USAGE:\n\
   engen-engine validate-wallet <PUBLIC_ADDRESS>\n\
   engen-engine validate-signature <TRANSACTION_SIGNATURE>\n\
   engen-engine classify-transaction <PUBLIC_WALLET> <TRANSACTION_JSON_FILE>\n\
+  engen-engine evaluate-transaction-labels <REVIEWED_LABELS_CSV>\n\
   engen-engine scan-wallet-once --wallet <PUBLIC_ADDRESS> --signature-db <EXPLICIT_DB_PATH> [--limit <1..1000>]\n\
   engen-engine serve-dashboard\n\
   engen-engine serve-telegram-paper-bot\n\
@@ -167,20 +169,45 @@ fn run_classification(args: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
+
+fn run_label_evaluation(args: &[String]) -> Result<i32, Box<dyn Error>> {
+    if args.len() != 1 {
+        return Err(invalid_input(
+            "evaluate-transaction-labels requires one reviewed-label CSV file.",
+        ));
+    }
+
+    let rows = match load_reviewed_rows(Path::new(&args[0])) {
+        Ok(rows) => rows,
+        Err(error) => {
+            eprintln!("Dataset error: {}", redact(&error));
+            return Ok(2);
+        }
+    };
+    if rows.is_empty() {
+        println!("No reviewed rows found; no error rate can be calculated.");
+        return Ok(1);
+    }
+
+    let report = evaluate(&rows);
+    print!("{}", format_report(&report));
+    Ok(0)
+}
+
+fn run(args: Vec<String>) -> Result<i32, Box<dyn Error>> {
     let Some(command) = args.first().map(String::as_str) else {
         println!("{}", help_text());
-        return Ok(());
+        return Ok(0);
     };
 
     match command {
         "--help" | "-h" | "help" => {
             println!("{}", help_text());
-            Ok(())
+            Ok(0)
         }
         "version" | "--version" => {
             println!("engen-engine {}", env!("CARGO_PKG_VERSION"));
-            Ok(())
+            Ok(0)
         }
         "check-config" => {
             let config = Config::from_process_env()?;
@@ -199,7 +226,7 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 "broadcast_available": false
             });
             println!("{}", serde_json::to_string_pretty(&output)?);
-            Ok(())
+            Ok(0)
         }
         "validate-wallet" => {
             if args.len() != 2 {
@@ -211,7 +238,7 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 return Err(invalid_input("Invalid Solana public wallet address."));
             }
             println!("{}", json!({"valid":true,"kind":"public_solana_address"}));
-            Ok(())
+            Ok(0)
         }
         "validate-signature" => {
             if args.len() != 2 {
@@ -226,9 +253,9 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
                 "{}",
                 json!({"valid":true,"kind":"solana_transaction_signature"})
             );
-            Ok(())
+            Ok(0)
         }
-        "classify-transaction" => run_classification(&args[1..]),
+        "classify-transaction" => run_classification(&args[1..]).map(|_| 0),
         "health-check" => {
             let config = Config::from_process_env()?;
             let report =
@@ -237,16 +264,17 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
             if report["status"] != "ok" {
                 return Err(invalid_input("Rust runtime health checks failed."));
             }
-            Ok(())
+            Ok(0)
         }
         "serve-telegram-paper-bot" => {
             Config::from_process_env()?;
             let mut bot =
                 engen_engine::telegram::TelegramPaperBot::from_env().map_err(invalid_input)?;
-            bot.run_forever().map_err(invalid_input)
+            bot.run_forever().map_err(invalid_input).map(|_| 0)
         }
-        "scan-wallet-once" => run_scan(parse_scan_options(&args[1..])?),
-        "serve-dashboard" => engen_engine::dashboard_server::serve_dashboard(),
+        "scan-wallet-once" => run_scan(parse_scan_options(&args[1..])?).map(|_| 0),
+        "evaluate-transaction-labels" => run_label_evaluation(&args[1..]),
+        "serve-dashboard" => engen_engine::dashboard_server::serve_dashboard().map(|_| 0),
         _ => Err(invalid_input(format!(
             "Unknown command: {command}. Use --help to see supported commands."
         ))),
@@ -256,9 +284,13 @@ fn run(args: Vec<String>) -> Result<(), Box<dyn Error>> {
 fn main() {
     let configured_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "INFO".to_string());
     let _ = setup_logging(&configured_level);
-    if let Err(error) = run(std::env::args().skip(1).collect()) {
-        eprintln!("engen: {}", redact(&error.to_string()));
-        std::process::exit(2);
+    match run(std::env::args().skip(1).collect()) {
+        Ok(0) => {}
+        Ok(code) => std::process::exit(code),
+        Err(error) => {
+            eprintln!("engen: {}", redact(&error.to_string()));
+            std::process::exit(2);
+        }
     }
 }
 

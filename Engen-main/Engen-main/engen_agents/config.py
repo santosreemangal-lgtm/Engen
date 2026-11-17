@@ -1,6 +1,7 @@
 """Fail-closed configuration for the optional Engen agent runtime."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Mapping, Optional
 import os
 
@@ -9,17 +10,32 @@ class AgentConfigurationError(ValueError):
     """Raised when the agent runtime is not safely configured."""
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+
+
 @dataclass(frozen=True)
 class AgentSettings:
     model: str
     max_turns: int
+    codex_enabled: bool
+    workspace_path: str
+
+
+def _parse_bool(value: object, name: str) -> bool:
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "on"}:
+        return True
+    if normalized in {"false", "0", "no", "off"}:
+        return False
+    raise AgentConfigurationError(f"{name} must be true or false.")
 
 
 def load_settings(environ: Optional[Mapping[str, str]] = None) -> AgentSettings:
-    """Load settings without reading or printing the API key.
+    """Load settings without copying API credentials into the settings object.
 
-    The SDK reads OPENAI_API_KEY from the process environment. This function
-    only checks that it exists; the secret is never copied into AgentSettings.
+    The main Agents SDK reads OPENAI_API_KEY from the application environment.
+    The Codex subprocess receives its own explicit environment and applies a
+    second allowlist before any shell command is launched.
     """
     env = os.environ if environ is None else environ
 
@@ -47,7 +63,7 @@ def load_settings(environ: Optional[Mapping[str, str]] = None) -> AgentSettings:
             "never paste it into chat or commit it."
         )
 
-    model = str(env.get("ENGEN_AGENT_MODEL", "gpt-6.1-sol")).strip()
+    model = str(env.get("ENGEN_AGENT_MODEL", "gpt-5.6-sol")).strip()
     if not model or len(model) > 100:
         raise AgentConfigurationError("ENGEN_AGENT_MODEL must be a non-empty model ID.")
 
@@ -63,4 +79,32 @@ def load_settings(environ: Optional[Mapping[str, str]] = None) -> AgentSettings:
             "ENGEN_AGENT_MAX_TURNS must be between 1 and 12."
         )
 
-    return AgentSettings(model=model, max_turns=max_turns)
+    codex_enabled = _parse_bool(
+        env.get("ENGEN_CODEX_ENABLED", "true"), "ENGEN_CODEX_ENABLED"
+    )
+
+    raw_workspace = str(env.get("ENGEN_CODEX_WORKDIR", str(REPOSITORY_ROOT))).strip()
+    try:
+        workspace = Path(raw_workspace).expanduser().resolve(strict=True)
+        workspace.relative_to(REPOSITORY_ROOT.resolve())
+    except (OSError, ValueError) as exc:
+        raise AgentConfigurationError(
+            "ENGEN_CODEX_WORKDIR must be an existing directory inside the Engen repository."
+        ) from exc
+    if not workspace.is_dir():
+        raise AgentConfigurationError("ENGEN_CODEX_WORKDIR must be a directory.")
+
+    if codex_enabled and not (
+        str(env.get("CODEX_API_KEY", "")).strip()
+        or str(env.get("OPENAI_API_KEY", "")).strip()
+    ):
+        raise AgentConfigurationError(
+            "The workspace agent needs CODEX_API_KEY or OPENAI_API_KEY."
+        )
+
+    return AgentSettings(
+        model=model,
+        max_turns=max_turns,
+        codex_enabled=codex_enabled,
+        workspace_path=str(workspace),
+    )

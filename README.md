@@ -41,9 +41,11 @@ The launcher sets ENGEN_APP_ROOT and invokes the compiled engen-engine serve-das
 cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- check-config
 cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- health-check
 cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- --help
+cargo run --manifest-path Engen-main/Engen-main/rust-engine/Cargo.toml -- evaluate-transaction-labels /path/to/reviewed-labels.csv
 ~~~
 
 The native health check validates Rust runtime files, read-only configuration, and the unconditional live-execution block. It does not access user ledgers or make RPC requests.
+The offline `evaluate-transaction-labels` command reads a reviewed CSV (`signature,expected_label,predicted_label,reviewed`) and reports classification metrics without contacting Solana RPC or touching paper ledgers. It includes only rows marked `true`, `yes`, `y`, or `1`.
 
 ## Rust verification
 

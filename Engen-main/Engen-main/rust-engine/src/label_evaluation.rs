@@ -159,7 +159,7 @@ fn parse_csv_records(input: &str) -> Result<Vec<Vec<String>>, String> {
                     field.push(other);
                     after_quote = false;
                     record_started = true;
-                }
+                },
             }
             continue;
         }

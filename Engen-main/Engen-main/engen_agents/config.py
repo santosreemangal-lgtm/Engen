@@ -47,7 +47,7 @@ def load_settings(environ: Optional[Mapping[str, str]] = None) -> AgentSettings:
             "never paste it into chat or commit it."
         )
 
-    model = str(env.get("ENGEN_AGENT_MODEL", "gpt-5.6")).strip()
+    model = str(env.get("ENGEN_AGENT_MODEL", "gpt-6.1-sol")).strip()
     if not model or len(model) > 100:
         raise AgentConfigurationError("ENGEN_AGENT_MODEL must be a non-empty model ID.")
 

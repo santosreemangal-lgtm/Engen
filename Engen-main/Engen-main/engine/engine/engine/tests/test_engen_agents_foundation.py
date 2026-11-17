@@ -5,7 +5,12 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
-from engen_agents.config import AgentConfigurationError, load_settings
+from engen_agents.config import (
+    AgentConfigurationError,
+    REPOSITORY_ROOT,
+    load_settings,
+)
+from engen_agents.codex_runtime import build_codex_options, SHELL_ENV_INCLUDE_ONLY
 from engen_agents import tools
 
 
@@ -20,8 +25,10 @@ class AgentConfigurationTests(unittest.TestCase):
 
     def test_valid_configuration_uses_bounded_defaults(self):
         settings = load_settings(self.env)
-        self.assertEqual(settings.model, "gpt-6.1-sol")
+        self.assertEqual(settings.model, "gpt-5.6-sol")
         self.assertEqual(settings.max_turns, 8)
+        self.assertTrue(settings.codex_enabled)
+        self.assertEqual(settings.workspace_path, str(REPOSITORY_ROOT.resolve()))
 
     def test_runtime_is_opt_in(self):
         env = dict(self.env)
@@ -52,6 +59,51 @@ class AgentConfigurationTests(unittest.TestCase):
         env["ENGEN_AGENT_MAX_TURNS"] = "13"
         with self.assertRaises(AgentConfigurationError):
             load_settings(env)
+
+    def test_codex_workspace_can_be_disabled(self):
+        env = dict(self.env)
+        env["ENGEN_CODEX_ENABLED"] = "false"
+        settings = load_settings(env)
+        self.assertFalse(settings.codex_enabled)
+
+    def test_codex_workspace_must_stay_inside_repository(self):
+        env = dict(self.env)
+        env["ENGEN_CODEX_WORKDIR"] = str(Path(REPOSITORY_ROOT).parent)
+        with self.assertRaises(AgentConfigurationError):
+            load_settings(env)
+
+
+class CodexRuntimeEnvironmentTests(unittest.TestCase):
+    def test_codex_process_gets_key_but_shell_allowlist_does_not(self):
+        with TemporaryDirectory() as directory:
+            home = Path(directory) / "codex-home"
+            options = build_codex_options(
+                {
+                    "OPENAI_API_KEY": "unit-test-placeholder",
+                    "PATH": "/usr/bin",
+                    "HOME": "/home/should-not-be-used",
+                    "GITHUB_TOKEN": "must-not-be-forwarded",
+                },
+                home_path=home,
+            )
+            codex_env = options["env"]
+            self.assertEqual(codex_env["CODEX_API_KEY"], "unit-test-placeholder")
+            self.assertNotIn("OPENAI_API_KEY", codex_env)
+            self.assertNotIn("GITHUB_TOKEN", codex_env)
+
+            config = (home / "config.toml").read_text(encoding="utf-8")
+            self.assertIn('approval_policy = "on-request"', config)
+            self.assertIn('sandbox_mode = "workspace-write"', config)
+            self.assertIn('inherit = "core"', config)
+            self.assertIn('include_only = [', config)
+            self.assertNotIn("CODEX_API_KEY", config)
+            self.assertNotIn("unit-test-placeholder", config)
+            self.assertNotIn("CODEX_API_KEY", SHELL_ENV_INCLUDE_ONLY)
+            self.assertNotIn("OPENAI_API_KEY", SHELL_ENV_INCLUDE_ONLY)
+
+    def test_codex_environment_requires_a_private_api_key(self):
+        with self.assertRaises(ValueError):
+            build_codex_options({"PATH": "/usr/bin"}, home_path=Path("/tmp/codex-test"))
 
 
 class AgentReadOnlyToolTests(unittest.TestCase):

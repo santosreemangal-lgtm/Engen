@@ -153,7 +153,13 @@ fn parse_csv_records(input: &str) -> Result<Vec<Vec<String>>, String> {
                     after_quote = false;
                     record_started = false;
                 }
-                _ => return Err("Malformed CSV: expected a comma or record ending after a quoted field.".to_string()),
+                other => {
+                    // Python's default csv reader treats characters after a
+                    // closing quote as field data rather than rejecting them.
+                    field.push(other);
+                    after_quote = false;
+                    record_started = true;
+                }
             }
             continue;
         }
@@ -360,7 +366,7 @@ mod tests {
         fs::write(
             &path,
             "signature,expected_label,predicted_label,reviewed,notes\r\n\
-\"sig,1\",BUY_CANDIDATE,BUY_CANDIDATE,yes,\"comma, and \"\"quote\"\" inside\"\r\n\
+\"sig,1\" ,BUY_CANDIDATE,BUY_CANDIDATE,yes,\"comma, and \"\"quote\"\" inside\"\r\n\
 ignored,,,false,not-reviewed\r\n",
         )
         .unwrap();

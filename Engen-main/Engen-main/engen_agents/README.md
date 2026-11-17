@@ -44,8 +44,8 @@ alive, or resume itself. API usage is billed separately from a ChatGPT subscript
 
 ## Tools and permissions in this milestone
 
-Agents can read only UTF-8 source/documentation files with allowlisted extensions below the
-canonical application directory. Runtime data, databases, logs, environment files, key files,
+Agents can read only UTF-8 source/documentation files with allowlisted extensions inside the
+Engen repository root. Runtime data, databases, logs, environment files, key files,
 wallet-list JSON, and files outside the application directory are blocked. Secret-like
 environment assignments and OpenAI key-shaped strings are redacted before a file is returned.
 

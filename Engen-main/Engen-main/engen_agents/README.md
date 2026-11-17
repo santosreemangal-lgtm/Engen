@@ -13,7 +13,8 @@ of the chain-monitoring worker and it does not start when the dashboard starts.
 - **Architecture Agent** — reviews integration decisions and migration risks.
 
 The coordinator uses the Agents SDK Agent.as_tool() pattern so specialists return bounded
-subtask results to one manager. This first milestone is deliberately read-only.
+subtask results to one manager. Coordinator runs are capped at 12 turns and each
+specialist tool-run is capped at 4 turns. This first milestone is deliberately read-only.
 
 ## Install
 

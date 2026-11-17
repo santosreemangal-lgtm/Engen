@@ -30,7 +30,7 @@ Set these in Codespaces secret/environment settings, not in source files:
 - ENGEN_AGENTS_ENABLED=true — explicit opt-in to run the agent service.
 - ENGINE_MODE=read_only
 - LIVE_TRADING_ENABLED=false
-- Optional: ENGEN_AGENT_MODEL=gpt-5.6
+- Optional: ENGEN_AGENT_MODEL=gpt-6.1-sol
 - Optional: ENGEN_AGENT_MAX_TURNS=8 (allowed range: 1–12).
 
 The runtime never prints, returns, or stores the API key. The SDK reads it from the process

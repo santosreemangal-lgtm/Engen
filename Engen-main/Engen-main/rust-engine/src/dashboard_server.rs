@@ -1281,7 +1281,11 @@ impl DashboardApp {
                     Err(error) => HttpResponse::json(400, json!({"error":error.to_string()})),
                 }
             }
-            "update" | "settings" | "associate-source-wallet" | "disassociate-source-wallet" => {
+            "update"
+            | "settings"
+            | "associate-source-wallet"
+            | "disassociate-source-wallet"
+            | "delete" => {
                 let Some(raw_id) = body.get("profile_id").and_then(Value::as_str) else {
                     return HttpResponse::json(
                         400,
@@ -2481,6 +2485,83 @@ mod tests {
             serde_json::from_slice(&fs::read(&app.monitor_state_file).unwrap()).unwrap();
         assert_eq!(state["global_enabled"], false);
         assert!(state["profile_ids"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn dashboard_api_delete_profile_soft_deletes_and_preserves_transaction_history() {
+        let (_directory, app) = dashboard_app_fixture();
+        let created = app.handle(api_request(
+            "POST",
+            "/api/profiles",
+            json!({"action":"create","name":"Delete through Rust API"}),
+        ));
+        assert_eq!(created.status, 201);
+        let profile_id = response_json(created)["profile"]["profile_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let wallet = "11111111111111111111111111111111";
+        app.context
+            .profile_store
+            .associate_source_wallet(&profile_id, wallet)
+            .unwrap();
+        let profile_ids = vec![profile_id.clone()];
+        app.context
+            .profile_store
+            .save_transaction(SaveTransaction {
+                signature: "profile-delete-api-history-signature",
+                source_wallet_address: wallet,
+                classification: "BUY_CANDIDATE",
+                status: "confirmed",
+                evidence: Some(json!({"retained":true})),
+                slot: Some(12),
+                block_time: Some(1_700_000_000),
+                raw_amount: Some("000123"),
+                token_mint: Some(wallet),
+                token_decimals: Some(6),
+                profile_ids: &profile_ids,
+                observed_at: Some("2026-11-17T03:00:00Z"),
+            })
+            .unwrap();
+
+        fs::write(
+            &app.monitor_state_file,
+            serde_json::to_vec(&json!({
+                "global_enabled":false,
+                "profile_ids":[profile_id]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let deleted = app.handle(api_request(
+            "POST",
+            "/api/profiles",
+            json!({"action":"delete","profile_id":profile_id}),
+        ));
+        assert_eq!(deleted.status, 200);
+        let payload = response_json(deleted);
+        assert_eq!(payload["deleted"], true);
+        assert_eq!(payload["history_preserved"], true);
+        assert!(app
+            .context
+            .profile_store
+            .get_profile(&profile_id)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            app.context
+                .profile_store
+                .list_transactions(&profile_id)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let monitor_state: Value =
+            serde_json::from_slice(&fs::read(&app.monitor_state_file).unwrap()).unwrap();
+        assert!(monitor_state["profile_ids"].as_array().unwrap().is_empty());
     }
 
     #[test]

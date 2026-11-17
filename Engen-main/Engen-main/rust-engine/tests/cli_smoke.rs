@@ -91,12 +91,12 @@ fn reviewed_label_evaluator_reports_metrics_for_reviewed_rows_only() {
     let csv = directory.path().join("reviewed-labels.csv");
     fs::write(
         &csv,
-        "signature,expected_label,predicted_label,reviewed\\n\\
-         sig-1,BUY_CANDIDATE,BUY_CANDIDATE,true\\n\\
-         sig-2,TRANSFER,BUY_CANDIDATE,true\\n\\
-         sig-3,SELL_CANDIDATE,UNKNOWN,true\\n\\
-         sig-4,BUY_CANDIDATE,SELL_CANDIDATE,true\\n\\
-         ignored,,,false\\n",
+        "signature,expected_label,predicted_label,reviewed\n\\
+         sig-1,BUY_CANDIDATE,BUY_CANDIDATE,true\n\\
+         sig-2,TRANSFER,BUY_CANDIDATE,true\n\\
+         sig-3,SELL_CANDIDATE,UNKNOWN,true\n\\
+         sig-4,BUY_CANDIDATE,SELL_CANDIDATE,true\n\\
+         ignored,,,false\n",
     )
     .unwrap();
 
@@ -122,7 +122,7 @@ fn reviewed_label_evaluator_returns_one_when_no_rows_are_reviewed() {
     let csv = directory.path().join("empty-review.csv");
     fs::write(
         &csv,
-        "signature,expected_label,predicted_label,reviewed\\nignored,,,false\\n",
+        "signature,expected_label,predicted_label,reviewed\nignored,,,false\n",
     )
     .unwrap();
 
@@ -143,7 +143,7 @@ fn reviewed_label_evaluator_rejects_unsupported_labels() {
     let csv = directory.path().join("invalid-label.csv");
     fs::write(
         &csv,
-        "signature,expected_label,predicted_label,reviewed\\nsig-1,BUY_CANDIDATE,NOT_A_LABEL,true\\n",
+        "signature,expected_label,predicted_label,reviewed\nsig-1,BUY_CANDIDATE,NOT_A_LABEL,true\n",
     )
     .unwrap();
 

@@ -1,4 +1,7 @@
+use std::fs;
 use std::process::{Command, Output};
+
+use tempfile::tempdir;
 
 const BIN: &str = env!("CARGO_BIN_EXE_engen-engine");
 const WALLET: &str = "So11111111111111111111111111111111111111112";
@@ -79,4 +82,78 @@ fn one_shot_scan_refuses_to_guess_or_open_a_database_path() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("--signature-db is required"));
     assert!(!stderr.contains("data/signatures.db"));
+}
+
+
+#[test]
+fn reviewed_label_evaluator_reports_metrics_for_reviewed_rows_only() {
+    let directory = tempdir().unwrap();
+    let csv = directory.path().join("reviewed-labels.csv");
+    fs::write(
+        &csv,
+        "signature,expected_label,predicted_label,reviewed\\n\\
+         sig-1,BUY_CANDIDATE,BUY_CANDIDATE,true\\n\\
+         sig-2,TRANSFER,BUY_CANDIDATE,true\\n\\
+         sig-3,SELL_CANDIDATE,UNKNOWN,true\\n\\
+         sig-4,BUY_CANDIDATE,SELL_CANDIDATE,true\\n\\
+         ignored,,,false\\n",
+    )
+    .unwrap();
+
+    let output = Command::new(BIN)
+        .args(["evaluate-transaction-labels", csv.to_str().unwrap()])
+        .output()
+        .expect("run the Rust reviewed-label evaluator");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("Reviewed transactions: 4"));
+    assert!(stdout.contains("Exact-label accuracy: 25.0%"));
+    assert!(stdout.contains("False-buy count: 1"));
+    assert!(stdout.contains("False-sell count: 1"));
+    assert!(stdout.contains("BUY precision / recall: 50.0% / 50.0%"));
+    assert!(stdout.contains("SELL precision / recall: 0.0% / 0.0%"));
+    assert!(stdout.contains("Predicted UNKNOWN: 1 (25.0%)"));
+}
+
+#[test]
+fn reviewed_label_evaluator_returns_one_when_no_rows_are_reviewed() {
+    let directory = tempdir().unwrap();
+    let csv = directory.path().join("empty-review.csv");
+    fs::write(
+        &csv,
+        "signature,expected_label,predicted_label,reviewed\\nignored,,,false\\n",
+    )
+    .unwrap();
+
+    let output = Command::new(BIN)
+        .args(["evaluate-transaction-labels", csv.to_str().unwrap()])
+        .output()
+        .expect("run the Rust reviewed-label evaluator");
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .contains("No reviewed rows found"));
+}
+
+#[test]
+fn reviewed_label_evaluator_rejects_unsupported_labels() {
+    let directory = tempdir().unwrap();
+    let csv = directory.path().join("invalid-label.csv");
+    fs::write(
+        &csv,
+        "signature,expected_label,predicted_label,reviewed\\nsig-1,BUY_CANDIDATE,NOT_A_LABEL,true\\n",
+    )
+    .unwrap();
+
+    let output = Command::new(BIN)
+        .args(["evaluate-transaction-labels", csv.to_str().unwrap()])
+        .output()
+        .expect("run the Rust reviewed-label evaluator");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8(output.stderr)
+        .unwrap()
+        .contains("Dataset error:"));
 }

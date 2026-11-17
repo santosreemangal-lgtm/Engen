@@ -92,6 +92,22 @@ class AgentReadOnlyToolTests(unittest.TestCase):
         self.assertIn("[REDACTED]", redacted)
         self.assertIn("print('safe')", redacted)
 
+    def test_resolved_symlink_into_runtime_data_is_blocked(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_dir = root / "data"
+            data_dir.mkdir()
+            target = data_dir / "private.py"
+            target.write_text("PRIVATE = True\n", encoding="utf-8")
+            (root / "source_link.py").symlink_to(target)
+            with patch.object(tools, "PROJECT_ROOT", root):
+                with self.assertRaises(ValueError):
+                    tools.read_project_file("source_link.py")
+
+    def test_reads_repository_root_architecture_document(self):
+        content = tools.read_project_file("ARCHITECTURE_DECISIONS.md")
+        self.assertIn("read-only", content.lower())
+
     def test_blocks_oversized_files(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)

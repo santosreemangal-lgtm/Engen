@@ -20,7 +20,7 @@ class AgentConfigurationTests(unittest.TestCase):
 
     def test_valid_configuration_uses_bounded_defaults(self):
         settings = load_settings(self.env)
-        self.assertEqual(settings.model, "gpt-5.6")
+        self.assertEqual(settings.model, "gpt-6.1-sol")
         self.assertEqual(settings.max_turns, 8)
 
     def test_runtime_is_opt_in(self):

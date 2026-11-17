@@ -50,10 +50,11 @@ def build_agent_system(settings: AgentSettings) -> AgentSystem:
             GLOBAL_BOUNDARIES
             + """
 ROLE:
-Inspect the Engen source tree and explain the current architecture, module boundaries,
-data flow, dependencies, and implementation status. Read files only through
-read_project_file. Do not infer that a listed requirement is implemented unless source
-code or tests demonstrate it. Cite file paths and relevant symbols in your answer.
+Start with README.md, ARCHITECTURE_DECISIONS.md, and
+Engen-main/Engen-main/README.md. Then inspect relevant source files through
+read_project_file and explain the current architecture, module boundaries, data flow,
+dependencies, and implementation status. Do not infer that a listed requirement is
+implemented unless source code or tests demonstrate it. Cite file paths and symbols.
 """
         ),
         tools=read_tools,
@@ -153,22 +154,27 @@ Keep responses grounded in inspected files and user-supplied command output.
             repo_analyst.as_tool(
                 tool_name="inspect_repository",
                 tool_description="Inspect Engen source files and explain current implementation status.",
+                max_turns=4,
             ),
             coding_agent.as_tool(
                 tool_name="plan_code_change",
                 tool_description="Analyze a requested code change and propose a minimal patch; do not apply it.",
+                max_turns=4,
             ),
             qa_agent.as_tool(
                 tool_name="review_tests",
                 tool_description="Review existing tests and propose precise offline regression tests.",
+                max_turns=4,
             ),
             security_agent.as_tool(
                 tool_name="review_security",
                 tool_description="Review code and design against Engen security and paper-only constraints.",
+                max_turns=4,
             ),
             architecture_agent.as_tool(
                 tool_name="review_architecture",
                 tool_description="Review the design and identify integration dependencies and migration risks.",
+                max_turns=4,
             ),
         ],
     )

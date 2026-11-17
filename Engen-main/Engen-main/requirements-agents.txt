@@ -1,0 +1,3 @@
+# Optional multi-agent runtime. Kept separate so the existing offline engine
+# test suite stays standard-library-only.
+openai-agents==0.24.0

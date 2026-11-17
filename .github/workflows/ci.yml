@@ -26,8 +26,30 @@ jobs:
           if [ -f Engen-main/Engen-main/requirements.txt ]; then
             python -m pip install -r Engen-main/Engen-main/requirements.txt
           fi
+      - name: Install optional agent SDK
+        run: python -m pip install -r Engen-main/Engen-main/requirements-agents.txt
       - name: Compile Python files
         run: python -m compileall -q Engen-main/Engen-main
+      - name: Verify agent SDK wiring without API calls
+        working-directory: Engen-main/Engen-main
+        env:
+          PYTHONPATH: .
+          ENGEN_AGENTS_ENABLED: "true"
+          ENGINE_MODE: "read_only"
+          LIVE_TRADING_ENABLED: "false"
+          OPENAI_API_KEY: "offline-ci-placeholder-not-a-real-key"
+        run: |
+          python - <<'PY'
+          from engen_agents.config import load_settings
+          from engen_agents.registry import build_agent_system
+
+          settings = load_settings()
+          system = build_agent_system(settings)
+          assert system.coordinator.name == "Engen Master Coordinator"
+          assert len(system.specialists) == 5
+          print("Agent SDK wiring passed: coordinator and five specialists initialized.")
+          print("No OpenAI API request was made.")
+          PY
       - name: Run offline unit tests
         working-directory: Engen-main/Engen-main
         env:

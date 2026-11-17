@@ -70,6 +70,10 @@ class AgentReadOnlyToolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             tools._safe_relative_path(".env")
 
+    def test_blocks_directory_as_file_path(self):
+        with self.assertRaises(ValueError):
+            tools._safe_relative_path(".")
+
     def test_blocks_runtime_data_directory(self):
         with self.assertRaises(ValueError):
             tools._safe_relative_path("data/private.py")

@@ -1309,7 +1309,9 @@ impl DashboardApp {
                             let _ = service.stop_and_wait(Duration::from_secs(15));
                         }
                     }
-                    let _ = self.set_profile_monitor_pref(&id, false);
+                    if let Err(response) = self.set_profile_monitor_pref(&id, false) {
+                        return response;
+                    }
                     return match self.context.profile_store.delete_profile(&id) {
                         Ok(_) => HttpResponse::json(
                             200,
@@ -2562,6 +2564,46 @@ mod tests {
         let monitor_state: Value =
             serde_json::from_slice(&fs::read(&app.monitor_state_file).unwrap()).unwrap();
         assert!(monitor_state["profile_ids"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn dashboard_api_delete_profile_keeps_profile_when_monitor_preference_persistence_fails() {
+        let (directory, mut app) = dashboard_app_fixture();
+        let created = app.handle(api_request(
+            "POST",
+            "/api/profiles",
+            json!({"action":"create","name":"Keep profile when monitor state fails"}),
+        ));
+        assert_eq!(created.status, 201);
+        let profile_id = response_json(created)["profile"]["profile_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // A directory at the monitor-state file path makes the atomic rename fail
+        // deterministically without relying on filesystem permissions.
+        let blocked_path = directory.path().join("data").join("monitor_state_blocked");
+        fs::create_dir_all(&blocked_path).unwrap();
+        Arc::get_mut(&mut app).unwrap().monitor_state_file = blocked_path;
+
+        let response = app.handle(api_request(
+            "POST",
+            "/api/profiles",
+            json!({"action":"delete","profile_id":profile_id}),
+        ));
+        assert_eq!(response.status, 503);
+        assert_eq!(
+            response_json(response)["error"],
+            "Monitor state storage unavailable."
+        );
+
+        let profile = app
+            .context
+            .profile_store
+            .get_profile(&profile_id)
+            .unwrap()
+            .expect("profile must remain active when monitor state cannot be persisted");
+        assert_eq!(profile.status, "active");
     }
 
     #[test]

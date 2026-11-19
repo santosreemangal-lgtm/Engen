@@ -754,8 +754,10 @@ impl ProfileStore {
         let connection = self.connect()?;
         let total: i64 = connection.query_row(
             "SELECT COUNT(*)
-             FROM transactions t JOIN profile_transactions p ON p.signature=t.signature
-             WHERE p.profile_id=?1
+             FROM transactions t
+             JOIN profile_transactions p ON p.signature=t.signature
+             JOIN profiles pr ON pr.profile_id=p.profile_id
+             WHERE p.profile_id=?1 AND pr.deleted_at IS NULL
                AND (?2 IS NULL OR t.classification=?2)
                AND (?3 IS NULL OR t.status=?3)
                AND (?4 IS NULL OR t.token_mint=?4)",
@@ -765,8 +767,10 @@ impl ProfileStore {
         let mut statement = connection.prepare(
             "SELECT t.signature,t.source_wallet_address,t.slot,t.block_time,t.observed_at,t.status,
                     t.classification,t.evidence_json,t.raw_amount,t.token_mint,t.token_decimals
-             FROM transactions t JOIN profile_transactions p ON p.signature=t.signature
-             WHERE p.profile_id=?1
+             FROM transactions t
+             JOIN profile_transactions p ON p.signature=t.signature
+             JOIN profiles pr ON pr.profile_id=p.profile_id
+             WHERE p.profile_id=?1 AND pr.deleted_at IS NULL
                AND (?2 IS NULL OR t.classification=?2)
                AND (?3 IS NULL OR t.status=?3)
                AND (?4 IS NULL OR t.token_mint=?4)

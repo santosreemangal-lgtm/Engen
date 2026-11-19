@@ -726,6 +726,65 @@ impl ProfileStore {
         Ok(rows)
     }
 
+    /// Return one bounded page of profile transaction history and its filtered total.
+    ///
+    /// Filtering, counting, ordering, and pagination are performed by SQLite so an API
+    /// request never materializes the profile's entire transaction history in memory.
+    pub fn list_transactions_page(
+        &self,
+        profile_id: &str,
+        classification: Option<&str>,
+        status: Option<&str>,
+        token_mint: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<ProfileTransaction>, usize), ProfileStoreError> {
+        let limit = i64::try_from(limit).map_err(|_| {
+            ProfileStoreError::InvalidInput("Transaction page size is out of range.".to_string())
+        })?;
+        let offset = i64::try_from(offset).map_err(|_| {
+            ProfileStoreError::InvalidInput("Transaction page offset is out of range.".to_string())
+        })?;
+        if limit < 1 || offset < 0 {
+            return Err(ProfileStoreError::InvalidInput(
+                "Transaction pagination values must be positive.".to_string(),
+            ));
+        }
+
+        let connection = self.connect()?;
+        let total: i64 = connection.query_row(
+            "SELECT COUNT(*)
+             FROM transactions t JOIN profile_transactions p ON p.signature=t.signature
+             WHERE p.profile_id=?1
+               AND (?2 IS NULL OR t.classification=?2)
+               AND (?3 IS NULL OR t.status=?3)
+               AND (?4 IS NULL OR t.token_mint=?4)",
+            params![profile_id, classification, status, token_mint],
+            |row| row.get(0),
+        )?;
+        let mut statement = connection.prepare(
+            "SELECT t.signature,t.source_wallet_address,t.slot,t.block_time,t.observed_at,t.status,
+                    t.classification,t.evidence_json,t.raw_amount,t.token_mint,t.token_decimals
+             FROM transactions t JOIN profile_transactions p ON p.signature=t.signature
+             WHERE p.profile_id=?1
+               AND (?2 IS NULL OR t.classification=?2)
+               AND (?3 IS NULL OR t.status=?3)
+               AND (?4 IS NULL OR t.token_mint=?4)
+             ORDER BY t.observed_at DESC,t.signature
+             LIMIT ?5 OFFSET ?6",
+        )?;
+        let rows = statement
+            .query_map(
+                params![profile_id, classification, status, token_mint, limit, offset],
+                transaction_from_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        let total = usize::try_from(total).map_err(|_| {
+            ProfileStoreError::InvalidInput("Transaction count is out of range.".to_string())
+        })?;
+        Ok((rows, total))
+    }
+
     pub fn save_balance_snapshot(
         &self,
         input: SaveBalanceSnapshot<'_>,

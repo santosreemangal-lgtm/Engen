@@ -55,3 +55,53 @@ A regression test uses the dashboard fixture's temporary SQLite databases. It cr
 This fix closes one concrete dashboard API parity defect only. It does not certify the full dashboard API contract, profile authorization, whole-process restart recovery, or Rust-only production cutover. Keep PRs #48–#52 Draft/unmerged.
 
 Next priority: complete a route-by-route Python/Rust Dashboard API contract matrix, then add regression coverage for any remaining response/status/security mismatches before moving to whole-application restart and database-compatibility E2E.
+
+
+## 2026-11-18 — Fail closed on profile monitor-state persistence errors
+
+**Status: VERIFIED — the narrow failure-path correction and its regression test passed current-head GitHub Actions.** The Rust-only runtime remains NOT READY.
+
+### Repository and stack state
+
+- Repository: `santosreemangal-lgtm/Engen`
+- Default branch: `main` at `ba501c43260cd7569714b58f84eb0bf11967f444`.
+- Canonical migration PR #48: Draft, open, unmerged; branch `rewrite/rust-backend-20261109`, head `b0df77d2775e4b4280442cf35ea64f40c4292d6b`.
+- Parent stack PR #49 (Rust dashboard runtime), #50 (durable monitor leases), and #52 (profile-delete route parity): all Draft/open/unmerged at inspection.
+- This change is stacked on PR #52 branch `fix/rust-profile-delete-api-parity-20261117`, base SHA `f043fc619a6134438550295673e0f6734085a193`.
+- Feature branch: `fix/rust-delete-monitor-pref-fail-closed-20261118`.
+- Rust implementation commit: `4c5107d9877d8c745037622eb5f3d686dc2dcc82`.
+- Draft PR: [#54 — Fail closed when Rust profile monitor state cannot be saved](https://github.com/santosreemangal-lgtm/Engen/pull/54).
+
+### Acceptance item and source evidence
+
+The Python `POST /api/profiles` `action=delete` handler stops the profile monitor, calls `set_profile_monitor_persistence(profile_id, False)`, and only then soft-deletes the profile. An `OSError` is returned as HTTP 503, so a failed persistence write does not proceed to deletion.
+
+The Rust handler previously discarded the result from `set_profile_monitor_pref(&id, false)` and proceeded to `ProfileStore::delete_profile` even if the monitor opt-out state could not be saved. This was a concrete Python/Rust API and restart-state parity defect.
+
+### Change and tests
+
+Changed only `Engen-main/Engen-main/rust-engine/src/dashboard_server.rs`:
+
+- Propagate the existing HTTP 503 response when monitor-state persistence fails.
+- Add `dashboard_api_delete_profile_keeps_profile_when_monitor_preference_persistence_fails`.
+- The test uses the dashboard fixture's disposable temporary SQLite database and creates a directory at the monitor-state file path to force the atomic rename to fail deterministically.
+- The test asserts HTTP 503 and confirms the profile remains active.
+- No new dependency or schema change.
+
+### Verification
+
+- Local Rust commands: **NOT RUN**; the GitHub-only execution session has no local Rust toolchain.
+- Initial run #656 on head `3ab2ec9bd34789551f5cbfc089837ccfff14ad5f` failed one regression test: the fixture-created profile defaults to `disabled`, while the new test incorrectly expected `active`. The other 221 library tests passed; this was a test-fixture setup error, not evidence that the delete handler archived the profile.
+- Correction commit `d3d691b579ed442029b3045843000ebd21ecbece` explicitly activates the disposable profile before inducing the monitor-state persistence failure, then asserts that the failed delete leaves it active.
+- Rust Engine Checks run #657 on the exact head `d3d691b579ed442029b3045843000ebd21ecbece`: **SUCCESS** — [run #657](https://github.com/santosreemangal-lgtm/Engen/actions/runs/44454135161).
+- All 14 workflow steps passed: formatting, Rust unit/integration tests, public read-only RPC smoke, Python Phase 2/Phase 8 reference tests, dashboard/browser syntax, Rust launcher and localhost process E2E, Python-free release check, Clippy, and the report-only migration audit.
+- Rust test summary: 222 library tests passed; the remaining binary/CLI/RPC/transaction-pipeline targets also passed under `cargo test --all-targets`.
+- The migration audit still reports **38 Python production/runtime blockers** and `RUNTIME GATE: NOT READY`; this fix does not certify Rust-only production readiness.
+- The PR remains Draft and unmerged. Tests use disposable fixtures only; no real `data/` database, secret, wallet key, production process, deployment, or live execution capability was touched.
+
+### Remaining gaps and next task
+
+- Next: complete the route-by-route Python/Rust Dashboard API contract and security matrix. One concrete gap already confirmed for follow-up is that Rust currently loads the full profile transaction history before applying page/filter slicing, while the Python reference applies filters, COUNT, LIMIT, and OFFSET in SQLite. Move the Rust filtering/pagination into the SQL query and add API regression tests.
+- Whole-process crash/restart and disposable-database compatibility E2E, remaining Rust runtime ports, and the local paper-fill latency benchmark remain open.
+- Whole-process crash/restart and disposable-database compatibility E2E, remaining Rust runtime ports, and the local paper-fill latency benchmark remain open.
+- The last static migration audit on the parent stack still reports 38 Python production/runtime blockers and `RUNTIME GATE: NOT READY`; this change does not reduce that blocker count or certify production readiness.

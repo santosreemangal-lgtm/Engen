@@ -2606,6 +2606,34 @@ mod tests {
             Value::Null,
         ));
         assert_eq!(invalid_page_size.status, 400);
+
+        // Soft deletion hides profile-scoped pages without deleting retained evidence.
+        app.context
+            .profile_store
+            .delete_profile(&profile_id)
+            .unwrap();
+        assert_eq!(
+            app.context
+                .profile_store
+                .list_transactions(&profile_id)
+                .unwrap()
+                .len(),
+            3
+        );
+        let (deleted_page, deleted_total) = app
+            .context
+            .profile_store
+            .list_transactions_page(&profile_id, None, None, None, 25, 0)
+            .unwrap();
+        assert!(deleted_page.is_empty());
+        assert_eq!(deleted_total, 0);
+
+        let deleted_api = app.handle(api_request(
+            "GET",
+            &format!("/api/profile-transactions?profile_id={}", profile_id),
+            Value::Null,
+        ));
+        assert_eq!(deleted_api.status, 404);
     }
 
     #[test]

@@ -1152,19 +1152,9 @@ impl DashboardApp {
             Ok(value) => value,
             Err(message) => return HttpResponse::json(400, json!({"error":message})),
         };
-        let profile = match self.context.profile_store.get_profile(&profile_id) {
-            Ok(Some(value)) => value,
+        match self.context.profile_store.get_profile(&profile_id) {
+            Ok(Some(_)) => {}
             Ok(None) => return HttpResponse::json(404, json!({"error":"Profile not found."})),
-            Err(_) => {
-                return HttpResponse::json(
-                    503,
-                    json!({"error":"Transaction history is temporarily unavailable."}),
-                )
-            }
-        };
-        let _ = profile;
-        let rows = match self.context.profile_store.list_transactions(&profile_id) {
-            Ok(rows) => rows,
             Err(_) => {
                 return HttpResponse::json(
                     503,
@@ -1206,13 +1196,26 @@ impl DashboardApp {
         if !mint.is_empty() && !is_valid_solana_address(mint) {
             return HttpResponse::json(400, json!({"error":"Invalid token mint."}));
         }
-        let filtered: Vec<Value> = rows
+
+        let offset = (page - 1).saturating_mul(page_size);
+        let (rows, total) = match self.context.profile_store.list_transactions_page(
+            &profile_id,
+            (!classification.is_empty()).then_some(classification),
+            (!status.is_empty()).then_some(status),
+            (!mint.is_empty()).then_some(mint),
+            page_size,
+            offset,
+        ) {
+            Ok(result) => result,
+            Err(_) => {
+                return HttpResponse::json(
+                    503,
+                    json!({"error":"Transaction history is temporarily unavailable."}),
+                )
+            }
+        };
+        let transactions: Vec<Value> = rows
             .into_iter()
-            .filter(|row| {
-                (classification.is_empty() || row.classification == classification)
-                    && (status.is_empty() || row.status == status)
-                    && (mint.is_empty() || row.token_mint.as_deref() == Some(mint))
-            })
             .map(|row| {
                 let amount = row.raw_amount.as_deref().zip(row.token_decimals).and_then(
                     |(raw, decimals)| {
@@ -1240,10 +1243,6 @@ impl DashboardApp {
                 })
             })
             .collect();
-        let total = filtered.len();
-        let start = (page - 1).saturating_mul(page_size).min(total);
-        let end = start.saturating_add(page_size).min(total);
-        let transactions = filtered[start..end].to_vec();
         HttpResponse::json(
             200,
             json!({
@@ -2487,6 +2486,154 @@ mod tests {
             serde_json::from_slice(&fs::read(&app.monitor_state_file).unwrap()).unwrap();
         assert_eq!(state["global_enabled"], false);
         assert!(state["profile_ids"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn dashboard_api_profile_transaction_history_is_sql_paginated_and_filtered() {
+        let (_directory, app) = dashboard_app_fixture();
+        let created = app.handle(api_request(
+            "POST",
+            "/api/profiles",
+            json!({"action":"create","name":"Paginated transaction history"}),
+        ));
+        assert_eq!(created.status, 201);
+        let profile_id = response_json(created)["profile"]["profile_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let wallet = "11111111111111111111111111111111";
+        app.context
+            .profile_store
+            .associate_source_wallet(&profile_id, wallet)
+            .unwrap();
+        let profile_ids = vec![profile_id.clone()];
+        for index in 0..3 {
+            let signature = match index {
+                0 => "profile-history-page-0",
+                1 => "profile-history-page-1",
+                _ => "profile-history-page-2",
+            };
+            let classification = if index == 1 {
+                "UNKNOWN"
+            } else {
+                "BUY_CANDIDATE"
+            };
+            let status = if index == 1 { "unknown" } else { "confirmed" };
+            let observed_at = match index {
+                0 => "2026-11-19T00:00:00Z",
+                1 => "2026-11-19T00:00:01Z",
+                _ => "2026-11-19T00:00:02Z",
+            };
+            app.context
+                .profile_store
+                .save_transaction(SaveTransaction {
+                    signature,
+                    source_wallet_address: wallet,
+                    classification,
+                    status,
+                    evidence: Some(json!({"fixture_index":index})),
+                    slot: Some(100 + index as i64),
+                    block_time: Some(1_700_000_000 + index as i64),
+                    raw_amount: Some("1000000"),
+                    token_mint: Some(wallet),
+                    token_decimals: Some(6),
+                    profile_ids: &profile_ids,
+                    observed_at: Some(observed_at),
+                })
+                .unwrap();
+        }
+
+        let first_page = app.handle(api_request(
+            "GET",
+            &format!(
+                "/api/profile-transactions?profile_id={}&page=1&page_size=2",
+                profile_id
+            ),
+            Value::Null,
+        ));
+        assert_eq!(first_page.status, 200);
+        let first_page = response_json(first_page);
+        assert_eq!(first_page["total"], 3);
+        assert_eq!(first_page["page"], 1);
+        assert_eq!(first_page["page_size"], 2);
+        assert_eq!(first_page["pages"], 2);
+        assert_eq!(first_page["transactions"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            first_page["transactions"][0]["signature"],
+            "profile-history-page-2"
+        );
+
+        let second_page = app.handle(api_request(
+            "GET",
+            &format!(
+                "/api/profile-transactions?profile_id={}&page=2&page_size=2",
+                profile_id
+            ),
+            Value::Null,
+        ));
+        let second_page = response_json(second_page);
+        assert_eq!(second_page["total"], 3);
+        assert_eq!(second_page["transactions"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            second_page["transactions"][0]["signature"],
+            "profile-history-page-0"
+        );
+
+        let filtered = app.handle(api_request(
+            "GET",
+            &format!(
+                "/api/profile-transactions?profile_id={}&classification=UNKNOWN&status=unknown&token_mint={}",
+                profile_id, wallet
+            ),
+            Value::Null,
+        ));
+        assert_eq!(filtered.status, 200);
+        let filtered = response_json(filtered);
+        assert_eq!(filtered["total"], 1);
+        assert_eq!(filtered["pages"], 1);
+        assert_eq!(
+            filtered["transactions"][0]["signature"],
+            "profile-history-page-1"
+        );
+
+        let invalid_page_size = app.handle(api_request(
+            "GET",
+            &format!(
+                "/api/profile-transactions?profile_id={}&page_size=101",
+                profile_id
+            ),
+            Value::Null,
+        ));
+        assert_eq!(invalid_page_size.status, 400);
+
+        // Soft deletion hides profile-scoped pages without deleting retained evidence.
+        app.context
+            .profile_store
+            .delete_profile(&profile_id)
+            .unwrap();
+        assert_eq!(
+            app.context
+                .profile_store
+                .list_transactions(&profile_id)
+                .unwrap()
+                .len(),
+            3
+        );
+        let (deleted_page, deleted_total) = app
+            .context
+            .profile_store
+            .list_transactions_page(&profile_id, None, None, None, 25, 0)
+            .unwrap();
+        assert!(deleted_page.is_empty());
+        assert_eq!(deleted_total, 0);
+
+        let deleted_api = app.handle(api_request(
+            "GET",
+            &format!("/api/profile-transactions?profile_id={}", profile_id),
+            Value::Null,
+        ));
+        assert_eq!(deleted_api.status, 404);
     }
 
     #[test]

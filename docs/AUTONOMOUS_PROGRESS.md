@@ -103,47 +103,51 @@ Changed only `Engen-main/Engen-main/rust-engine/src/dashboard_server.rs`:
 
 - Next: complete the route-by-route Python/Rust Dashboard API contract and security matrix. One concrete gap already confirmed for follow-up is that Rust currently loads the full profile transaction history before applying page/filter slicing, while the Python reference applies filters, COUNT, LIMIT, and OFFSET in SQLite. Move the Rust filtering/pagination into the SQL query and add API regression tests.
 - Whole-process crash/restart and disposable-database compatibility E2E, remaining Rust runtime ports, and the local paper-fill latency benchmark remain open.
-- Whole-process crash/restart and disposable-database compatibility E2E, remaining Rust runtime ports, and the local paper-fill latency benchmark remain open.
 - The last static migration audit on the parent stack still reports 38 Python production/runtime blockers and `RUNTIME GATE: NOT READY`; this change does not reduce that blocker count or certify production readiness.
 
 
 ## 2026-11-19 — SQL-bounded Rust profile transaction-history pagination
 
-**Status: PARTIAL — implementation and regression test are committed; GitHub Actions verification is pending.** Rust-only production runtime remains NOT READY.
+**Status: PARTIAL — database-level pagination and regression coverage are implemented; latest-head CI is pending.** Rust-only production runtime remains NOT READY.
 
 ### Repository and base evidence
 
 - Repository default branch: `main`, head `ba501c43260cd7569714b58f84eb0bf11967f444`.
 - Canonical migration PR #48 remains Draft/open/unmerged at `rewrite/rust-backend-20261109`, head `b0df77d2775e4b4280442cf35ea64f40c4292d6b`.
 - This change is stacked on PR #54, branch `fix/rust-delete-monitor-pref-fail-closed-20261118`, base head `323225633c677c368a106f6ce85214404d9e345f`.
-- PR #54's code head `d3d691b579ed442029b3045843000ebd21ecbece` passed all 14 Rust Engine Checks steps in run #657: https://github.com/santosreemangal-lgtm/Engen/actions/runs/44454135161.
-- New feature branch: `fix/rust-profile-history-sql-pagination-20261119`.
-- Implementation commits: `e731e80e49f97e1d25ac5320c5da8536d7ecd082` (store query) and `4f1f8d88f255954b3b5fd6df0b3957e0a899ef40` (API integration), followed by test commit `fd0857cc48f0fa00e7139b2033a65cec2d7cc354`.
-- Current feature head at this record: `fd0857cc48f0fa00e7139b2033a65cec2d7cc354`.
+- PR #54's code head `d3d691b579ed442029b3045843000ebd21ecbece` passed run #657: https://github.com/santosreemangal-lgtm/Engen/actions/runs/44454135161. The later documentation-only head `323225633c677c368a106f6ce85214404d9e345f` passed all 14 steps in run #658.
+- Draft PR #55: https://github.com/santosreemangal-lgtm/Engen/pull/55.
+- Feature branch: `fix/rust-profile-history-sql-pagination-20261119`.
+- Code commits: `e731e80e49f97e1d25ac5320c5da8536d7ecd082` (SQL page query), `4f1f8d88f255954b3b5fd6df0b3957e0a899ef40` (API integration), `fd0857cc48f0fa00e7139b2033a65cec2d7cc354` (pagination regression test), `bc234ed116cc83a9adb4e4b3a8b9ee9c41e68820` (rustfmt correction), `d4335514c71e3516802eb9fa8487fe258c7804fd` (exclude soft-deleted profiles in SQL), and `207d69c098f010aea576f98df0e38fa0e9a18651` (soft-delete/history regression coverage).
+- Code head before this progress-record update: `207d69c098f010aea576f98df0e38fa0e9a18651`.
 
 ### Acceptance item and evidence
 
-The Python reference applies profile ID, classification, status, and token-mint filters in SQLite, runs a filtered `COUNT(*)`, and fetches only the requested page using `LIMIT`/`OFFSET`. The Rust API previously loaded every transaction for a profile into a `Vec`, filtered and sliced it in memory, so the response was paginated but the database read was not bounded.
+The Python reference applies profile ID, classification, status, and token-mint filters in SQLite, runs a filtered `COUNT(*)`, and retrieves only the requested page using `LIMIT`/`OFFSET`. The Rust API previously loaded every transaction for a profile into a `Vec`, then filtered and sliced it in memory.
+
+The Rust implementation now performs filtered count, ordering, and page selection in SQLite. Both SQL queries join the profiles table and exclude soft-deleted profiles, matching the Python reference's `deleted_at IS NULL` condition.
 
 ### Change and tests
 
 Changed:
-- `Engen-main/Engen-main/rust-engine/src/profile_store.rs`: add `list_transactions_page`, which performs filtered count and ordered page selection inside SQLite.
-- `Engen-main/Engen-main/rust-engine/src/dashboard_server.rs`: validate the existing allowlisted filters, request only the selected page from the store, and return the SQL count/page metadata.
-- `Engen-main/Engen-main/rust-engine/src/dashboard_server.rs`: add `dashboard_api_profile_transaction_history_is_sql_paginated_and_filtered`, covering two-page ordering, filtered totals, and the maximum page-size rejection.
+- `Engen-main/Engen-main/rust-engine/src/profile_store.rs`: add `list_transactions_page`, with filtered count and ordered `LIMIT`/`OFFSET` selection in SQLite; exclude soft-deleted profiles.
+- `Engen-main/Engen-main/rust-engine/src/dashboard_server.rs`: validate existing allowlisted filters and fetch only the selected page.
+- `Engen-main/Engen-main/rust-engine/src/dashboard_server.rs`: add `dashboard_api_profile_transaction_history_is_sql_paginated_and_filtered`, covering ordering, page metadata, filters, maximum page size, soft deletion, and evidence preservation.
 
-No schema change, dependency, retention change, or evidence deletion. The existing unpaginated store method remains available for its other callers. The test uses the dashboard fixture's disposable temporary SQLite database.
+No schema change, dependency, retention change, or evidence deletion. The existing unpaginated store method remains for other callers. Tests use the dashboard fixture's disposable temporary SQLite database; they confirm soft-deleted profile history remains stored while profile-scoped pages return no rows and the API returns 404.
 
 ### Verification
 
-- Local Rust commands: **NOT RUN**; this GitHub-only execution session has no local `rustc`/`cargo`.
-- Parent code CI run #657 passed before this new pagination change; it does not validate this branch.
-- Current feature-branch GitHub Actions result: **PENDING / NOT TESTED** at the time of this record. Do not treat commit creation as a test pass.
-- The static migration audit on the parent run still reported 38 Python production/runtime blockers and `RUNTIME GATE: NOT READY`.
+- Local Rust commands: **NOT RUN**; this GitHub-only session has no local `rustc`/`cargo`.
+- Initial run #659 on the documentation/test head `d05f6f5fa32b8665cc2a67c564cec6353e899d72` failed at `cargo fmt --all -- --check` only; tests were skipped. The log identified one formatting-only diff in the new `params!` list.
+- Formatting correction commit: `bc234ed116cc83a9adb4e4b3a8b9ee9c41e68820`.
+- Rust Engine Checks run #660 on exact head `bc234ed116cc83a9adb4e4b3a8b9ee9c41e68820`: **SUCCESS** — https://github.com/santosreemangal-lgtm/Engen/actions/runs/44455157303. Formatting, `cargo test --all-targets`, public read-only RPC smoke, Python Phase 2/8 references, dashboard/browser syntax, Rust launcher and localhost process E2E, Python-free release check, Clippy, and the report-only audit all passed.
+- The later soft-delete SQL join and preservation test commits `d4335514c71e3516802eb9fa8487fe258c7804fd` and `207d69c098f010aea576f98df0e38fa0e9a18651` are newer than run #660. Their current-head CI is **PENDING / NOT TESTED**.
+- The migration audit still reports 38 Python production/runtime blockers and `RUNTIME GATE: NOT READY`.
 
 ### Remaining gaps and next task
 
-- Obtain a current-head PR workflow result and inspect all failures. Fix only evidenced failures on this feature branch.
-- Continue the route-by-route Python/Rust API contract and security matrix after this focused pagination change is verified.
-- Whole-process crash/restart, disposable database compatibility, full runtime integration, and the local source-receipt-to-paper-ledger-commit latency benchmark remain open.
+- Obtain a current-head run for PR #55 and inspect every check. Fix only evidenced failures on this feature branch.
+- Then continue the route-by-route Python/Rust Dashboard API contract and security matrix.
+- Whole-process crash/restart, disposable-database compatibility, integrated runtime parity, and the local source-receipt-to-paper-ledger-commit latency benchmark remain open.
 - No real user database, secret, wallet key, production process, deployment, signing, broadcast, or live trading path was accessed or changed.

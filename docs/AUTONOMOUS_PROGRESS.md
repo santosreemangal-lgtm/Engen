@@ -59,7 +59,7 @@ Next priority: complete a route-by-route Python/Rust Dashboard API contract matr
 
 ## 2026-11-18 — Fail closed on profile monitor-state persistence errors
 
-**Status: PARTIAL — implementation and regression test committed; current-commit CI is NOT TESTED yet.** The Rust-only runtime remains NOT READY.
+**Status: VERIFIED — the narrow failure-path correction and its regression test passed current-head GitHub Actions.** The Rust-only runtime remains NOT READY.
 
 ### Repository and stack state
 
@@ -90,14 +90,18 @@ Changed only `Engen-main/Engen-main/rust-engine/src/dashboard_server.rs`:
 
 ### Verification
 
-- Local Rust commands: **NOT RUN**; this GitHub-only execution session has no local Rust toolchain.
-- Parent PR #52 head `f043fc619a6134438550295673e0f6734085a193` had Rust Engine Checks run #654 completed successfully: [run #654](https://github.com/santosreemangal-lgtm/Engen/actions/runs/44012849889). That run does **not** include this new change.
-- For implementation commit `4c5107d9877d8c745037622eb5f3d686dc2dcc82`, no GitHub Actions run or commit status was visible at the time this record was written. Current-commit CI is therefore **NOT TESTED**, not passed.
-- The PR remains Draft and unmerged. No real `data/` database, secret, wallet key, production process, deployment, or live execution capability was touched.
+- Local Rust commands: **NOT RUN**; the GitHub-only execution session has no local Rust toolchain.
+- Initial run #656 on head `3ab2ec9bd34789551f5cbfc089837ccfff14ad5f` failed one regression test: the fixture-created profile defaults to `disabled`, while the new test incorrectly expected `active`. The other 221 library tests passed; this was a test-fixture setup error, not evidence that the delete handler archived the profile.
+- Correction commit `d3d691b579ed442029b3045843000ebd21ecbece` explicitly activates the disposable profile before inducing the monitor-state persistence failure, then asserts that the failed delete leaves it active.
+- Rust Engine Checks run #657 on the exact head `d3d691b579ed442029b3045843000ebd21ecbece`: **SUCCESS** — [run #657](https://github.com/santosreemangal-lgtm/Engen/actions/runs/44454135161).
+- All 14 workflow steps passed: formatting, Rust unit/integration tests, public read-only RPC smoke, Python Phase 2/Phase 8 reference tests, dashboard/browser syntax, Rust launcher and localhost process E2E, Python-free release check, Clippy, and the report-only migration audit.
+- Rust test summary: 222 library tests passed; the remaining binary/CLI/RPC/transaction-pipeline targets also passed under `cargo test --all-targets`.
+- The migration audit still reports **38 Python production/runtime blockers** and `RUNTIME GATE: NOT READY`; this fix does not certify Rust-only production readiness.
+- The PR remains Draft and unmerged. Tests use disposable fixtures only; no real `data/` database, secret, wallet key, production process, deployment, or live execution capability was touched.
 
 ### Remaining gaps and next task
 
-- First, obtain a GitHub Actions run for PR #54 and verify the new failure-path regression test plus all existing Rust checks.
-- Then complete the route-by-route Python/Rust Dashboard API contract and security matrix; add focused regressions only for evidenced mismatches.
+- Next: complete the route-by-route Python/Rust Dashboard API contract and security matrix. One concrete gap already confirmed for follow-up is that Rust currently loads the full profile transaction history before applying page/filter slicing, while the Python reference applies filters, COUNT, LIMIT, and OFFSET in SQLite. Move the Rust filtering/pagination into the SQL query and add API regression tests.
+- Whole-process crash/restart and disposable-database compatibility E2E, remaining Rust runtime ports, and the local paper-fill latency benchmark remain open.
 - Whole-process crash/restart and disposable-database compatibility E2E, remaining Rust runtime ports, and the local paper-fill latency benchmark remain open.
 - The last static migration audit on the parent stack still reports 38 Python production/runtime blockers and `RUNTIME GATE: NOT READY`; this change does not reduce that blocker count or certify production readiness.

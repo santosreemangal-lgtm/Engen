@@ -2580,6 +2580,16 @@ mod tests {
             .unwrap()
             .to_string();
 
+        // New profiles default to disabled; activate this disposable fixture so the
+        // regression assertion proves a failed persistence write does not archive it.
+        let activated = app
+            .context
+            .profile_store
+            .update_profile(&profile_id, None, None, Some("active"))
+            .unwrap()
+            .expect("test profile should exist");
+        assert_eq!(activated.status, "active");
+
         // A directory at the monitor-state file path makes the atomic rename fail
         // deterministically without relying on filesystem permissions.
         let blocked_path = directory.path().join("data").join("monitor_state_blocked");

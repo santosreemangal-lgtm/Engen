@@ -775,7 +775,14 @@ impl ProfileStore {
         )?;
         let rows = statement
             .query_map(
-                params![profile_id, classification, status, token_mint, limit, offset],
+                params![
+                    profile_id,
+                    classification,
+                    status,
+                    token_mint,
+                    limit,
+                    offset
+                ],
                 transaction_from_row,
             )?
             .collect::<Result<Vec<_>, _>>()?;

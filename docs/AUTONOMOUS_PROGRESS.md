@@ -152,3 +152,56 @@ No schema change, dependency, retention change, or evidence deletion. The existi
 - Next: complete the route-by-route Python/Rust Dashboard API contract and security matrix; add focused tests for each evidenced response, auth, origin, data-isolation, and error-path mismatch.
 - Whole-process crash/restart, disposable-database compatibility, integrated runtime parity, and the local source-receipt-to-paper-ledger-commit latency benchmark remain open.
 - No real user database, secret, wallet key, production process, deployment, signing, broadcast, or live trading path was accessed or changed.
+
+
+## 2026-11-20 — Rust dashboard HTTP security and POST JSON parity
+
+**Status: VERIFIED — the narrow HTTP boundary fix passed the complete current-head GitHub Actions workflow. The broader Rust-only production runtime remains NOT READY.**
+
+### Repository and stack state verified before the change
+
+- Repository: `santosreemangal-lgtm/Engen`.
+- Default branch: `main`, head `ba501c43260cd7569714b58f84eb0bf11967f444`.
+- Canonical migration PR #48: Draft/open/unmerged; branch `rewrite/rust-backend-20261109`, head `b0df77d2775e4b4280442cf35ea64f40c4292d6b`.
+- Latest prior migration-stack PR #55: Draft/open/unmerged; branch `fix/rust-profile-history-sql-pagination-20261119`, head/base for this task `39d43d62257a02b5e3eeac491128f252f8b91358`.
+- Feature branch: `fix/rust-dashboard-http-security-parity-20261120`.
+- Draft PR #56: https://github.com/santosreemangal-lgtm/Engen/pull/56; base PR #55; keep Draft/unmerged.
+- Verified implementation head: `35cc34ac220c8010934cd38a74f3253b1c636750`.
+- The first implementation commit `5446b961fb02cd143d962c5cbaf0c3fd3da40b4b` failed only the Rust formatting check. The CI diff identified two rustfmt-only layout changes; they were applied without changing behavior in `35cc34ac220c8010934cd38a74f3253b1c636750`.
+
+### Acceptance item and source evidence
+
+A route/security comparison of the Python reference `dashboard/server.py` and Rust `dashboard_server.rs` identified these concrete mismatches:
+
+- Python adds `Permissions-Policy: camera=(), microphone=(), geolocation=()`; Rust did not.
+- Python CSP restricts images to `'self' data:` and includes `object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`, and `form-action 'self'`. Rust allowed HTTPS images and omitted those directives.
+- Python POST parsing requires `Content-Type: application/json`, a non-empty body, and a JSON object. Rust previously accepted missing/wrong content types and treated an empty body as an empty object.
+
+### Change and regression coverage
+
+Changed only `Engen-main/Engen-main/rust-engine/src/dashboard_server.rs`:
+
+- Align the Rust response writer's security headers and CSP directives with the Python reference.
+- Require JSON content type for POST requests, allowing ordinary charset parameters.
+- Reject empty POST bodies; return 400 for malformed JSON and non-object JSON; return 415 for unsupported content types.
+- Add the 415 status phrase.
+- Add regression tests for wrong content type and empty POST bodies.
+- Extend the real localhost TCP response-writer test to assert the restrictive CSP and browser-security headers.
+- Update the disposable test-request helper to supply the required JSON content type.
+
+No new dependency, schema, storage, retention, or data migration. No real user database was opened or changed. Tests use the existing disposable dashboard fixture.
+
+### Verification
+
+- Local `cargo fmt`, `cargo test`, and Clippy: **NOT RUN**; this GitHub-only run had no local Rust toolchain.
+- Initial PR run #44666102409 failed only at `cargo fmt --all -- --check`; all test steps were skipped. The exact formatting differences were corrected.
+- Final Rust Engine Checks run #44666191711 on exact implementation head `35cc34ac220c8010934cd38a74f3253b1c636750`: **SUCCESS** — https://github.com/santosreemangal-lgtm/Engen/actions/runs/44666191711.
+- All workflow checks passed: Rust formatting; `cargo test --all-targets`; public read-only RPC smoke; Python Phase 2 reference tests; Python Phase 8 P&L reference tests; dashboard/browser syntax; Rust launcher smoke; localhost dashboard process E2E; release binary check with Python environment variables unset; Clippy with warnings denied; and the report-only migration audit.
+- Rust test output: 225 library tests, 3 binary tests, 4 CLI tests, 1 public-RPC test, and 7 transaction-pipeline tests passed under the Rust test targets. The separate public read-only RPC smoke step also passed.
+- The static migration audit still reports **38 Python production/runtime blockers** and `RUNTIME GATE: NOT READY`. A successful report-only audit does not mean the migration is complete.
+
+### Remaining gaps and next task
+
+- This closes only the evidenced HTTP-header and POST request-validation mismatch. The full route-by-route Python/Rust response/status/data-isolation matrix and remaining API error/security cases still need review and focused regression tests.
+- Whole-process crash/restart and disposable-database compatibility E2E, complete runtime composition, remaining Python production/runtime retirement, and the local source-receipt-to-paper-ledger-commit latency benchmark remain open.
+- Keep PRs #48–#56 Draft/unmerged until every acceptance gate is separately reviewed. No merge, deployment, cutover, live execution, signing, or broadcast is authorized.

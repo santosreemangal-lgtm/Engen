@@ -835,18 +835,38 @@ impl DashboardApp {
                     }
                 }
             }
-            let body: Value = if request.body.is_empty() {
-                json!({})
-            } else {
-                match serde_json::from_slice::<Value>(&request.body) {
-                    Ok(value) if value.is_object() => value,
-                    _ => {
-                        return HttpResponse::json(
-                            400,
-                            json!({"error":"Request body must be a JSON object."}),
-                        )
-                    }
+            let body: Value = if request.method == "POST" {
+                let content_type = request
+                    .headers
+                    .get("content-type")
+                    .and_then(|value| value.split(';').next())
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if content_type != "application/json" {
+                    return HttpResponse::json(
+                        415,
+                        json!({"error":"Content-Type must be application/json"}),
+                    );
                 }
+                if request.body.is_empty() {
+                    return HttpResponse::json(400, json!({"error":"Invalid JSON request"}));
+                }
+                let value = match serde_json::from_slice::<Value>(&request.body) {
+                    Ok(value) => value,
+                    Err(_) => {
+                        return HttpResponse::json(400, json!({"error":"Invalid JSON request"}));
+                    }
+                };
+                if !value.is_object() {
+                    return HttpResponse::json(
+                        400,
+                        json!({"error":"A JSON object is required"}),
+                    );
+                }
+                value
+            } else {
+                json!({})
             };
             let query: HashMap<String, String> = parsed
                 .query()
@@ -2158,6 +2178,7 @@ fn status_reason(status: u16) -> &'static str {
         405 => "Method Not Allowed",
         409 => "Conflict",
         413 => "Payload Too Large",
+        415 => "Unsupported Media Type",
         429 => "Too Many Requests",
         500 => "Internal Server Error",
         503 => "Service Unavailable",
@@ -2237,7 +2258,7 @@ fn read_request(stream: &TcpStream, peer_ip: IpAddr) -> std::io::Result<HttpRequ
 
 fn write_response(mut stream: TcpStream, response: HttpResponse) -> std::io::Result<()> {
     let headers=format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data: https:\r\n\r\n",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nPermissions-Policy: camera=(), microphone=(), geolocation=()\r\nContent-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'\r\n\r\n",
         response.status,status_reason(response.status),response.content_type,response.body.len()
     );
     stream.write_all(headers.as_bytes())?;
@@ -2351,6 +2372,7 @@ mod tests {
         let mut headers = HashMap::from([("host".to_string(), "127.0.0.1:8000".to_string())]);
         let body = if method == "POST" {
             headers.insert("origin".to_string(), "http://127.0.0.1:8000".to_string());
+            headers.insert("content-type".to_string(), "application/json".to_string());
             serde_json::to_vec(&body).unwrap()
         } else {
             Vec::new()
@@ -2431,10 +2453,54 @@ mod tests {
 
         let response = String::from_utf8(response).unwrap();
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
-        assert!(response.contains("Content-Security-Policy:"));
+        assert!(response.contains("X-Content-Type-Options: nosniff\r\n"));
+        assert!(response.contains("X-Frame-Options: DENY\r\n"));
+        assert!(response.contains("Referrer-Policy: no-referrer\r\n"));
+        assert!(response.contains("Permissions-Policy: camera=(), microphone=(), geolocation=()\r\n"));
+        assert!(response.contains("img-src 'self' data:;"));
+        assert!(response.contains("object-src 'none';"));
+        assert!(response.contains("base-uri 'self';"));
+        assert!(response.contains("frame-ancestors 'none';"));
+        assert!(response.contains("form-action 'self'"));
+        assert!(!response.contains("img-src 'self' data: https:"));
         let body = response.split_once("\r\n\r\n").unwrap().1;
         let payload: Value = serde_json::from_str(body).unwrap();
         assert_eq!(payload["wallets"], json!([]));
+    }
+
+    #[test]
+    fn dashboard_api_rejects_non_json_post_content_type() {
+        let (_directory, app) = dashboard_app_fixture();
+        let mut request = api_request(
+            "POST",
+            "/api/wallets",
+            json!({"action":"add","address":"11111111111111111111111111111111"}),
+        );
+        request
+            .headers
+            .insert("content-type".to_string(), "text/plain".to_string());
+
+        let response = app.handle(request);
+        assert_eq!(response.status, 415);
+        assert_eq!(
+            response_json(response)["error"],
+            "Content-Type must be application/json"
+        );
+    }
+
+    #[test]
+    fn dashboard_api_rejects_empty_post_body() {
+        let (_directory, app) = dashboard_app_fixture();
+        let mut request = api_request(
+            "POST",
+            "/api/wallets",
+            json!({"action":"add","address":"11111111111111111111111111111111"}),
+        );
+        request.body.clear();
+
+        let response = app.handle(request);
+        assert_eq!(response.status, 400);
+        assert_eq!(response_json(response)["error"], "Invalid JSON request");
     }
 
     #[test]

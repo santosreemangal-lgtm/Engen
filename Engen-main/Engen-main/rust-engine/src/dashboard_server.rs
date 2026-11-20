@@ -859,10 +859,7 @@ impl DashboardApp {
                     }
                 };
                 if !value.is_object() {
-                    return HttpResponse::json(
-                        400,
-                        json!({"error":"A JSON object is required"}),
-                    );
+                    return HttpResponse::json(400, json!({"error":"A JSON object is required"}));
                 }
                 value
             } else {
@@ -2456,9 +2453,9 @@ mod tests {
         assert!(response.contains("X-Content-Type-Options: nosniff\r\n"));
         assert!(response.contains("X-Frame-Options: DENY\r\n"));
         assert!(response.contains("Referrer-Policy: no-referrer\r\n"));
-        assert!(response.contains(
-            "Permissions-Policy: camera=(), microphone=(), geolocation=()\r\n"
-        ));
+        assert!(
+            response.contains("Permissions-Policy: camera=(), microphone=(), geolocation=()\r\n")
+        );
         assert!(response.contains("img-src 'self' data:;"));
         assert!(response.contains("object-src 'none';"));
         assert!(response.contains("base-uri 'self';"));

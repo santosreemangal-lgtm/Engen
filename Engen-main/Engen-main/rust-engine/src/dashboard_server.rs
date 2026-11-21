@@ -941,7 +941,7 @@ impl DashboardApp {
                 match self.context.rpc.get_health() {
                     Ok(status) => HttpResponse::json(
                         200,
-                        json!({"mode":"READ_ONLY","available":true,"status":status,"endpoint":"configured public Solana RPC","checked_at":checked_at,"transaction_broadcast":false}),
+                        json!({"mode":"READ_ONLY","available":status == "ok","status":status,"endpoint":"configured public Solana RPC","checked_at":checked_at,"transaction_broadcast":false}),
                     ),
                     Err(error) => HttpResponse::json(
                         200,
@@ -2403,6 +2403,67 @@ mod tests {
         );
         let allowed = app.handle(request);
         assert_eq!(allowed.status, 200);
+    }
+
+    #[test]
+    fn dashboard_rpc_health_requires_ok_status_for_available() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            for status in ["behind", "ok"] {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = [0_u8; 4096];
+                let _ = stream.read(&mut request);
+                let payload = serde_json::to_vec(&json!({
+                    "jsonrpc":"2.0",
+                    "id":1,
+                    "result":status
+                }))
+                .unwrap();
+                let header = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    payload.len()
+                );
+                stream.write_all(header.as_bytes()).unwrap();
+                stream.write_all(&payload).unwrap();
+                stream.flush().unwrap();
+            }
+        });
+
+        let (_directory, mut app) = dashboard_app_fixture();
+        let app_mut = Arc::get_mut(&mut app).unwrap();
+        app_mut.context.rpc = Arc::new(
+            SolanaRpcClient::new(RpcConfig {
+                endpoint: format!("http://{address}"),
+                timeout: Duration::from_secs(1),
+                retries: 0,
+                backoff: Duration::ZERO,
+                min_interval: Duration::ZERO,
+            })
+            .unwrap(),
+        );
+
+        let behind = app.handle(api_request("GET", "/api/rpc-health", Value::Null));
+        assert_eq!(behind.status, 200);
+        let behind = response_json(behind);
+        assert_eq!(behind["available"], false);
+        assert_eq!(behind["status"], "behind");
+        assert_eq!(behind["transaction_broadcast"], false);
+
+        let healthy = app.handle(api_request("GET", "/api/rpc-health", Value::Null));
+        assert_eq!(healthy.status, 200);
+        let healthy = response_json(healthy);
+        assert_eq!(healthy["available"], true);
+        assert_eq!(healthy["status"], "ok");
+        assert_eq!(healthy["transaction_broadcast"], false);
+
+        server.join().unwrap();
     }
 
     #[test]

@@ -205,3 +205,40 @@ No new dependency, schema, storage, retention, or data migration. No real user d
 - This closes only the evidenced HTTP-header and POST request-validation mismatch. The full route-by-route Python/Rust response/status/data-isolation matrix and remaining API error/security cases still need review and focused regression tests.
 - Whole-process crash/restart and disposable-database compatibility E2E, complete runtime composition, remaining Python production/runtime retirement, and the local source-receipt-to-paper-ledger-commit latency benchmark remain open.
 - Keep PRs #48–#56 Draft/unmerged until every acceptance gate is separately reviewed. No merge, deployment, cutover, live execution, signing, or broadcast is authorized.
+
+
+## 2026-11-21 — Rust RPC health availability parity
+
+**Status: IMPLEMENTED — awaiting feature-PR CI.** This is one narrow Dashboard API parity correction, not a runtime acceptance or cutover claim.
+
+### Repository and branch evidence
+
+- Repository: `santosreemangal-lgtm/Engen`; default branch `main` at `ba501c43260cd7569714b58f84eb0bf11967f444`.
+- Canonical migration PR #48 remains Draft/open/unmerged; canonical branch `rewrite/rust-backend-20261109` at `b0df77d2775e4b4280442cf35ea64f40c4292d6b`.
+- Current Rust runtime migration stack is descended from PR #48 through Draft PR #49; the immediately preceding stack tip was PR #56, branch `fix/rust-dashboard-http-security-parity-20261120`, head `edf511d928ab6ee2da0d394116679a6c28559a3e`.
+- New feature branch: `fix/rust-rpc-health-status-parity-20261121`, based exactly on that PR #56 head.
+- Implementation commits: `ec32fe06e93958f12d74a4b1d2ea8d4f28e56964` and test HTTP-framing correction `7e2586a3763193d69fef8ab4eca4c29f7ff5480a`.
+
+### Evidence and change
+
+Python `dashboard/server.py::rpc_health_report` sets `available` to `status == "ok"`. Rust `dashboard_server.rs::get_api("/api/rpc-health")` previously set `available=true` for every successful, non-empty `getHealth` response. A valid but unhealthy provider result such as `"behind"` therefore produced different API semantics.
+
+- Rust now sets `available` only when the returned status is exactly `"ok"`, while preserving the provider status string and paper/read-only flags.
+- Added `dashboard_rpc_health_requires_ok_status_for_available`: a loopback-only mock RPC returns `"behind"` and then `"ok"`; the test asserts false/true availability respectively and verifies `transaction_broadcast=false`.
+- The test uses the existing dashboard fixture, which creates disposable temporary SQLite databases. No external RPC endpoint or user data is used.
+
+### Files and verification
+
+- Changed: `Engen-main/Engen-main/rust-engine/src/dashboard_server.rs`.
+- Local `cargo fmt`, `cargo test`, and Clippy: **NOT RUN**; this GitHub connector execution has no local Rust toolchain.
+- The parent PR #56 head `edf511d928ab6ee2da0d394116679a6c28559a3e` had Rust Engine Checks run #667 (`44666755882`) **SUCCESS**, all 14 workflow steps. This is baseline evidence only; it does not test the new commits.
+- Feature-PR CI: **PENDING** at the time this record was written. Do not mark this change VERIFIED until a successful workflow run covers the feature head.
+- Compare from base to implementation head showed exactly one code file changed, with no dependency, schema, or workflow changes.
+
+### Safety and remaining work
+
+- No real database, secret, key, production process, or deployment was accessed.
+- No live-trading, signing, transaction broadcast, merge, deployment, or cutover capability was added.
+- Keep this PR Draft/unmerged and keep PR #48 as the canonical migration review.
+- Remaining: full route-by-route API response/status/error/data-isolation matrix; paper endpoint and monitor error-path parity; full-process restart and disposable-database compatibility E2E; remaining Python runtime retirement; source-receipt-to-paper-ledger-commit latency benchmark.
+- Next task after CI: continue the route-by-route API matrix from the current migration stack and fix only the next independently evidenced mismatch.

@@ -242,3 +242,59 @@ Python `dashboard/server.py::rpc_health_report` sets `available` to `status == "
 - Keep this PR Draft/unmerged and keep PR #48 as the canonical migration review.
 - Remaining: full route-by-route API response/status/error/data-isolation matrix; paper endpoint and monitor error-path parity; full-process restart and disposable-database compatibility E2E; remaining Python runtime retirement; source-receipt-to-paper-ledger-commit latency benchmark.
 - Next task after CI: continue the route-by-route API matrix from the current migration stack and fix only the next independently evidenced mismatch.
+
+
+## 2026-11-22 — Fail closed on Rust profile balance-snapshot report errors
+
+**Status: IMPLEMENTED — feature-PR CI pending.** This closes one error-path integrity gap in the Rust Dashboard API; it does not certify full API parity or runtime readiness.
+
+### Repository and CI state verified before the change
+
+- Default branch `main`: `ba501c43260cd7569714b58f84eb0bf11967f444`.
+- Canonical migration PR #48: Draft/open/unmerged; branch `rewrite/rust-backend-20261109`, head `b0df77d2775e4b4280442cf35ea64f40c4292d6b`.
+- Current migration stack tip: Draft PR #57, branch `fix/rust-rpc-health-status-parity-20261121`, head `f05342429c4bdb53bcae97bc9785f1e86f7af4ec`.
+- PR #57's Rust Engine Checks run #44863805994 completed **SUCCESS** on that exact head; all 16 job steps, including formatting, Rust tests, reference tests, launcher/process E2E, release no-Python check, Clippy, and report-only migration audit, passed.
+- New branch `fix/rust-profile-report-fail-closed-20261122` was created from the exact PR #57 head above.
+
+### Evidence and change
+
+Rust `DashboardApp::profiles_report` previously ignored any error from `ProfileStore::current_balances` and continued building a normal-looking report with an empty balances array. That could hide a failed snapshot read as a legitimate empty balance result.
+
+- Rust now stops report construction when any profile's current balance snapshots cannot be read.
+- It returns the established report shape with `database_available: true`, an empty `profiles` array, and a generic `Profile report unavailable.` error. The endpoint retains its legacy 200 status for this body-level report error.
+- Added `dashboard_profiles_report_does_not_hide_balance_snapshot_read_errors`. The test creates a profile in the existing disposable temporary fixture, drops only that fixture's `balance_snapshots` table, then verifies that the endpoint reports the error and does not return a successful-looking partial profile list.
+- No production or user database is opened. The test is isolated to the `tempfile` fixture.
+
+### Files and commits
+
+- Changed: `Engen-main/Engen-main/rust-engine/src/dashboard_server.rs`.
+- Progress record: `docs/AUTONOMOUS_PROGRESS.md`.
+- Base SHA: `f05342429c4bdb53bcae97bc9785f1e86f7af4ec`.
+- Implementation commit: `291a134414f17ac3c76a04c6b783f2b5f8bcc634`.
+- Local Rust formatting/tests/Clippy: **NOT TESTED**; this execution has GitHub integration only and no local Rust toolchain.
+- Feature-PR CI: **PENDING**; do not mark VERIFIED until a successful workflow run covers the feature branch head.
+
+### Risks and remaining acceptance gates
+
+- This intentionally avoids returning partial profile data when a stored snapshot read fails. The response status remains 200 for compatibility with the Python report's body-level error convention; clients must honor the `error` field.
+- The full route-by-route API response/status/data-isolation matrix remains open.
+- Whole-process crash/restart and disposable-database compatibility E2E, complete Rust runtime composition, remaining Python production/runtime retirement, and source-receipt-to-paper-ledger-commit latency measurement remain open.
+- Keep PR #48 and all migration PRs Draft/unmerged. No merge, deployment, cutover, live execution, signing, or broadcast is authorized.
+- Next: wait for CI on this branch; if green, continue the API error-path matrix with the next independently reproduced discrepancy.
+
+
+### CI correction update — 2026-11-22
+
+- Initial feature-PR Rust Engine Checks run #44982375901 on head `429e1ebc32d1fe54c73e95cf361022d770641d46` failed at **Check Rust formatting** only. The log showed two rustfmt layout differences in the new `match` expression and disposable-fixture SQLite connection declaration; all later test steps were skipped.
+- Applied only those exact rustfmt changes; no logic or assertions changed.
+- Formatting correction commit: `24280b4bfae8a403d86108f0e79f6beacd783cfd`.
+- The PR update should trigger a fresh workflow. Its result is pending and must be checked against the exact updated head before marking this item VERIFIED.
+
+
+### Final feature verification — 2026-11-22
+
+- Rust Engine Checks run #44982427059 completed **SUCCESS** on the exact feature code/progress head `0aa403e74b3eb62beef4b0e6f6135508c81ff0ad`: https://github.com/santosreemangal-lgtm/Engen/actions/runs/44982427059.
+- All 16 workflow steps passed, including Rust formatting, `cargo test --all-targets` (including the new disposable-schema regression), read-only RPC smoke, Python behavioral-reference suites, dashboard/browser syntax, Rust launcher smoke, localhost process E2E, release no-Python check, Clippy with warnings denied, and report-only migration audit.
+- The first run #44982375901 failed only at rustfmt; the two exact formatting differences were corrected in commit `24280b4bfae8a403d86108f0e79f6beacd783cfd`. The final successful run covers the corrected feature head.
+- PR #58 is open, Draft, and unmerged. No local Rust commands were run; CI is the verification evidence.
+- **Acceptance status for this narrow profile-report error-path fix: VERIFIED by GitHub Actions.** Overall Rust-only runtime gate remains NOT READY; the migration audit still reports 38 Python production/runtime blockers.

@@ -1102,39 +1102,52 @@ impl DashboardApp {
         let mut values = Vec::new();
         for profile in profiles {
             let mut balances = Vec::new();
-            if let Ok(snapshots) = self
+            let snapshots = match self
                 .context
                 .profile_store
                 .current_balances(&profile.profile_id)
             {
-                for snapshot in snapshots {
-                    let amount = BigDecimal::from_str(&snapshot.raw_amount)
-                        .ok()
-                        .zip(BigDecimal::from_str(&format!("1e-{}", snapshot.token_decimals)).ok())
-                        .map(|(raw, factor)| (raw * factor).normalized().to_plain_string());
-                    let age = chrono::DateTime::parse_from_rfc3339(&snapshot.observed_at)
-                        .ok()
-                        .map(|date| {
-                            Utc::now()
-                                .signed_duration_since(date.with_timezone(&Utc))
-                                .num_seconds()
-                                .max(0)
-                        });
-                    balances.push(json!({
-                        "wallet_address":snapshot.wallet_address,
-                        "token_mint":snapshot.token_mint,
-                        "raw_amount":snapshot.raw_amount,
-                        "token_decimals":snapshot.token_decimals,
-                        "amount":amount,
-                        "observed_at":snapshot.observed_at,
-                        "source":snapshot.source,
-                        "freshness_seconds":snapshot.freshness_seconds,
-                        "age_seconds":age,
-                        "is_stale":age.zip(snapshot.freshness_seconds).map(|(age,limit)| age>limit),
-                        "value_kind":"OBSERVED_ON_CHAIN_SNAPSHOT",
-                        "simulated":false
-                    }));
+                Ok(snapshots) => snapshots,
+                Err(_) => {
+                    // Do not return a successful-looking partial profile report when
+                    // a stored balance snapshot cannot be read.
+                    return HttpResponse::json(
+                        200,
+                        json!({
+                            "database_available":true,
+                            "profiles":[],
+                            "error":"Profile report unavailable."
+                        }),
+                    );
                 }
+            };
+            for snapshot in snapshots {
+                let amount = BigDecimal::from_str(&snapshot.raw_amount)
+                    .ok()
+                    .zip(BigDecimal::from_str(&format!("1e-{}", snapshot.token_decimals)).ok())
+                    .map(|(raw, factor)| (raw * factor).normalized().to_plain_string());
+                let age = chrono::DateTime::parse_from_rfc3339(&snapshot.observed_at)
+                    .ok()
+                    .map(|date| {
+                        Utc::now()
+                            .signed_duration_since(date.with_timezone(&Utc))
+                            .num_seconds()
+                            .max(0)
+                    });
+                balances.push(json!({
+                    "wallet_address":snapshot.wallet_address,
+                    "token_mint":snapshot.token_mint,
+                    "raw_amount":snapshot.raw_amount,
+                    "token_decimals":snapshot.token_decimals,
+                    "amount":amount,
+                    "observed_at":snapshot.observed_at,
+                    "source":snapshot.source,
+                    "freshness_seconds":snapshot.freshness_seconds,
+                    "age_seconds":age,
+                    "is_stale":age.zip(snapshot.freshness_seconds).map(|(age,limit)| age>limit),
+                    "value_kind":"OBSERVED_ON_CHAIN_SNAPSHOT",
+                    "simulated":false
+                }));
             }
             values.push(json!({
                 "profile_id":profile.profile_id,
@@ -2612,6 +2625,31 @@ mod tests {
             serde_json::from_slice(&fs::read(&app.monitor_state_file).unwrap()).unwrap();
         assert_eq!(state["global_enabled"], false);
         assert!(state["profile_ids"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn dashboard_profiles_report_does_not_hide_balance_snapshot_read_errors() {
+        let (_directory, app) = dashboard_app_fixture();
+        let created = app.handle(api_request(
+            "POST",
+            "/api/profiles",
+            json!({"action":"create","name":"Snapshot read failure fixture"}),
+        ));
+        assert_eq!(created.status, 201);
+
+        // Corrupt only the disposable fixture schema to exercise the read-error path.
+        let connection = rusqlite::Connection::open(app.context.profile_store.path()).unwrap();
+        connection
+            .execute_batch("DROP TABLE balance_snapshots;")
+            .unwrap();
+        drop(connection);
+
+        let response = app.handle(api_request("GET", "/api/profiles", Value::Null));
+        assert_eq!(response.status, 200);
+        let report = response_json(response);
+        assert_eq!(report["database_available"], true);
+        assert_eq!(report["profiles"].as_array().unwrap().len(), 0);
+        assert_eq!(report["error"], "Profile report unavailable.");
     }
 
     #[test]

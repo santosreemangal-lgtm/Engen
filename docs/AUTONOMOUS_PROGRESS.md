@@ -289,3 +289,12 @@ Rust `DashboardApp::profiles_report` previously ignored any error from `ProfileS
 - Applied only those exact rustfmt changes; no logic or assertions changed.
 - Formatting correction commit: `24280b4bfae8a403d86108f0e79f6beacd783cfd`.
 - The PR update should trigger a fresh workflow. Its result is pending and must be checked against the exact updated head before marking this item VERIFIED.
+
+
+### Final feature verification — 2026-11-22
+
+- Rust Engine Checks run #44982427059 completed **SUCCESS** on the exact feature code/progress head `0aa403e74b3eb62beef4b0e6f6135508c81ff0ad`: https://github.com/santosreemangal-lgtm/Engen/actions/runs/44982427059.
+- All 16 workflow steps passed, including Rust formatting, `cargo test --all-targets` (including the new disposable-schema regression), read-only RPC smoke, Python behavioral-reference suites, dashboard/browser syntax, Rust launcher smoke, localhost process E2E, release no-Python check, Clippy with warnings denied, and report-only migration audit.
+- The first run #44982375901 failed only at rustfmt; the two exact formatting differences were corrected in commit `24280b4bfae8a403d86108f0e79f6beacd783cfd`. The final successful run covers the corrected feature head.
+- PR #58 is open, Draft, and unmerged. No local Rust commands were run; CI is the verification evidence.
+- **Acceptance status for this narrow profile-report error-path fix: VERIFIED by GitHub Actions.** Overall Rust-only runtime gate remains NOT READY; the migration audit still reports 38 Python production/runtime blockers.

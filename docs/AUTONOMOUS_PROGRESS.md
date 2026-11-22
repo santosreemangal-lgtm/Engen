@@ -281,3 +281,11 @@ Rust `DashboardApp::profiles_report` previously ignored any error from `ProfileS
 - Whole-process crash/restart and disposable-database compatibility E2E, complete Rust runtime composition, remaining Python production/runtime retirement, and source-receipt-to-paper-ledger-commit latency measurement remain open.
 - Keep PR #48 and all migration PRs Draft/unmerged. No merge, deployment, cutover, live execution, signing, or broadcast is authorized.
 - Next: wait for CI on this branch; if green, continue the API error-path matrix with the next independently reproduced discrepancy.
+
+
+### CI correction update — 2026-11-22
+
+- Initial feature-PR Rust Engine Checks run #44982375901 on head `429e1ebc32d1fe54c73e95cf361022d770641d46` failed at **Check Rust formatting** only. The log showed two rustfmt layout differences in the new `match` expression and disposable-fixture SQLite connection declaration; all later test steps were skipped.
+- Applied only those exact rustfmt changes; no logic or assertions changed.
+- Formatting correction commit: `24280b4bfae8a403d86108f0e79f6beacd783cfd`.
+- The PR update should trigger a fresh workflow. Its result is pending and must be checked against the exact updated head before marking this item VERIFIED.

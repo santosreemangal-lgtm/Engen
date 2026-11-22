@@ -1102,7 +1102,11 @@ impl DashboardApp {
         let mut values = Vec::new();
         for profile in profiles {
             let mut balances = Vec::new();
-            let snapshots = match self.context.profile_store.current_balances(&profile.profile_id) {
+            let snapshots = match self
+                .context
+                .profile_store
+                .current_balances(&profile.profile_id)
+            {
                 Ok(snapshots) => snapshots,
                 Err(_) => {
                     // Do not return a successful-looking partial profile report when
@@ -2634,8 +2638,7 @@ mod tests {
         assert_eq!(created.status, 201);
 
         // Corrupt only the disposable fixture schema to exercise the read-error path.
-        let connection =
-            rusqlite::Connection::open(app.context.profile_store.path()).unwrap();
+        let connection = rusqlite::Connection::open(app.context.profile_store.path()).unwrap();
         connection
             .execute_batch("DROP TABLE balance_snapshots;")
             .unwrap();

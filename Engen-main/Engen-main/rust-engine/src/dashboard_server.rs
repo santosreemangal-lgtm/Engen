@@ -1098,7 +1098,7 @@ impl DashboardApp {
                 return HttpResponse::json(
                     200,
                     json!({"database_available":true,"profiles":[],"error":"Profile report unavailable."}),
-                )
+                );
             }
         };
         let mut values = Vec::new();

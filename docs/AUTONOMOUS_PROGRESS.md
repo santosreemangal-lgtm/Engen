@@ -298,3 +298,45 @@ Rust `DashboardApp::profiles_report` previously ignored any error from `ProfileS
 - The first run #44982375901 failed only at rustfmt; the two exact formatting differences were corrected in commit `24280b4bfae8a403d86108f0e79f6beacd783cfd`. The final successful run covers the corrected feature head.
 - PR #58 is open, Draft, and unmerged. No local Rust commands were run; CI is the verification evidence.
 - **Acceptance status for this narrow profile-report error-path fix: VERIFIED by GitHub Actions.** Overall Rust-only runtime gate remains NOT READY; the migration audit still reports 38 Python production/runtime blockers.
+
+
+## 2026-11-23 — Rust profile-list report error parity
+
+**Status: IMPLEMENTED — feature-branch CI pending.** This is one narrow Dashboard API body/status compatibility correction; it does not certify full API parity or runtime readiness.
+
+### Repository and CI inspection
+
+- Repository default branch `main`: `ba501c43260cd7569714b58f84eb0bf11967f444`.
+- Canonical migration branch `rewrite/rust-backend-20261109`: `b0df77d2775e4b4280442cf35ea64f40c4292d6b`; canonical PR #48 remains Draft/open/unmerged.
+- Current migration stack tip before this task: PR #58, branch `fix/rust-profile-report-fail-closed-20261122`, head `9b14020aa67003ce178c75a263acf7e919aab5d9`; PR #58 remains Draft/open/unmerged.
+- PR #58 Rust Engine Checks run #672 (`44982774503`) completed SUCCESS on exact head `9b14020aa67003ce178c75a263acf7e919aab5d9`; all 16 steps passed, including formatting, Rust tests, read-only RPC smoke, Python Phase 2/8 references, dashboard syntax, Rust launcher/process E2E, Python-free release check, Clippy, and report-only migration audit.
+- Read `MIGRATION_STATUS.md`, `PHASE1_AUDIT.md`, `ROADMAP.md`, the current Python Dashboard server and tests, and the current Rust Dashboard server and tests. The audit is dated 2026-11-10 and is historical; the 2026-11-14 migration status explicitly says core Rust component parity is complete but full Dashboard/API, runtime composition, entrypoints, restart/fault and latency gates remain open. It still inventories 38 Python production/runtime blockers. The current stack's route-by-route API review remains an active acceptance item.
+
+### Evidence and change
+
+Python `load_profiles_report()` initializes `database_available` from whether the profile DB file exists, returns HTTP 200 for its report, and on a schema/read failure retains `database_available=true` while returning an empty `profiles` list plus an error field.
+
+Rust `DashboardApp::profiles_report()` previously returned HTTP 503 and `database_available=false` whenever `ProfileStore::list_profiles(false)` failed, despite the profile database already having been opened by the dashboard context. This disagreed with the Python report's body-level error contract.
+
+- Rust now returns HTTP 200, `database_available=true`, an empty `profiles` array and a generic `Profile report unavailable.` error for this profile-list read failure, consistent with the established Rust snapshot-read error path and Python report semantics.
+- Added `dashboard_profiles_report_keeps_database_available_on_profile_schema_error`. It drops only the `profiles` table in the dashboard test's disposable temporary SQLite database and verifies status/body semantics.
+- Existing snapshot-read regression remains unchanged.
+- No production or user database is opened or modified; no schema migration, dependency, retention or runtime data changes.
+
+### Files and commits
+
+- Changed: `Engen-main/Engen-main/rust-engine/src/dashboard_server.rs`.
+- Progress record: `docs/AUTONOMOUS_PROGRESS.md`.
+- Base SHA: `9b14020aa67003ce178c75a263acf7e919aab5d9` (PR #58 head).
+- Implementation commit: `ca2fe696fe3292d0bc7c8d592a857cda067eaea6`.
+- Feature branch: `fix/rust-profile-list-error-parity-20261123`.
+- Local Rust formatting/tests/Clippy: **NOT TESTED**; this run has GitHub integration only and no local Rust toolchain.
+- Feature-branch CI: **PENDING**; do not mark this change VERIFIED until a successful workflow tests the feature head.
+
+### Risks and remaining acceptance gates
+
+- The endpoint intentionally retains the Python-compatible HTTP 200 body-level error convention; clients must inspect the `error` field and not interpret the empty profiles array as valid empty data.
+- This closes one profile-list error-path mismatch only. Full Dashboard API response/status/data-isolation parity remains open.
+- Whole-process crash/restart and disposable-database compatibility E2E, full Rust runtime composition, remaining Python production/runtime retirement, Fresh/History scheduler and durable retry/recovery acceptance, paper accounting parity, and source-receipt-to-paper-ledger-commit latency measurement remain open.
+- Keep PR #48 and all migration PRs Draft/unmerged. No merge, deployment, cutover, live execution, signing or broadcast.
+- Next: verify this feature branch's CI on its exact head; then continue the API contract matrix with another independently evidenced mismatch or proceed to crash/restart E2E if API parity is sufficiently covered.

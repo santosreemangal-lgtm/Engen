@@ -340,3 +340,11 @@ Rust `DashboardApp::profiles_report()` previously returned HTTP 503 and `databas
 - Whole-process crash/restart and disposable-database compatibility E2E, full Rust runtime composition, remaining Python production/runtime retirement, Fresh/History scheduler and durable retry/recovery acceptance, paper accounting parity, and source-receipt-to-paper-ledger-commit latency measurement remain open.
 - Keep PR #48 and all migration PRs Draft/unmerged. No merge, deployment, cutover, live execution, signing or broadcast.
 - Next: verify this feature branch's CI on its exact head; then continue the API contract matrix with another independently evidenced mismatch or proceed to crash/restart E2E if API parity is sufficiently covered.
+
+
+### CI correction update — 2026-11-23
+
+- Initial feature-PR Rust Engine Checks run #673 (`45107686562`) on head `e003c16d015ced0635a452a6795c0682106deabb` failed at **Check Rust formatting** only. The log identified one missing semicolon after the `HttpResponse::json(...)` return expression in the new `list_profiles` error branch. Rust tests and later steps were skipped.
+- Applied only the exact rustfmt correction; no logic, behavior, or test assertion changed.
+- Formatting correction commit: `1f747fdebba433a084efbf730745b928cb68a0c8`.
+- A new GitHub Actions run is expected for the updated PR head. Its exact result must be checked before marking this change VERIFIED.

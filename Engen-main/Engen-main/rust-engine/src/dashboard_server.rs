@@ -1093,9 +1093,11 @@ impl DashboardApp {
         let profiles = match self.context.profile_store.list_profiles(false) {
             Ok(profiles) => profiles,
             Err(_) => {
+                // The Python reference reports profile-read failures in the response
+                // body and keeps database_available tied to the existing DB file.
                 return HttpResponse::json(
-                    503,
-                    json!({"database_available":false,"profiles":[],"error":"Profile report unavailable."}),
+                    200,
+                    json!({"database_available":true,"profiles":[],"error":"Profile report unavailable."}),
                 )
             }
         };
@@ -2641,6 +2643,27 @@ mod tests {
         let connection = rusqlite::Connection::open(app.context.profile_store.path()).unwrap();
         connection
             .execute_batch("DROP TABLE balance_snapshots;")
+            .unwrap();
+        drop(connection);
+
+        let response = app.handle(api_request("GET", "/api/profiles", Value::Null));
+        assert_eq!(response.status, 200);
+        let report = response_json(response);
+        assert_eq!(report["database_available"], true);
+        assert_eq!(report["profiles"].as_array().unwrap().len(), 0);
+        assert_eq!(report["error"], "Profile report unavailable.");
+    }
+
+    #[test]
+    fn dashboard_profiles_report_keeps_database_available_on_profile_schema_error() {
+        let (_directory, app) = dashboard_app_fixture();
+
+        // Remove only the profiles table in this disposable fixture. Python's
+        // load_profiles_report keeps database_available=true for an existing DB
+        // file and returns a body-level schema/read error with HTTP 200.
+        let connection = rusqlite::Connection::open(app.context.profile_store.path()).unwrap();
+        connection
+            .execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE profiles;")
             .unwrap();
         drop(connection);
 

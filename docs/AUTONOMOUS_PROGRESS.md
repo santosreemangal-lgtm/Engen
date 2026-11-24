@@ -390,3 +390,8 @@ Changes in Engen-main/Engen-main/rust-engine/src/dashboard_server.rs:
 - Whole-process crash/restart and disposable-database compatibility E2E, integrated Rust runtime composition, remaining Python production/runtime retirement, Fresh-first/History-capped scheduler and durable retry/recovery acceptance, exact-decimal BUY/SELL/P&L acceptance, and source-receipt-to-paper-ledger-commit latency measurement remain open.
 - Keep PR #48 and all migration PRs Draft/unmerged. No merge, deployment, cutover, live execution, signing, broadcast, real database access, or retention changes.
 - Next: verify this feature branch's exact-head CI. If green, continue the remaining Dashboard API contract matrix or move to whole-process crash/restart E2E when the matrix is sufficiently covered.
+### CI formatting correction — 2026-11-24
+
+- Initial feature-PR Rust Engine Checks run #676 (45319013205) on head 2801a60327c12bdbe6d9e0f42392337e89306fd2 failed only at Check Rust formatting. The log identified three rustfmt layout differences in the new GET/POST match arms and MonitorServiceError mapping; Rust tests and later checks were skipped.
+- Applied only the exact rustfmt layout changes in commit 5e014f87cedcf4889e9fa678d0418f52f4148aeb. No logic or test assertion changed.
+- A fresh workflow is expected for the updated PR head. Its exact-head result must be checked before this item can be marked VERIFIED.

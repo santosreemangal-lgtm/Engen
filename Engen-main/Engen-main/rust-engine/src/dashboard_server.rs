@@ -22,7 +22,7 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::market_data::fetch_market_price;
-use crate::monitor_service::MonitorService;
+use crate::monitor_service::{MonitorService, MonitorServiceError};
 use crate::paper_copy_runner::{
     execute_pending_paper_orders_with_policy, get_pending_copy_status,
     queue_paper_orders_with_policy, report_with_verified_market_prices, AllowedSides, CopySettings,
@@ -974,10 +974,29 @@ impl DashboardApp {
                         )
                     }
                 };
-                let monitor = self.profile_monitors.lock().ok()
-                    .and_then(|services| services.get(&profile_id).cloned())
-                    .and_then(|service| service.status().ok())
-                    .unwrap_or_else(|| json!({"enabled":false,"interval_seconds":MONITOR_INTERVAL_SECONDS,"wallets":[]}));
+                let service = match self.profile_monitors.lock() {
+                    Ok(services) => services.get(&profile_id).cloned(),
+                    Err(_) => {
+                        return HttpResponse::json(
+                            503,
+                            json!({"error":"Profile monitor state unavailable."}),
+                        )
+                    }
+                };
+                let monitor = match service {
+                    Some(service) => match service.status() {
+                        Ok(status) => status,
+                        Err(_) => {
+                            return HttpResponse::json(
+                                503,
+                                json!({"error":"Profile monitor state unavailable."}),
+                            )
+                        }
+                    },
+                    None => {
+                        json!({"enabled":false,"interval_seconds":MONITOR_INTERVAL_SECONDS,"wallets":[]})
+                    }
+                };
                 HttpResponse::json(
                     200,
                     json!({"profile_id":profile_id,"profile_status":profile.status,"monitor":monitor}),
@@ -1506,24 +1525,63 @@ impl DashboardApp {
                     Err(response) => return response,
                 };
                 if let Err(error) = service.start(&profile.source_wallets) {
-                    return HttpResponse::json(400, json!({"error":error.to_string()}));
+                    let message = error.to_string();
+                    let status = match error {
+                        MonitorServiceError::InvalidWallet
+                        | MonitorServiceError::InvalidInterval => 400,
+                        MonitorServiceError::StateUnavailable
+                        | MonitorServiceError::InvalidShutdownTimeout => 503,
+                    };
+                    if status == 503 {
+                        let _ = service.stop();
+                        let _ = self.set_profile_monitor_pref(&id, false);
+                    }
+                    return HttpResponse::json(status, json!({"error":message}));
                 }
                 if let Err(response) = self.set_profile_monitor_pref(&id, true) {
                     let _ = service.stop();
                     return response;
                 }
-                HttpResponse::json(
-                    200,
-                    json!({"profile_id":id,"monitor":service.status().unwrap_or_else(|_| json!({"enabled":true}))}),
-                )
+                let monitor = match service.status() {
+                    Ok(status) => status,
+                    Err(_) => {
+                        let _ = service.stop();
+                        let _ = self.set_profile_monitor_pref(&id, false);
+                        return HttpResponse::json(
+                            503,
+                            json!({"error":"Profile monitor state unavailable."}),
+                        );
+                    }
+                };
+                HttpResponse::json(200, json!({"profile_id":id,"monitor":monitor}))
             }
             "stop" => {
                 if let Err(response) = self.set_profile_monitor_pref(&id, false) {
                     return response;
                 }
-                let status = self.profile_monitors.lock().ok().and_then(|services| services.get(&id).cloned())
-                    .and_then(|service| service.stop().ok())
-                    .unwrap_or_else(|| json!({"enabled":false,"interval_seconds":MONITOR_INTERVAL_SECONDS,"wallets":[]}));
+                let service = match self.profile_monitors.lock() {
+                    Ok(services) => services.get(&id).cloned(),
+                    Err(_) => {
+                        return HttpResponse::json(
+                            503,
+                            json!({"error":"Profile monitor state unavailable."}),
+                        )
+                    }
+                };
+                let status = match service {
+                    Some(service) => match service.stop() {
+                        Ok(status) => status,
+                        Err(_) => {
+                            return HttpResponse::json(
+                                503,
+                                json!({"error":"Profile monitor state unavailable."}),
+                            )
+                        }
+                    },
+                    None => {
+                        json!({"enabled":false,"interval_seconds":MONITOR_INTERVAL_SECONDS,"wallets":[]})
+                    }
+                };
                 HttpResponse::json(200, json!({"profile_id":id,"monitor":status}))
             }
             _ => HttpResponse::json(400, json!({"error":"Action must be start or stop."})),
@@ -2627,6 +2685,52 @@ mod tests {
             serde_json::from_slice(&fs::read(&app.monitor_state_file).unwrap()).unwrap();
         assert_eq!(state["global_enabled"], false);
         assert!(state["profile_ids"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn profile_monitor_api_fails_closed_when_monitor_registry_is_poisoned() {
+        let (_directory, app) = dashboard_app_fixture();
+        let created = app.handle(api_request(
+            "POST",
+            "/api/profiles",
+            json!({"action":"create","name":"Poisoned monitor registry fixture"}),
+        ));
+        assert_eq!(created.status, 201);
+        let profile_id = response_json(created)["profile"]["profile_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = app.profile_monitors.lock().unwrap();
+            panic!("poison the disposable profile-monitor registry");
+        }));
+        assert!(poisoned.is_err());
+
+        let target = format!("/api/profile-monitor?profile_id={profile_id}");
+        let report = app.handle(api_request("GET", &target, Value::Null));
+        assert_eq!(report.status, 503);
+        assert_eq!(
+            response_json(report)["error"],
+            "Profile monitor state unavailable."
+        );
+
+        let stopped = app.handle(api_request(
+            "POST",
+            "/api/profile-monitor",
+            json!({"action":"stop","profile_id":profile_id}),
+        ));
+        assert_eq!(stopped.status, 503);
+        assert_eq!(
+            response_json(stopped)["error"],
+            "Profile monitor state unavailable."
+        );
+
+        // Even though in-memory status is unavailable, the explicit opt-out is
+        // persisted before the stop-status check so restart will not resume it.
+        let prefs: Value =
+            serde_json::from_slice(&fs::read(&app.monitor_state_file).unwrap()).unwrap();
+        assert!(prefs["profile_ids"].as_array().unwrap().is_empty());
     }
 
     #[test]

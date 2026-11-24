@@ -348,3 +348,50 @@ Rust `DashboardApp::profiles_report()` previously returned HTTP 503 and `databas
 - Applied only the exact rustfmt correction; no logic, behavior, or test assertion changed.
 - Formatting correction commit: `1f747fdebba433a084efbf730745b928cb68a0c8`.
 - A new GitHub Actions run is expected for the updated PR head. Its exact result must be checked before marking this change VERIFIED.
+
+## 2026-11-24 — Rust profile-monitor status/error propagation
+
+**Status: IMPLEMENTED — feature-branch CI pending.** This is a narrow Dashboard API lifecycle/error-path correction. It does not certify complete API parity or Rust-only runtime readiness.
+
+### Repository and baseline verification
+
+- Repository: santosreemangal-lgtm/Engen; default branch main HEAD: ba501c43260cd7569714b58f84eb0bf11967f444.
+- Canonical migration PR #48 remains open, Draft, and unmerged; head branch rewrite/rust-backend-20261109, SHA b0df77d2775e4b4280442cf35ea64f40c4292d6b.
+- Latest migration stack PR #59 remains open, Draft, and unmerged; branch fix/rust-profile-list-error-parity-20261123, head SHA c72ae737c100683daaf7cffd07d429f7f7af86bc.
+- PR #59 Rust Engine Checks run #675 (45107768752) completed SUCCESS on that exact head SHA. All 14 substantive workflow steps passed: Rust formatting, Rust unit/integration tests, public read-only RPC smoke, Python Phase 2/8 behavioral references, dashboard/browser syntax, Rust launcher smoke, localhost process E2E, release Python-dependency check, Clippy, and report-only migration audit. The two post-job bookkeeping steps also completed.
+- Re-read the Rust migration status, Phase 1 audit, Phase 2 transaction-engine report, profile/P&L/Phase 9 task documents, latency benchmark plan, safety release gates, current Python Dashboard server and monitor service, Rust Dashboard server and monitor service, ProfileStore, and Rust dashboard regression tests. The migration status explicitly separates core Rust component parity from the still-open Dashboard API, runtime composition, launcher/tool migration, Python-free production entrypoint, and restart/fault acceptance gates.
+
+### Evidence and change
+
+The Python /api/profile-monitor stop handler persists the opt-out and propagates monitor-service errors through its HTTP error handling. Rust previously converted poisoned profile-monitor registry locks and MonitorService::stop() errors into a successful HTTP 200 response with an apparently disabled monitor. The Rust GET route likewise converted registry/status errors into a normal-looking disabled response. The Rust start route mapped every MonitorService::start() error to HTTP 400 and defaulted a failed post-start status read to an enabled response.
+
+Changes in Engen-main/Engen-main/rust-engine/src/dashboard_server.rs:
+
+- GET /api/profile-monitor now returns HTTP 503 if the monitor registry lock or a stored service status is unavailable; it returns the disabled default only when no service exists.
+- POST /api/profile-monitor stop continues to persist the explicit opt-out first, then returns HTTP 503 if the registry or service stop status cannot be verified instead of claiming a successful disabled state.
+- POST start distinguishes invalid interval/wallet input (400) from unavailable monitor state (503). If state becomes unavailable after a start attempt, it best-effort stops the service and persists opt-out before returning 503.
+- Added profile_monitor_api_fails_closed_when_monitor_registry_is_poisoned. It poisons only the in-memory registry belonging to the disposable dashboard fixture, verifies GET and POST stop return 503, and verifies the opt-out is persisted so restart will not automatically resume the profile monitor.
+- Existing tests and assertions were retained.
+
+### Files and commits
+
+- Changed: Engen-main/Engen-main/rust-engine/src/dashboard_server.rs.
+- Progress record: docs/AUTONOMOUS_PROGRESS.md.
+- Base SHA: c72ae737c100683daaf7cffd07d429f7f7af86bc (verified PR #59 head).
+- Implementation commit: f81f0736be3c55cf0955fee2f59a12de8114fe07.
+- Feature branch: fix/rust-profile-monitor-error-propagation-20261124.
+- Local Rust formatting/tests/Clippy: NOT TESTED; this GitHub-only run has no local Rust toolchain.
+- New feature-branch GitHub Actions: PENDING; do not mark this change VERIFIED until a successful run covers the exact feature head.
+
+### Risks and remaining acceptance gates
+
+- On an in-memory registry failure, the API now reports 503 rather than falsely claiming monitoring is disabled. The POST stop path still persists the explicit opt-out before reporting the in-memory status failure.
+- This closes one monitor lifecycle error-path gap only. Full route-by-route Dashboard API/status/data-isolation parity remains open.
+- Whole-process crash/restart and disposable-database compatibility E2E, integrated Rust runtime composition, remaining Python production/runtime retirement, Fresh-first/History-capped scheduler and durable retry/recovery acceptance, exact-decimal BUY/SELL/P&L acceptance, and source-receipt-to-paper-ledger-commit latency measurement remain open.
+- Keep PR #48 and all migration PRs Draft/unmerged. No merge, deployment, cutover, live execution, signing, broadcast, real database access, or retention changes.
+- Next: verify this feature branch's exact-head CI. If green, continue the remaining Dashboard API contract matrix or move to whole-process crash/restart E2E when the matrix is sufficiently covered.
+### CI formatting correction — 2026-11-24
+
+- Initial feature-PR Rust Engine Checks run #676 (45319013205) on head 2801a60327c12bdbe6d9e0f42392337e89306fd2 failed only at Check Rust formatting. The log identified three rustfmt layout differences in the new GET/POST match arms and MonitorServiceError mapping; Rust tests and later checks were skipped.
+- Applied only the exact rustfmt layout changes in commit 5e014f87cedcf4889e9fa678d0418f52f4148aeb. No logic or test assertion changed.
+- A fresh workflow is expected for the updated PR head. Its exact-head result must be checked before this item can be marked VERIFIED.

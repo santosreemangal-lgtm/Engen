@@ -993,7 +993,9 @@ impl DashboardApp {
                             )
                         }
                     },
-                    None => json!({"enabled":false,"interval_seconds":MONITOR_INTERVAL_SECONDS,"wallets":[]}),
+                    None => {
+                        json!({"enabled":false,"interval_seconds":MONITOR_INTERVAL_SECONDS,"wallets":[]})
+                    }
                 };
                 HttpResponse::json(
                     200,
@@ -1525,8 +1527,10 @@ impl DashboardApp {
                 if let Err(error) = service.start(&profile.source_wallets) {
                     let message = error.to_string();
                     let status = match error {
-                        MonitorServiceError::InvalidWallet | MonitorServiceError::InvalidInterval => 400,
-                        MonitorServiceError::StateUnavailable | MonitorServiceError::InvalidShutdownTimeout => 503,
+                        MonitorServiceError::InvalidWallet
+                        | MonitorServiceError::InvalidInterval => 400,
+                        MonitorServiceError::StateUnavailable
+                        | MonitorServiceError::InvalidShutdownTimeout => 503,
                     };
                     if status == 503 {
                         let _ = service.stop();
@@ -1574,7 +1578,9 @@ impl DashboardApp {
                             )
                         }
                     },
-                    None => json!({"enabled":false,"interval_seconds":MONITOR_INTERVAL_SECONDS,"wallets":[]}),
+                    None => {
+                        json!({"enabled":false,"interval_seconds":MONITOR_INTERVAL_SECONDS,"wallets":[]})
+                    }
                 };
                 HttpResponse::json(200, json!({"profile_id":id,"monitor":status}))
             }

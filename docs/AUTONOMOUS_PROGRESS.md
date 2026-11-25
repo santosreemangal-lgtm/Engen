@@ -43,3 +43,10 @@ Phase 2 of `rust-engine/PHASE2_SOLANA_TRANSACTION_ENGINE.md` identifies independ
 ### Next task
 
 After this branch's CI result, integrate the verified lease guard into the canonical monitor scan/application path and test that ownership is checked before any paper-order queue/commit. Keep PR #48 Draft and unmerged.
+
+### CI result update
+
+- GitHub Actions Rust Engine Checks run #679 (`45540542568`) completed **SUCCESS** on exact implementation head `a2ee1b35717a8919e0cfbb5eee98f961e25d5c56`.
+- All workflow steps passed: Rust formatting, Rust unit/integration tests (including the new OS-process lease race and restart/expiry tests), public read-only RPC smoke, selected Python Phase 2 references, Python Phase 8 references, dashboard/browser syntax, Clippy, and post-checkout.
+- This GitHub Actions result is the verification evidence for the implementation commit. Local Cargo commands remain **NOT TESTED**.
+- The progress-document update itself is metadata-only and will create a new PR head; its workflow result must be checked separately.

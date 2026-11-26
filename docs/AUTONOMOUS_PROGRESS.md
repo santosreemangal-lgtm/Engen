@@ -50,3 +50,54 @@ After this branch's CI result, integrate the verified lease guard into the canon
 - All workflow steps passed: Rust formatting, Rust unit/integration tests (including the new OS-process lease race and restart/expiry tests), public read-only RPC smoke, selected Python Phase 2 references, Python Phase 8 references, dashboard/browser syntax, Clippy, and post-checkout.
 - This GitHub Actions result is the verification evidence for the implementation commit. Local Cargo commands remain **NOT TESTED**.
 - The progress-document update itself is metadata-only and will create a new PR head; its workflow result must be checked separately.
+
+
+## 2026-11-26 — MonitorService durable lease integration
+
+- Repository: santosreemangal-lgtm/Engen
+- Canonical migration PR: #48 (Draft; remains unmerged)
+- Dependency PR: #61 (Draft; remains unmerged)
+- Dependency branch/head: feat/rust-durable-monitor-leases-20261125 / ac074e5ab96d2b942cb343c8e428f5b8ff17affa
+- Feature branch: feat/monitor-service-durable-lease-guard-20261126
+- Implementation commit: 7f0a0a6ec0cee10525834517a0d6af0a454e4e59
+- Test-stability commit: 5ad8cd975f99a30d7846a202e2c6adf11cc9f6b1
+- Phase 2 report addendum commit: b8e3eddca054cb04d0d255cc590519258139446d
+- Status: IMPLEMENTED; feature-branch CI pending; local Cargo commands NOT TESTED.
+
+### Acceptance item
+
+Integrate the PR #61 durable SignatureStore lease primitive into MonitorService so separate service instances sharing a profile scope cannot scan the same wallet concurrently.
+
+### Files changed
+
+- Engen-main/Engen-main/rust-engine/src/monitor_service.rs
+  - Add opt-in new_with_lease_store constructor; retain the existing unleased constructor for compatibility.
+  - Acquire a profile/wallet lease before invoking the read-only scan callback.
+  - Renew a 90-second lease every 30 seconds while the scan runs.
+  - Fail closed on lease-store errors; report busy when another process owns the scope.
+  - Release only the current owner's lease on completion.
+  - Add tests for two independent service instances and lease-store failure.
+- Engen-main/Engen-main/rust-engine/PHASE2_SOLANA_TRANSACTION_ENGINE.md
+  - Add a dated status addendum describing the service-level integration and remaining gates.
+- docs/AUTONOMOUS_PROGRESS.md
+  - Record this run and exact dependency/feature commit references.
+
+### Verification
+
+- PR #61 Run #680 (`45540870698`) completed SUCCESS on its exact head `ac074e5ab96d2b942cb343c8e428f5b8ff17affa`. Rust formatting, Rust unit/integration tests, public read-only RPC smoke, selected Python Phase 2/Phase 8 references, dashboard/browser syntax and Clippy all passed.
+- The new MonitorService integration branch has not yet completed GitHub Actions at the time of this record. Do not treat it as VERIFIED until the new branch's CI passes on its exact head.
+- Local Cargo fmt/test/Clippy: NOT TESTED; this execution used GitHub Actions only.
+
+### Safety and limitations
+
+- Tests use only disposable temporary SQLite files. The lease-table failure test drops a table only in its temporary fixture.
+- No production/user database, audit/pending/order/fill evidence, secrets, private keys or seed phrases were accessed.
+- The new lease-enabled constructor is not yet called by a production bootstrap; the canonical branch still lacks complete runtime composition.
+- The existing unleased constructor does not provide cross-process coordination and must not be used for multi-process production monitoring.
+- The lease protects the read-only scan callback only. Paper-order queue and ledger commits still need an independent ownership/freshness check at their commit boundary.
+- No dependency was added; UUID support was already present in Cargo.toml.
+- No live trading, signing, broadcasting, merge, deployment or cutover.
+
+### Next task
+
+After this PR's CI, design and test the paper-copy commit-boundary ownership/freshness guard. Do not claim that monitor scan ownership alone prevents a stale worker from committing a paper fill. Then wire the lease-enabled MonitorService into the eventual Rust application bootstrap.

@@ -215,7 +215,7 @@ impl MonitorService {
         let scope_prefix = scope_prefix.into();
         if scope_prefix.trim().is_empty()
             || scope_prefix.len() > 256
-            || scope_prefix.trim() != scope_prefix
+            || scope_prefix.trim() != scope_prefix.as_str()
         {
             return Err(MonitorServiceError::InvalidLeaseScope);
         }
@@ -631,8 +631,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let store = Arc::new(SignatureStore::open(directory.path().join("monitor.db")).unwrap());
         let first_started = Arc::new(AtomicBool::new(false));
+        let release_first = Arc::new((Mutex::new(false), Condvar::new()));
         let first_scans = Arc::new(AtomicUsize::new(0));
         let first_started_in_scan = Arc::clone(&first_started);
+        let release_first_in_scan = Arc::clone(&release_first);
         let first_scans_in_scan = Arc::clone(&first_scans);
 
         let first = MonitorService::new_with_lease_store(
@@ -643,7 +645,15 @@ mod tests {
                 first_scans_in_scan.fetch_add(1, Ordering::SeqCst);
                 first_started_in_scan.store(true, Ordering::Release);
                 // Keep the first service inside its scan while the second service attempts a claim.
-                thread::sleep(Duration::from_secs(1));
+                let (lock, wake) = &*release_first_in_scan;
+                let mut released = lock.lock().unwrap();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !*released && Instant::now() < deadline {
+                    let (next, _) = wake
+                        .wait_timeout(released, Duration::from_millis(20))
+                        .unwrap();
+                    released = next;
+                }
                 Ok(Vec::new())
             },
         )
@@ -690,6 +700,9 @@ mod tests {
         }
         assert_eq!(second_scans.load(Ordering::SeqCst), 0);
 
+        let (lock, wake) = &*release_first;
+        *lock.lock().unwrap() = true;
+        wake.notify_all();
         first.stop_and_wait(Duration::from_secs(2)).unwrap();
         second.stop_and_wait(Duration::from_secs(2)).unwrap();
         assert_eq!(first_scans.load(Ordering::SeqCst), 1);

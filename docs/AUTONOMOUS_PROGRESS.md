@@ -101,3 +101,11 @@ Integrate the PR #61 durable SignatureStore lease primitive into MonitorService 
 ### Next task
 
 After this PR's CI, design and test the paper-copy commit-boundary ownership/freshness guard. Do not claim that monitor scan ownership alone prevents a stale worker from committing a paper fill. Then wire the lease-enabled MonitorService into the eventual Rust application bootstrap.
+
+
+### CI update — 2026-11-26
+
+- Initial PR run #681 (`45749268048`) failed only at `cargo fmt --all -- --check`; no Rust tests ran on that attempt. The log identified formatting differences in `unix_epoch_seconds`, one extra blank line before a test, and the constructor formatting in the lease-store failure test.
+- Corrected those formatting-only differences in commit `d1f840a9e3e595f6b2873fbaf746f116ba23e3fa`; no behavior or test assertions were changed.
+- Follow-up PR run #682 (`45749361156`) is testing exact head `d1f840a9e3e595f6b2873fbaf746f116ba23e3fa`. Rust formatting: PASS. Rust unit/integration tests: RUNNING at the time of this update. Remaining checks: PENDING.
+- The code change is not yet VERIFIED. If run #682 fails, inspect its job log and apply only a focused fix; do not weaken tests.

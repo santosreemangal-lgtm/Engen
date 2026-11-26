@@ -1,15 +1,22 @@
 //! Opt-in background monitoring lifecycle for public wallets only.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use thiserror::Error;
 
+use crate::signature_store::{SignatureStore, SignatureStoreError};
 use crate::solana_validation::is_valid_solana_address;
+use uuid::Uuid;
+
+const MONITOR_LEASE_SECONDS: u64 = 90;
+const MONITOR_LEASE_RENEW_SECONDS: u64 = 30;
 
 #[derive(Debug, Error)]
 pub enum MonitorServiceError {
@@ -17,6 +24,8 @@ pub enum MonitorServiceError {
     InvalidInterval,
     #[error("Wallet addresses must be supplied as a list of valid Solana public addresses.")]
     InvalidWallet,
+    #[error("A non-empty profile lease scope is required.")]
+    InvalidLeaseScope,
     #[error("Monitoring service state is unavailable.")]
     StateUnavailable,
     #[error("Shutdown timeout must be positive.")]
@@ -54,7 +63,7 @@ impl WalletState {
                         > (interval_seconds.saturating_mul(2)) as i64
                 })
                 .unwrap_or(true);
-            if stale && state != "error" {
+            if stale && state != "error" && state != "busy" {
                 state = "stale".to_string();
             }
         }
@@ -76,16 +85,149 @@ struct SharedState {
 
 type ScanFunction = dyn Fn(&str) -> Result<Vec<Value>, String> + Send + Sync + 'static;
 
+/// A durable per-profile/wallet lease held for the full duration of one read-only scan.
+struct MonitorLeaseGuard {
+    store: Arc<SignatureStore>,
+    scope: String,
+    owner: String,
+    stop_heartbeat: mpsc::Sender<()>,
+    heartbeat: Option<JoinHandle<()>>,
+    lost: Arc<AtomicBool>,
+}
+
+impl MonitorLeaseGuard {
+    fn acquire(
+        store: Arc<SignatureStore>,
+        scope: String,
+    ) -> Result<Option<Self>, SignatureStoreError> {
+        let owner = format!("{}:{}", std::process::id(), Uuid::new_v4());
+        let now = unix_epoch_seconds()?;
+        if !store.claim_monitor_lease(&scope, &owner, now, MONITOR_LEASE_SECONDS)? {
+            return Ok(None);
+        }
+
+        let lost = Arc::new(AtomicBool::new(false));
+        let heartbeat_lost = Arc::clone(&lost);
+        let heartbeat_store = Arc::clone(&store);
+        let heartbeat_scope = scope.clone();
+        let heartbeat_owner = owner.clone();
+        let (stop_heartbeat, stop_rx) = mpsc::channel::<()>();
+        let heartbeat = match thread::Builder::new()
+            .name("engen-monitor-lease-renewal".to_string())
+            .spawn(move || loop {
+                match stop_rx.recv_timeout(Duration::from_secs(MONITOR_LEASE_RENEW_SECONDS)) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        let renewed = unix_epoch_seconds().and_then(|now| {
+                            heartbeat_store.renew_monitor_lease(
+                                &heartbeat_scope,
+                                &heartbeat_owner,
+                                now,
+                                MONITOR_LEASE_SECONDS,
+                            )
+                        });
+                        if !matches!(renewed, Ok(true)) {
+                            heartbeat_lost.store(true, Ordering::Release);
+                            break;
+                        }
+                    }
+                }
+            }) {
+            Ok(handle) => handle,
+            Err(_) => {
+                let _ = store.release_monitor_lease(&scope, &owner);
+                return Err(SignatureStoreError::InvalidInput(
+                    "Unable to start monitor lease renewal.".to_string(),
+                ));
+            }
+        };
+
+        Ok(Some(Self {
+            store,
+            scope,
+            owner,
+            stop_heartbeat,
+            heartbeat: Some(heartbeat),
+            lost,
+        }))
+    }
+
+    fn is_valid(&self) -> bool {
+        !self.lost.load(Ordering::Acquire)
+    }
+}
+
+impl Drop for MonitorLeaseGuard {
+    fn drop(&mut self) {
+        let _ = self.stop_heartbeat.send(());
+        if let Some(heartbeat) = self.heartbeat.take() {
+            let _ = heartbeat.join();
+        }
+        // Owner matching prevents an expired worker from releasing a successor's lease.
+        let _ = self.store.release_monitor_lease(&self.scope, &self.owner);
+    }
+}
+
+fn unix_epoch_seconds() -> Result<i64, SignatureStoreError> {
+    let elapsed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| SignatureStoreError::InvalidInput("System clock is before Unix epoch.".to_string()))?;
+    i64::try_from(elapsed.as_secs()).map_err(|_| {
+        SignatureStoreError::InvalidInput("System clock is outside the supported range.".to_string())
+    })
+}
+
 pub struct MonitorService {
     interval: Duration,
     scan: Arc<ScanFunction>,
+    lease_store: Option<Arc<SignatureStore>>,
+    lease_scope_prefix: Option<String>,
     state: Arc<Mutex<SharedState>>,
     stop_signal: Arc<(Mutex<bool>, Condvar)>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl MonitorService {
+    /// Construct a single-process monitor service without cross-process coordination.
+    ///
+    /// Use new_with_lease_store when multiple processes can monitor the same profile.
     pub fn new<F>(interval_seconds: u64, scan: F) -> Result<Self, MonitorServiceError>
+    where
+        F: Fn(&str) -> Result<Vec<Value>, String> + Send + Sync + 'static,
+    {
+        Self::build(interval_seconds, None, None, scan)
+    }
+
+    /// Construct a monitor service coordinated through the shared SignatureStore database.
+    ///
+    /// Every process monitoring the same profile must use the same store and scope prefix.
+    /// The callback is for read-only wallet scanning; paper-order queue/ledger commits require
+    /// their own ownership and freshness checks at the commit boundary.
+    pub fn new_with_lease_store<F>(
+        interval_seconds: u64,
+        scope_prefix: impl Into<String>,
+        store: Arc<SignatureStore>,
+        scan: F,
+    ) -> Result<Self, MonitorServiceError>
+    where
+        F: Fn(&str) -> Result<Vec<Value>, String> + Send + Sync + 'static,
+    {
+        let scope_prefix = scope_prefix.into();
+        if scope_prefix.trim().is_empty()
+            || scope_prefix.len() > 256
+            || scope_prefix.trim() != scope_prefix
+        {
+            return Err(MonitorServiceError::InvalidLeaseScope);
+        }
+        Self::build(interval_seconds, Some(store), Some(scope_prefix), scan)
+    }
+
+    fn build<F>(
+        interval_seconds: u64,
+        lease_store: Option<Arc<SignatureStore>>,
+        lease_scope_prefix: Option<String>,
+        scan: F,
+    ) -> Result<Self, MonitorServiceError>
     where
         F: Fn(&str) -> Result<Vec<Value>, String> + Send + Sync + 'static,
     {
@@ -95,6 +237,8 @@ impl MonitorService {
         Ok(Self {
             interval: Duration::from_secs(interval_seconds),
             scan: Arc::new(scan),
+            lease_store,
+            lease_scope_prefix,
             state: Arc::new(Mutex::new(SharedState::default())),
             stop_signal: Arc::new((Mutex::new(false), Condvar::new())),
             worker: Mutex::new(None),
@@ -189,6 +333,8 @@ impl MonitorService {
 
         let interval = self.interval;
         let scan = Arc::clone(&self.scan);
+        let lease_store = self.lease_store.clone();
+        let lease_scope_prefix = self.lease_scope_prefix.clone();
         let state = Arc::clone(&self.state);
         let stop_signal = Arc::clone(&self.stop_signal);
         *worker = Some(thread::Builder::new()
@@ -208,16 +354,66 @@ impl MonitorService {
                         if stop_signal.0.lock().map(|value| *value).unwrap_or(true) {
                             break;
                         }
+                        let now = Utc::now().to_rfc3339();
+                        let lease = match (&lease_store, &lease_scope_prefix) {
+                            (Some(store), Some(prefix)) => {
+                                let scope = format!("{prefix}:wallet:{address}");
+                                match MonitorLeaseGuard::acquire(Arc::clone(store), scope) {
+                                    Ok(Some(guard)) => Some(guard),
+                                    Ok(None) => {
+                                        if let Ok(mut snapshot) = state.lock() {
+                                            if let Some(wallet) = snapshot.wallets.get_mut(&address) {
+                                                wallet.state = "busy".to_string();
+                                                wallet.last_scan = Some(now.clone());
+                                                wallet.last_error = Some(
+                                                    "Another process currently owns this wallet monitor lease."
+                                                        .to_string(),
+                                                );
+                                            }
+                                        } else {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                    Err(_) => {
+                                        if let Ok(mut snapshot) = state.lock() {
+                                            if let Some(wallet) = snapshot.wallets.get_mut(&address) {
+                                                wallet.state = "error".to_string();
+                                                wallet.last_scan = Some(now.clone());
+                                                wallet.last_error = Some(
+                                                    "Monitor lease unavailable; scan was not started."
+                                                        .to_string(),
+                                                );
+                                            }
+                                        } else {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                }
+                            }
+                            _ => None,
+                        };
+
+                        if stop_signal.0.lock().map(|value| *value).unwrap_or(true) {
+                            drop(lease);
+                            break;
+                        }
+
                         if let Ok(mut snapshot) = state.lock() {
                             if let Some(wallet) = snapshot.wallets.get_mut(&address) {
                                 wallet.state = "scanning".to_string();
                             }
                         } else {
+                            drop(lease);
                             break;
                         }
 
-                        let now = Utc::now().to_rfc3339();
-                        match scan(&address) {
+                        let mut scan_result = scan(&address);
+                        if lease.as_ref().is_some_and(|guard| !guard.is_valid()) {
+                            scan_result = Err("Monitor lease ownership was lost.".to_string());
+                        }
+                        match scan_result {
                             Ok(mut results) => {
                                 results.truncate(20);
                                 if let Ok(mut snapshot) = state.lock() {
@@ -236,13 +432,14 @@ impl MonitorService {
                                         wallet.state = "error".to_string();
                                         wallet.last_scan = Some(now);
                                         wallet.last_error = Some(
-                                            "Monitoring scan failed; sensitive error details are hidden."
+                                            "Monitoring scan failed or monitor lease was lost; sensitive details are hidden."
                                                 .to_string(),
                                         );
                                     }
                                 }
                             }
                         }
+                        drop(lease);
                     }
 
                     let stop = match stop_signal.0.lock() {
@@ -426,6 +623,127 @@ mod tests {
         let stopped = service.stop_and_wait(Duration::from_secs(2)).unwrap();
         assert_eq!(stopped["worker_stopped"], true);
         assert_eq!(maximum_active.load(Ordering::SeqCst), 1);
+    }
+
+
+    #[test]
+    fn durable_lease_prevents_overlapping_scans_across_service_instances() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Arc::new(SignatureStore::open(directory.path().join("monitor.db")).unwrap());
+        let first_started = Arc::new(AtomicBool::new(false));
+        let first_scans = Arc::new(AtomicUsize::new(0));
+        let first_started_in_scan = Arc::clone(&first_started);
+        let first_scans_in_scan = Arc::clone(&first_scans);
+
+        let first = MonitorService::new_with_lease_store(
+            30,
+            "profile:test",
+            Arc::clone(&store),
+            move |_wallet| {
+                first_scans_in_scan.fetch_add(1, Ordering::SeqCst);
+                first_started_in_scan.store(true, Ordering::Release);
+                // Keep the first service inside its scan while the second service attempts a claim.
+                thread::sleep(Duration::from_secs(1));
+                Ok(Vec::new())
+            },
+        )
+        .unwrap();
+
+        let second_scans = Arc::new(AtomicUsize::new(0));
+        let second_scans_in_scan = Arc::clone(&second_scans);
+        let second = MonitorService::new_with_lease_store(
+            30,
+            "profile:test",
+            Arc::clone(&store),
+            move |_wallet| {
+                second_scans_in_scan.fetch_add(1, Ordering::SeqCst);
+                Ok(Vec::new())
+            },
+        )
+        .unwrap();
+
+        first.start(&[WALLET.to_string()]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !first_started.load(Ordering::Acquire) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            first_started.load(Ordering::Acquire),
+            "first service did not begin its scan"
+        );
+
+        second.start(&[WALLET.to_string()]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = second.status().unwrap()["wallets"][0]["state"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            if state == "busy" {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "second service did not report the wallet lease as busy"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(second_scans.load(Ordering::SeqCst), 0);
+
+        first.stop_and_wait(Duration::from_secs(2)).unwrap();
+        second.stop_and_wait(Duration::from_secs(2)).unwrap();
+        assert_eq!(first_scans.load(Ordering::SeqCst), 1);
+
+        let scope = format!("profile:test:wallet:{WALLET}");
+        let now = unix_epoch_seconds().unwrap();
+        assert!(store
+            .claim_monitor_lease(&scope, "release-verification", now, MONITOR_LEASE_SECONDS)
+            .unwrap());
+        assert!(store
+            .release_monitor_lease(&scope, "release-verification")
+            .unwrap());
+    }
+
+    #[test]
+    fn durable_lease_store_failure_prevents_wallet_scan() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Arc::new(SignatureStore::open(directory.path().join("monitor.db")).unwrap());
+        rusqlite::Connection::open(store.path())
+            .unwrap()
+            .execute_batch("DROP TABLE monitor_leases;")
+            .unwrap();
+
+        let scans = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::clone(&scans);
+        let service = MonitorService::new_with_lease_store(
+            30,
+            "profile:test",
+            store,
+            move |_wallet| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Ok(Vec::new())
+            },
+        )
+        .unwrap();
+
+        service.start(&[WALLET.to_string()]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = service.status().unwrap()["wallets"][0]["state"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            if state == "error" {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "service did not surface the unavailable lease store"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(scans.load(Ordering::SeqCst), 0);
+        service.stop_and_wait(Duration::from_secs(2)).unwrap();
     }
 
     #[test]

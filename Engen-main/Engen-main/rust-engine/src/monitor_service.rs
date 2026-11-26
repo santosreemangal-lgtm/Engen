@@ -169,11 +169,13 @@ impl Drop for MonitorLeaseGuard {
 }
 
 fn unix_epoch_seconds() -> Result<i64, SignatureStoreError> {
-    let elapsed = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| SignatureStoreError::InvalidInput("System clock is before Unix epoch.".to_string()))?;
+    let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|_| {
+        SignatureStoreError::InvalidInput("System clock is before Unix epoch.".to_string())
+    })?;
     i64::try_from(elapsed.as_secs()).map_err(|_| {
-        SignatureStoreError::InvalidInput("System clock is outside the supported range.".to_string())
+        SignatureStoreError::InvalidInput(
+            "System clock is outside the supported range.".to_string(),
+        )
     })
 }
 
@@ -625,7 +627,6 @@ mod tests {
         assert_eq!(maximum_active.load(Ordering::SeqCst), 1);
     }
 
-
     #[test]
     fn durable_lease_prevents_overlapping_scans_across_service_instances() {
         let directory = tempfile::tempdir().unwrap();
@@ -728,16 +729,12 @@ mod tests {
 
         let scans = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&scans);
-        let service = MonitorService::new_with_lease_store(
-            30,
-            "profile:test",
-            store,
-            move |_wallet| {
+        let service =
+            MonitorService::new_with_lease_store(30, "profile:test", store, move |_wallet| {
                 observed.fetch_add(1, Ordering::SeqCst);
                 Ok(Vec::new())
-            },
-        )
-        .unwrap();
+            })
+            .unwrap();
 
         service.start(&[WALLET.to_string()]).unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);

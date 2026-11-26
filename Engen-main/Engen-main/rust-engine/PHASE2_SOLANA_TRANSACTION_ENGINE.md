@@ -144,3 +144,33 @@ The Phase 2 golden test asserts both \`transaction_type\` and \`trade_signal\` i
 - Overall Phase 2: **IN PROGRESS — NOT ACCEPTED**
 
 No user database, production RPC endpoint, active runtime or deployment was touched.
+
+## 8. 2026-11-26 addendum — durable monitor lease integration
+
+The durable lease primitive introduced on Draft PR #61 has now been connected to the Rust MonitorService library through an opt-in constructor.
+
+### Implementation on the follow-up branch
+
+- MonitorService::new_with_lease_store accepts an already-open shared Arc<SignatureStore> and an explicit profile scope prefix.
+- Each wallet scan claims a scope-specific lease before invoking the scan callback.
+- Lease ownership uses a process ID plus a fresh UUID owner token.
+- A 90-second lease is renewed every 30 seconds while the scan callback runs.
+- A failed lease claim reports the wallet as busy and does not invoke the scan callback.
+- A lease-store error fails closed: the scan callback is not invoked.
+- The lease is released on normal completion; owner matching prevents an expired worker from releasing a successor's lease.
+- Existing MonitorService::new remains available as a compatibility constructor without cross-process coordination.
+
+### Added tests
+
+- Two independent MonitorService instances sharing one disposable SQLite store cannot scan the same profile/wallet concurrently.
+- Dropping the lease table in a disposable test database prevents the service from invoking its scan callback.
+- PR #61's successful CI run #680 (45540870698) verified the underlying SignatureStore lease primitive and process-level race/restart tests on exact head ac074e5ab96d2b942cb343c8e428f5b8ff17affa.
+
+### Remaining limitations
+
+- This follow-up is library-level integration. The current canonical branch still has no production application bootstrap that constructs MonitorService and supplies the shared SignatureStore; the Phase 1 runtime-wiring gap remains.
+- The existing unleased constructor must not be used for multi-process production monitoring.
+- The lease covers read-only wallet scanning only. Paper-order queue and ledger commit must independently validate ownership and source freshness at the commit boundary; this follow-up does not claim that guarantee.
+- CI for the follow-up branch is pending. Local Cargo formatting/tests/Clippy were not run in this GitHub-only execution.
+
+Phase 2 decision: durable lease storage and MonitorService-level contention handling are implemented with focused tests, but production runtime wiring, paper-commit ownership fencing, complete differential fixtures, and the broader retry/fault matrix remain open. Overall Phase 2 remains IN PROGRESS — NOT ACCEPTED.

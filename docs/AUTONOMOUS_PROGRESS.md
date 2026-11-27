@@ -109,3 +109,60 @@ After this PR's CI, design and test the paper-copy commit-boundary ownership/fre
 - Corrected those formatting-only differences in commit `d1f840a9e3e595f6b2873fbaf746f116ba23e3fa`; no behavior or test assertions were changed.
 - Follow-up PR run #682 (`45749361156`) is testing exact head `d1f840a9e3e595f6b2873fbaf746f116ba23e3fa`. Rust formatting: PASS. Rust unit/integration tests: RUNNING at the time of this update. Remaining checks: PENDING.
 - The code change is not yet VERIFIED. If run #682 fails, inspect its job log and apply only a focused fix; do not weaken tests.
+
+
+## 2026-11-27 — Revalidate monitor lease before publishing scan results
+
+- Repository: `santosreemangal-lgtm/Engen`
+- Canonical migration PR: #48 (Draft; unmerged).
+- Dependency PR: #62 (Draft; unmerged).
+- Base branch: `feat/monitor-service-durable-lease-guard-20261126`.
+- Base SHA: `42be639b875e196cdf8b6343117f099cd0189400`.
+- Feature branch: `fix/monitor-lease-revalidate-after-scan-20261127`.
+- Implementation commit: `a69e3a875db966a4323676dc8395b3d58c030636`.
+- Status: IMPLEMENTED; new-branch CI pending; local Cargo commands NOT TESTED.
+
+### Acceptance item
+
+PR #62 added periodic lease renewal during a read-only scan. A remaining race existed at scan completion: if a lease expired and another worker reclaimed it before the next 30-second heartbeat, the old worker's in-memory lost flag could still be false and it could publish the completed scan result.
+
+### Change
+
+- Replace the in-memory-only post-scan validity check with a synchronous owner-checked lease renewal.
+- Before publishing scan results, the worker now renews the same profile/wallet lease through SignatureStore.
+- A missing, expired, reclaimed, or unreadable lease marks ownership lost and converts the scan result to an error; results are not published as successful.
+- The guard remains fail-closed. Its owner-only Drop release cannot remove a successor's lease.
+
+### Regression test
+
+- `lease_reclaimed_during_scan_discards_results_and_preserves_successor`
+- Uses a disposable temporary SQLite database.
+- Holds a scan callback, expires and reclaims the lease under a different owner, then releases the old callback.
+- Asserts the old worker reports an error, publishes no latest results or successful-check timestamp, and does not delete the successor's lease.
+
+### Verification
+
+- Parent PR #62 Rust Engine Checks run #683 (`45749579835`) completed SUCCESS on exact base head `42be639b875e196cdf8b6343117f099cd0189400`. Rust formatting, Rust unit/integration tests, read-only RPC smoke, selected Python Phase 2 and Phase 8 references, dashboard/browser syntax, and Clippy passed.
+- New feature-branch CI has not yet run at the time of this record; do not treat the new regression test as verified until CI passes on the new branch head.
+- Local Cargo fmt/test/Clippy: NOT TESTED in this GitHub-only execution.
+
+### Safety and remaining limitations
+
+- The test mutates only its disposable temporary SQLite lease row.
+- No user database, paper ledger, audit evidence, pending/order/fill data, secrets, private keys or seed phrases are accessed or modified.
+- No new dependency.
+- This protects scan-result publication after lease loss; it does NOT yet fence a paper-order/fill commit. The scan callback remains read-only.
+- The canonical Rust CLI still has no production application bootstrap that wires the lease-enabled MonitorService into a long-running runtime.
+- No live trading, signing, broadcast, merge, deployment or cutover.
+
+### Next task
+
+Design and implement a commit-boundary lease/freshness fence for paper execution only after inspecting whether the signature and paper stores can share one SQLite transaction safely. If they cannot, do not claim atomic fencing; document the architecture gap and keep paper execution disabled in the production runtime. Then wire the lease-enabled MonitorService into the eventual Rust application bootstrap.
+
+
+### CI update — 2026-11-27
+
+- PR #63 initial Rust Engine Checks run #684 (`45935918917`) failed at `cargo fmt --all -- --check`; Rust tests and later steps were skipped.
+- The job log identified one formatting-only difference in `MonitorLeaseGuard::renew_and_validate`: rustfmt collapsed the `renew_monitor_lease` call onto one chained line.
+- Corrected only that formatting in commit `e146283415d72b0b12f4bc8af59931d3a3dfa4d1`; no behavior or test assertions changed.
+- A new push triggered fresh CI. Do not treat the implementation as verified until the latest run passes on the final branch head.

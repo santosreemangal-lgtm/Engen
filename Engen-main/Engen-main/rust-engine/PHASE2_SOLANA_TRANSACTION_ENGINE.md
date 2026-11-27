@@ -174,3 +174,16 @@ The durable lease primitive introduced on Draft PR #61 has now been connected to
 - CI for the follow-up branch is pending. Local Cargo formatting/tests/Clippy were not run in this GitHub-only execution.
 
 Phase 2 decision: durable lease storage and MonitorService-level contention handling are implemented with focused tests, but production runtime wiring, paper-commit ownership fencing, complete differential fixtures, and the broader retry/fault matrix remain open. Overall Phase 2 remains IN PROGRESS — NOT ACCEPTED.
+
+
+## 9. 2026-11-27 addendum — revalidate lease before scan-result publication
+
+PR #62's MonitorService integration periodically renews a profile/wallet lease while the read-only scan callback runs. A completion race remained: the lease could expire and be reclaimed by another worker before the next heartbeat, while the original worker's in-memory lost flag was still false.
+
+The follow-up branch `fix/monitor-lease-revalidate-after-scan-20261127` changes the post-scan check to synchronously renew the same lease through SignatureStore before publishing results. If the owner no longer holds a live lease, the scan is treated as failed and its results are not published as successful.
+
+A disposable-SQLite regression test, `lease_reclaimed_during_scan_discards_results_and_preserves_successor`, expires and reclaims the lease under a successor owner while the original callback is blocked. It verifies that the original worker publishes no results/success timestamp and cannot release the successor's lease.
+
+Parent PR #62 CI run #683 (`45749579835`) passed on its exact base head `42be639b875e196cdf8b6343117f099cd0189400`. CI for this follow-up branch is pending; local Cargo commands were not run.
+
+This closes the scan-completion publication race only. It does not fence paper-order or fill commits. Before adding a commit-boundary guard, inspect whether the signature and paper stores can participate in one safe SQLite transaction; if not, retain the limitation rather than claiming atomicity. Production runtime wiring also remains incomplete. Overall Phase 2 remains IN PROGRESS — NOT ACCEPTED.

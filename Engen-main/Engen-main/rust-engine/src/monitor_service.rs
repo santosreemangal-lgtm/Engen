@@ -152,8 +152,26 @@ impl MonitorLeaseGuard {
         }))
     }
 
-    fn is_valid(&self) -> bool {
-        !self.lost.load(Ordering::Acquire)
+    /// Renew at scan completion so an expired/reclaimed lease cannot publish stale results
+    /// merely because the periodic heartbeat has not run again yet.
+    fn renew_and_validate(&self) -> bool {
+        if self.lost.load(Ordering::Acquire) {
+            return false;
+        }
+        let renewed = unix_epoch_seconds().and_then(|now| {
+            self.store.renew_monitor_lease(
+                &self.scope,
+                &self.owner,
+                now,
+                MONITOR_LEASE_SECONDS,
+            )
+        });
+        if matches!(renewed, Ok(true)) {
+            true
+        } else {
+            self.lost.store(true, Ordering::Release);
+            false
+        }
     }
 }
 
@@ -412,7 +430,10 @@ impl MonitorService {
                         }
 
                         let mut scan_result = scan(&address);
-                        if lease.as_ref().is_some_and(|guard| !guard.is_valid()) {
+                        if lease
+                            .as_ref()
+                            .is_some_and(|guard| !guard.renew_and_validate())
+                        {
                             scan_result = Err("Monitor lease ownership was lost.".to_string());
                         }
                         match scan_result {
@@ -716,6 +737,91 @@ mod tests {
         assert!(store
             .release_monitor_lease(&scope, "release-verification")
             .unwrap());
+    }
+
+    #[test]
+    fn lease_reclaimed_during_scan_discards_results_and_preserves_successor() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Arc::new(SignatureStore::open(directory.path().join("monitor.db")).unwrap());
+        let scan_started = Arc::new(AtomicBool::new(false));
+        let release_scan = Arc::new((Mutex::new(false), Condvar::new()));
+        let scan_started_in_callback = Arc::clone(&scan_started);
+        let release_scan_in_callback = Arc::clone(&release_scan);
+
+        let service = MonitorService::new_with_lease_store(
+            30,
+            "profile:lease-reclaim",
+            Arc::clone(&store),
+            move |_wallet| {
+                scan_started_in_callback.store(true, Ordering::Release);
+                let (lock, wake) = &*release_scan_in_callback;
+                let mut released = lock.lock().unwrap();
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !*released && Instant::now() < deadline {
+                    let (next, _) = wake
+                        .wait_timeout(released, Duration::from_millis(10))
+                        .unwrap();
+                    released = next;
+                }
+                Ok(vec![json!({"marker":"must-not-publish"})])
+            },
+        )
+        .unwrap();
+
+        service.start(&[WALLET.to_string()]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !scan_started.load(Ordering::Acquire) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            scan_started.load(Ordering::Acquire),
+            "monitor scan did not start"
+        );
+
+        let scope = format!("profile:lease-reclaim:wallet:{WALLET}");
+        let connection = rusqlite::Connection::open(store.path()).unwrap();
+        assert_eq!(
+            connection
+                .execute(
+                    "UPDATE monitor_leases SET expires_at=0 WHERE scope=?1",
+                    [scope.as_str()],
+                )
+                .unwrap(),
+            1
+        );
+        let now = unix_epoch_seconds().unwrap();
+        assert!(store
+            .claim_monitor_lease(&scope, "successor-owner", now, MONITOR_LEASE_SECONDS)
+            .unwrap());
+
+        let (lock, wake) = &*release_scan;
+        *lock.lock().unwrap() = true;
+        wake.notify_all();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let wallet_state = loop {
+            let wallet = service.status().unwrap()["wallets"][0].clone();
+            if wallet["state"] == "error" {
+                break wallet;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "scan result was not rejected after lease ownership changed"
+            );
+            thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(wallet_state["latest_results"], json!([]));
+        assert!(wallet_state["last_successful_check"].is_null());
+
+        service.stop_and_wait(Duration::from_secs(2)).unwrap();
+        let successor = connection
+            .query_row(
+                "SELECT owner FROM monitor_leases WHERE scope=?1",
+                [scope.as_str()],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(successor, "successor-owner");
     }
 
     #[test]

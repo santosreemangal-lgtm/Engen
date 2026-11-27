@@ -159,12 +159,8 @@ impl MonitorLeaseGuard {
             return false;
         }
         let renewed = unix_epoch_seconds().and_then(|now| {
-            self.store.renew_monitor_lease(
-                &self.scope,
-                &self.owner,
-                now,
-                MONITOR_LEASE_SECONDS,
-            )
+            self.store
+                .renew_monitor_lease(&self.scope, &self.owner, now, MONITOR_LEASE_SECONDS)
         });
         if matches!(renewed, Ok(true)) {
             true

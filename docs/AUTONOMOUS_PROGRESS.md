@@ -158,3 +158,11 @@ PR #62 added periodic lease renewal during a read-only scan. A remaining race ex
 ### Next task
 
 Design and implement a commit-boundary lease/freshness fence for paper execution only after inspecting whether the signature and paper stores can share one SQLite transaction safely. If they cannot, do not claim atomic fencing; document the architecture gap and keep paper execution disabled in the production runtime. Then wire the lease-enabled MonitorService into the eventual Rust application bootstrap.
+
+
+### CI update — 2026-11-27
+
+- PR #63 initial Rust Engine Checks run #684 (`45935918917`) failed at `cargo fmt --all -- --check`; Rust tests and later steps were skipped.
+- The job log identified one formatting-only difference in `MonitorLeaseGuard::renew_and_validate`: rustfmt collapsed the `renew_monitor_lease` call onto one chained line.
+- Corrected only that formatting in commit `e146283415d72b0b12f4bc8af59931d3a3dfa4d1`; no behavior or test assertions changed.
+- A new push triggered fresh CI. Do not treat the implementation as verified until the latest run passes on the final branch head.

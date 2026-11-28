@@ -166,3 +166,57 @@ Design and implement a commit-boundary lease/freshness fence for paper execution
 - The job log identified one formatting-only difference in `MonitorLeaseGuard::renew_and_validate`: rustfmt collapsed the `renew_monitor_lease` call onto one chained line.
 - Corrected only that formatting in commit `e146283415d72b0b12f4bc8af59931d3a3dfa4d1`; no behavior or test assertions changed.
 - A new push triggered fresh CI. Do not treat the implementation as verified until the latest run passes on the final branch head.
+
+
+## 2026-11-28 — Persistent paper commit-boundary lease/freshness fence
+
+- Repository: santosreemangal-lgtm/Engen
+- Canonical migration PR: #48 (Draft; unmerged).
+- Dependency PR: #63 (Draft; exact-head CI Run #685 passed on c48eaf1362c75ae8de9ed93cc125dfd60092e2b6).
+- Base branch: fix/monitor-lease-revalidate-after-scan-20261127.
+- Base SHA: c48eaf1362c75ae8de9ed93cc125dfd60092e2b6.
+- Feature branch: feat/paper-commit-lease-fence-20261128.
+- Implementation commit: 3818126ac630059a80151f928db0d8ff86cb27fe.
+- Regression-test commit: 083ae71c9c722f5b917ae2a957eec9ee20c05c5c.
+- Status: IMPLEMENTED; feature PR CI pending; local Cargo commands NOT TESTED.
+
+### Architecture finding
+
+- SignatureStore and PaperSimulator use private SQLite connections and do not expose a shared transaction handle.
+- A separate lease check followed by a later paper write is not atomic.
+- Both stores can point to one SQLite file. PaperSimulator now renews the lease, rechecks source freshness, and persists paper state in one TransactionBehavior::Immediate transaction. Different files are rejected.
+
+### Changes
+
+- rust-engine/src/paper_simulator.rs:
+  - Added PaperCommitLease and lease-aware persistent create/execute methods.
+  - Persistent automatic-copy order creation and fill commits require a live same-file lease; old unguarded calls fail closed.
+  - Bound the lease scope to the order's validated source wallet.
+  - Rechecked source freshness inside the same transaction as order/reservation or fill/balance/reservation writes.
+- rust-engine/src/paper_copy_runner.rs:
+  - Added explicit SOURCE_STALE and LEASE_UNAVAILABLE execution outcomes.
+- rust-engine/PHASE2_SOLANA_TRANSACTION_ENGINE.md:
+  - Documented the transaction boundary, same-file requirement, fail-closed behavior, and remaining runner/bootstrap gap.
+
+### Regression tests
+
+- persistent_automatic_copy_order_requires_live_same_database_lease
+- persistent_automatic_copy_fill_rejects_lost_owner_then_commits_with_current_owner
+- persistent_automatic_copy_fill_rechecks_source_freshness_inside_commit_transaction
+- commit_lease_rejects_different_sqlite_database_files
+- commit_lease_scope_must_match_source_wallet
+
+Existing persistent simulator restart, fee, and reservation tests now use the guarded path; no assertions were removed. All new database tests use disposable temporary SQLite files.
+
+### Verification and limitations
+
+- Parent PR #63 Run #685 (45935996720) passed on exact base head c48eaf1362c75ae8de9ed93cc125dfd60092e2b6.
+- New PR CI: pending; this change is not yet VERIFIED.
+- Local cargo fmt/test/Clippy: NOT TESTED in this GitHub-only execution.
+- The high-level paper_copy_runner still calls unguarded create/execute methods. Persistent automatic-copy queue/fill therefore fails closed until lease-aware runner variants and Rust application bootstrap pass the lease identity through.
+- Production runtime composition, full transaction differential parity, retry/fault recovery, full restart E2E, and latency acceptance remain open.
+- No live trading, signing, broadcast, real database access, merge, deployment, or cutover.
+
+### Next task
+
+Add lease-aware queue/fill runner entrypoints, pass the MonitorService's exact profile/wallet lease identity through them, and compose the same SQLite path in the Rust application bootstrap. Keep persistent automatic-copy execution blocked until that end-to-end path is tested.

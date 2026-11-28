@@ -326,7 +326,11 @@ impl PaperSimulator {
                  updated_at=CURRENT_TIMESTAMP
              WHERE scope=?1 AND owner=?2
                AND expires_at>CAST(strftime('%s','now') AS INTEGER)",
-            params![lease.scope(), lease.owner.as_str(), PAPER_COMMIT_LEASE_SECONDS],
+            params![
+                lease.scope(),
+                lease.owner.as_str(),
+                PAPER_COMMIT_LEASE_SECONDS
+            ],
         )?;
         if renewed != 1 {
             return Err(PaperSimulatorError::MonitorLeaseLost);

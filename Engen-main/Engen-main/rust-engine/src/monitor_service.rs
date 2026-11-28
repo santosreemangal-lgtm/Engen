@@ -275,7 +275,10 @@ impl MonitorService {
         scan: F,
     ) -> Result<Self, MonitorServiceError>
     where
-        F: Fn(&str, Option<&PaperCommitLease>) -> Result<Vec<Value>, String> + Send + Sync + 'static,
+        F: Fn(&str, Option<&PaperCommitLease>) -> Result<Vec<Value>, String>
+            + Send
+            + Sync
+            + 'static,
     {
         if interval_seconds < 30 {
             return Err(MonitorServiceError::InvalidInterval);
@@ -914,7 +917,8 @@ mod tests {
             1
         );
         service.stop_and_wait(Duration::from_secs(2)).unwrap();
-    }    #[test]
+    }
+    #[test]
     fn commit_context_constructor_passes_exact_profile_wallet_lease() {
         let directory = tempfile::tempdir().unwrap();
         let store = Arc::new(SignatureStore::open(directory.path().join("monitor.db")).unwrap());
@@ -946,5 +950,4 @@ mod tests {
         );
         service.stop_and_wait(Duration::from_secs(2)).unwrap();
     }
-
 }

@@ -474,17 +474,17 @@ pub fn queue_paper_orders_at_with_policy(
     execution_policy: &ExecutionPolicy,
     now_ts: i64,
 ) -> Result<Vec<Value>, PaperCopyError> {
-        queue_paper_orders_at_with_policy_inner(
-            wallet_address,
-            results,
-            simulator,
-            allowed_sides,
-            settings,
-            latency_recorder,
-            execution_policy,
-            now_ts,
-            None,
-        )
+    queue_paper_orders_at_with_policy_inner(
+        wallet_address,
+        results,
+        simulator,
+        allowed_sides,
+        settings,
+        latency_recorder,
+        execution_policy,
+        now_ts,
+        None,
+    )
 }
 
 /// Lease-aware deterministic queue entrypoint for a monitor-owned profile/wallet scan.
@@ -873,7 +873,8 @@ fn queue_paper_orders_at_with_policy_inner(
         );
     }
     Ok(queued)
-}/// Execute queued automatic-copy paper orders with an injectable read-only market snapshot source.
+}
+/// Execute queued automatic-copy paper orders with an injectable read-only market snapshot source.
 pub fn execute_pending_paper_orders_with<F>(
     simulator: &mut PaperSimulator,
     wallet_address: Option<&str>,
@@ -1149,7 +1150,8 @@ where
         }
     }
     outcomes
-}/// Build a paper report using fresh public DEX Screener USD snapshots.
+}
+/// Build a paper report using fresh public DEX Screener USD snapshots.
 ///
 /// Only exact mint matches with at least $10,000 reported pool liquidity are used.
 /// Missing, stale, or low-liquidity data remains unavailable rather than becoming zero.
@@ -2137,7 +2139,8 @@ mod tests {
             "sizing_mode":"FIXED_USD","sizing_value":true
         })))
         .is_err());
-    }    #[test]
+    }
+    #[test]
     fn persistent_runner_requires_exact_profile_lease_for_automatic_copy_fill() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("paper.db");
@@ -2152,8 +2155,12 @@ mod tests {
         let scope_b = format!("profile:runner-b:wallet:{WALLET}");
         let owner_a = "runner-a-owner";
         let owner_b = "runner-b-owner";
-        assert!(store.claim_monitor_lease(&scope_a, owner_a, now_ts, 90).unwrap());
-        assert!(store.claim_monitor_lease(&scope_b, owner_b, now_ts, 90).unwrap());
+        assert!(store
+            .claim_monitor_lease(&scope_a, owner_a, now_ts, 90)
+            .unwrap());
+        assert!(store
+            .claim_monitor_lease(&scope_b, owner_b, now_ts, 90)
+            .unwrap());
         let lease_a = PaperCommitLease::new(&store, &scope_a, owner_a).unwrap();
         let lease_b = PaperCommitLease::new(&store, &scope_b, owner_b).unwrap();
 
@@ -2209,18 +2216,18 @@ mod tests {
         assert_eq!(simulator.balances()["USD"], starting_cash);
         assert_eq!(simulator.orders()[&order_id].status, "CREATED");
 
-        let correct_profile = super::execute_pending_paper_orders_with_at_and_policy_and_commit_lease(
-            &mut simulator,
-            Some(WALLET),
-            |_mint| Some(price.clone()),
-            None,
-            &policy,
-            now_ts,
-            &lease_a,
-        );
+        let correct_profile =
+            super::execute_pending_paper_orders_with_at_and_policy_and_commit_lease(
+                &mut simulator,
+                Some(WALLET),
+                |_mint| Some(price.clone()),
+                None,
+                &policy,
+                now_ts,
+                &lease_a,
+            );
         assert_eq!(correct_profile.len(), 1);
         assert_eq!(correct_profile[0]["status"], "FILLED");
         assert_eq!(simulator.fills().len(), 1);
     }
-
 }

@@ -13,7 +13,7 @@ use thiserror::Error;
 use crate::latency::LatencyRecorder;
 use crate::market_data::fetch_market_price;
 use crate::paper_simulator::{
-    CreateOrderRequest, ExecutionPolicy, PaperSimulator, PaperSimulatorError,
+    CreateOrderRequest, ExecutionPolicy, PaperCommitLease, PaperSimulator, PaperSimulatorError,
 };
 use crate::pnl::MarketPrice;
 use crate::source_freshness::source_block_time_ok;
@@ -474,6 +474,57 @@ pub fn queue_paper_orders_at_with_policy(
     execution_policy: &ExecutionPolicy,
     now_ts: i64,
 ) -> Result<Vec<Value>, PaperCopyError> {
+        queue_paper_orders_at_with_policy_inner(
+            wallet_address,
+            results,
+            simulator,
+            allowed_sides,
+            settings,
+            latency_recorder,
+            execution_policy,
+            now_ts,
+            None,
+        )
+}
+
+/// Lease-aware deterministic queue entrypoint for a monitor-owned profile/wallet scan.
+#[allow(clippy::too_many_arguments)]
+pub fn queue_paper_orders_at_with_policy_and_commit_lease(
+    wallet_address: &str,
+    results: &[Value],
+    simulator: &mut PaperSimulator,
+    allowed_sides: AllowedSides,
+    settings: &CopySettings,
+    latency_recorder: Option<&LatencyRecorder>,
+    execution_policy: &ExecutionPolicy,
+    now_ts: i64,
+    commit_lease: &PaperCommitLease,
+) -> Result<Vec<Value>, PaperCopyError> {
+    queue_paper_orders_at_with_policy_inner(
+        wallet_address,
+        results,
+        simulator,
+        allowed_sides,
+        settings,
+        latency_recorder,
+        execution_policy,
+        now_ts,
+        Some(commit_lease),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn queue_paper_orders_at_with_policy_inner(
+    wallet_address: &str,
+    results: &[Value],
+    simulator: &mut PaperSimulator,
+    allowed_sides: AllowedSides,
+    settings: &CopySettings,
+    latency_recorder: Option<&LatencyRecorder>,
+    execution_policy: &ExecutionPolicy,
+    now_ts: i64,
+    commit_lease: Option<&PaperCommitLease>,
+) -> Result<Vec<Value>, PaperCopyError> {
     if wallet_address.trim().is_empty() {
         return Err(PaperCopyError::InvalidInput(
             "A monitored public wallet address is required.".to_string(),
@@ -748,7 +799,7 @@ pub fn queue_paper_orders_at_with_policy(
         };
         let reservation_mint = if side == "BUY" { "USD" } else { asset_mint };
 
-        let order = simulator.create_order(CreateOrderRequest {
+        let request = CreateOrderRequest {
             signal_id: &signal_id,
             side,
             asset_mint,
@@ -787,7 +838,11 @@ pub fn queue_paper_orders_at_with_policy(
                 "real_trading":false,
                 "transaction_broadcast":false
             })),
-        })?;
+        };
+        let order = match commit_lease {
+            Some(lease) => simulator.create_order_with_commit_lease(request, lease)?,
+            None => simulator.create_order(request)?,
+        };
         if result_status(&order) != "CREATED" {
             continue;
         }
@@ -818,9 +873,7 @@ pub fn queue_paper_orders_at_with_policy(
         );
     }
     Ok(queued)
-}
-
-/// Execute queued automatic-copy paper orders with an injectable read-only market snapshot source.
+}/// Execute queued automatic-copy paper orders with an injectable read-only market snapshot source.
 pub fn execute_pending_paper_orders_with<F>(
     simulator: &mut PaperSimulator,
     wallet_address: Option<&str>,
@@ -886,10 +939,57 @@ where
 pub fn execute_pending_paper_orders_with_at_and_policy<F>(
     simulator: &mut PaperSimulator,
     wallet_address: Option<&str>,
+    price_provider: F,
+    latency_recorder: Option<&LatencyRecorder>,
+    execution_policy: &ExecutionPolicy,
+    now_ts: i64,
+) -> Vec<Value>
+where
+    F: FnMut(&str) -> Option<MarketPrice>,
+{
+    execute_pending_paper_orders_with_at_and_policy_inner(
+        simulator,
+        wallet_address,
+        price_provider,
+        latency_recorder,
+        execution_policy,
+        now_ts,
+        None,
+    )
+}
+
+/// Lease-aware deterministic execution for a monitor-owned profile/wallet scan.
+pub fn execute_pending_paper_orders_with_at_and_policy_and_commit_lease<F>(
+    simulator: &mut PaperSimulator,
+    wallet_address: Option<&str>,
+    price_provider: F,
+    latency_recorder: Option<&LatencyRecorder>,
+    execution_policy: &ExecutionPolicy,
+    now_ts: i64,
+    commit_lease: &PaperCommitLease,
+) -> Vec<Value>
+where
+    F: FnMut(&str) -> Option<MarketPrice>,
+{
+    execute_pending_paper_orders_with_at_and_policy_inner(
+        simulator,
+        wallet_address,
+        price_provider,
+        latency_recorder,
+        execution_policy,
+        now_ts,
+        Some(commit_lease),
+    )
+}
+
+fn execute_pending_paper_orders_with_at_and_policy_inner<F>(
+    simulator: &mut PaperSimulator,
+    wallet_address: Option<&str>,
     mut price_provider: F,
     latency_recorder: Option<&LatencyRecorder>,
     execution_policy: &ExecutionPolicy,
     now_ts: i64,
+    commit_lease: Option<&PaperCommitLease>,
 ) -> Vec<Value>
 where
     F: FnMut(&str) -> Option<MarketPrice>,
@@ -990,13 +1090,23 @@ where
                     number_to_string(raw).unwrap_or_else(|| "invalid".to_string());
             }
         }
-        let result = simulator.execute_order(
-            &order.order_id,
-            Some(&market_price),
-            &now,
-            &order_policy,
-            true,
-        );
+        let result = match commit_lease {
+            Some(lease) => simulator.execute_order_with_commit_lease(
+                &order.order_id,
+                Some(&market_price),
+                &now,
+                &order_policy,
+                true,
+                lease,
+            ),
+            None => simulator.execute_order(
+                &order.order_id,
+                Some(&market_price),
+                &now,
+                &order_policy,
+                true,
+            ),
+        };
         match result {
             Ok(value) => {
                 let status = result_status(&value);
@@ -1039,9 +1149,7 @@ where
         }
     }
     outcomes
-}
-
-/// Build a paper report using fresh public DEX Screener USD snapshots.
+}/// Build a paper report using fresh public DEX Screener USD snapshots.
 ///
 /// Only exact mint matches with at least $10,000 reported pool liquidity are used.
 /// Missing, stale, or low-liquidity data remains unavailable rather than becoming zero.
@@ -1124,6 +1232,7 @@ pub fn get_pending_copy_status(simulator: &PaperSimulator, wallet_address: Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::signature_store::SignatureStore;
     use serde_json::json;
     use std::collections::BTreeMap;
 
@@ -2028,5 +2137,90 @@ mod tests {
             "sizing_mode":"FIXED_USD","sizing_value":true
         })))
         .is_err());
+    }    #[test]
+    fn persistent_runner_requires_exact_profile_lease_for_automatic_copy_fill() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("paper.db");
+        let store = SignatureStore::open(&path).unwrap();
+        let mut balances = BTreeMap::new();
+        balances.insert("USD".to_string(), "100".to_string());
+        balances.insert(ASSET.to_string(), "10".to_string());
+        let mut simulator = PaperSimulator::open(&path, &balances).unwrap();
+
+        let now_ts = Utc::now().timestamp();
+        let scope_a = format!("profile:runner-a:wallet:{WALLET}");
+        let scope_b = format!("profile:runner-b:wallet:{WALLET}");
+        let owner_a = "runner-a-owner";
+        let owner_b = "runner-b-owner";
+        assert!(store.claim_monitor_lease(&scope_a, owner_a, now_ts, 90).unwrap());
+        assert!(store.claim_monitor_lease(&scope_b, owner_b, now_ts, 90).unwrap());
+        let lease_a = PaperCommitLease::new(&store, &scope_a, owner_a).unwrap();
+        let lease_b = PaperCommitLease::new(&store, &scope_b, owner_b).unwrap();
+
+        let signature = "b".repeat(64);
+        let mut signal = buy_signal(&signature);
+        signal["signature_observation"]["block_time"] = json!(now_ts);
+        let queued = super::queue_paper_orders_at_with_policy_and_commit_lease(
+            WALLET,
+            &[signal],
+            &mut simulator,
+            AllowedSides::Both,
+            &CopySettings::default(),
+            None,
+            &ExecutionPolicy::default(),
+            now_ts,
+            &lease_a,
+        )
+        .unwrap();
+        assert_eq!(queued.len(), 1);
+        let order_id = queued[0]["order_id"].as_str().unwrap().to_string();
+        assert_eq!(
+            simulator.orders()[&order_id].details["monitor_lease_scope"],
+            scope_a
+        );
+
+        let starting_cash = simulator.balances()["USD"].clone();
+        let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+        let price = MarketPrice::new(
+            ASSET,
+            "1",
+            "USD",
+            "lease-aware-runner-fixture",
+            now.clone(),
+            Some("25000"),
+            Some("test-liquidity".to_string()),
+            Some(now),
+        )
+        .unwrap();
+        let policy = ExecutionPolicy::default();
+
+        let wrong_profile = super::execute_pending_paper_orders_with_at_and_policy_and_commit_lease(
+            &mut simulator,
+            Some(WALLET),
+            |_mint| Some(price.clone()),
+            None,
+            &policy,
+            now_ts,
+            &lease_b,
+        );
+        assert_eq!(wrong_profile.len(), 1);
+        assert_eq!(wrong_profile[0]["status"], "LEASE_UNAVAILABLE");
+        assert!(simulator.fills().is_empty());
+        assert_eq!(simulator.balances()["USD"], starting_cash);
+        assert_eq!(simulator.orders()[&order_id].status, "CREATED");
+
+        let correct_profile = super::execute_pending_paper_orders_with_at_and_policy_and_commit_lease(
+            &mut simulator,
+            Some(WALLET),
+            |_mint| Some(price.clone()),
+            None,
+            &policy,
+            now_ts,
+            &lease_a,
+        );
+        assert_eq!(correct_profile.len(), 1);
+        assert_eq!(correct_profile[0]["status"], "FILLED");
+        assert_eq!(simulator.fills().len(), 1);
     }
+
 }

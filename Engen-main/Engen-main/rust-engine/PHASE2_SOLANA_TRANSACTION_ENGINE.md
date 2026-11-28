@@ -187,3 +187,19 @@ A disposable-SQLite regression test, `lease_reclaimed_during_scan_discards_resul
 Parent PR #62 CI run #683 (`45749579835`) passed on its exact base head `42be639b875e196cdf8b6343117f099cd0189400`. CI for this follow-up branch is pending; local Cargo commands were not run.
 
 This closes the scan-completion publication race only. It does not fence paper-order or fill commits. Before adding a commit-boundary guard, inspect whether the signature and paper stores can participate in one safe SQLite transaction; if not, retain the limitation rather than claiming atomicity. Production runtime wiring also remains incomplete. Overall Phase 2 remains IN PROGRESS — NOT ACCEPTED.
+
+
+## 10. 2026-11-28 addendum — paper persistence lease and freshness fence
+
+SignatureStore and PaperSimulator currently open private SQLite connections and do not expose a shared transaction handle. A lease check in one store followed by a separate paper write would be a time-of-check/time-of-use race and is not accepted as atomic protection.
+
+The persistent PaperSimulator now has a PaperCommitLease API:
+
+- Persistent AUTOMATIC_WALLET_COPY order creation and fill commits require a lease. Existing unguarded persistent automatic-copy calls fail closed; the in-memory simulator remains for isolated tests.
+- SignatureStore and PaperSimulator must use the same SQLite file. Canonical paths are compared; separate files are rejected rather than described as atomic.
+- The simulator renews the owner-matching, unexpired monitor_leases row inside the same IMMEDIATE SQLite transaction that writes the paper order/reservation or fill/balances/reservation release.
+- The lease scope must end with :wallet:<source_wallet>, and the source wallet must pass Solana address validation.
+- source_block_time is checked again inside that transaction with the shared 60-second maximum age and 5-second future tolerance. Missing/stale timestamps, lease loss/expiry, wallet-scope mismatch, or database mismatch roll back the paper write.
+- Regression tests use disposable SQLite databases and cover unguarded-write rejection, owner loss/recovery, commit-time staleness, different database files, and wallet-scope mismatch.
+
+The high-level paper_copy_runner still calls the unguarded methods. Therefore its persistent automatic-copy queue/fill path now fails closed until lease-aware runner entrypoints and the Rust application bootstrap pass the exact profile/wallet lease identity. This is intentional; no persistent automatic-copy runtime is enabled by this change. Phase 2 remains IN PROGRESS — NOT ACCEPTED.

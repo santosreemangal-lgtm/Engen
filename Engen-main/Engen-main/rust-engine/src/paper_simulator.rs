@@ -18,6 +18,10 @@ use uuid::Uuid;
 
 use crate::pnl::{decimal_value, AverageCostLedger, MarketPrice, PnlError};
 use crate::safety::block_live_execution;
+use crate::signature_store::SignatureStore;
+use crate::source_freshness::source_block_time_ok;
+
+const PAPER_COMMIT_LEASE_SECONDS: i64 = 90;
 
 #[derive(Debug, Error)]
 pub enum PaperSimulatorError {
@@ -33,6 +37,33 @@ pub enum PaperSimulatorError {
     OrderNotFound,
     #[error("Paper balance changed in another simulator instance; reload before retrying.")]
     ConcurrentStateConflict,
+    #[error("Persistent automatic paper-copy writes require a live monitor lease.")]
+    CommitLeaseRequired,
+    #[error("Paper simulator and monitor lease store must share the same SQLite database.")]
+    CommitLeaseDatabaseMismatch,
+    #[error("Monitor lease is missing, expired, or owned by another worker.")]
+    MonitorLeaseLost,
+    #[error("Monitor lease scope does not match the source wallet.")]
+    CommitLeaseScopeMismatch,
+    #[error("Source transaction is stale at the paper persistence boundary.")]
+    SourceStale,
+}
+
+pub struct PaperCommitLease<'a> {
+    store: &'a SignatureStore,
+    scope: &'a str,
+    owner: &'a str,
+}
+
+impl<'a> PaperCommitLease<'a> {
+    pub fn new(store: &'a SignatureStore, scope: &'a str, owner: &'a str) -> Result<Self, PaperSimulatorError> {
+        if scope.trim().is_empty() || scope.len() > 512 || owner.trim().is_empty() || owner.len() > 128 {
+            return Err(PaperSimulatorError::InvalidInput(
+                "Paper commit lease scope or owner is invalid.".to_string(),
+            ));
+        }
+        Ok(Self { store, scope, owner })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -218,6 +249,69 @@ impl PaperSimulator {
         connection.busy_timeout(std::time::Duration::from_secs(10))?;
         connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=10000;")?;
         Ok(connection)
+    }
+
+    fn validate_commit_lease_in_transaction(
+        &self,
+        transaction: &Transaction<'_>,
+        order: &PaperOrder,
+        commit_lease: Option<&PaperCommitLease<'_>>,
+    ) -> Result<(), PaperSimulatorError> {
+        let automatic_copy = order.details.get("origin").and_then(Value::as_str)
+            == Some("AUTOMATIC_WALLET_COPY");
+        if self.db_path.is_none() {
+            return if commit_lease.is_some() {
+                Err(PaperSimulatorError::CommitLeaseDatabaseMismatch)
+            } else {
+                Ok(())
+            };
+        }
+        if automatic_copy && commit_lease.is_none() {
+            return Err(PaperSimulatorError::CommitLeaseRequired);
+        }
+        let Some(lease) = commit_lease else { return Ok(()); };
+
+        let paper_path = self.db_path.as_ref()
+            .ok_or(PaperSimulatorError::CommitLeaseDatabaseMismatch)?;
+        let paper_path = std::fs::canonicalize(paper_path)
+            .map_err(|_| PaperSimulatorError::CommitLeaseDatabaseMismatch)?;
+        let lease_path = std::fs::canonicalize(lease.store.path())
+            .map_err(|_| PaperSimulatorError::CommitLeaseDatabaseMismatch)?;
+        if paper_path != lease_path {
+            return Err(PaperSimulatorError::CommitLeaseDatabaseMismatch);
+        }
+
+        if automatic_copy {
+            let source_wallet = order.details.get("source_wallet").and_then(Value::as_str)
+                .filter(|wallet| crate::solana_validation::is_valid_solana_address(wallet))
+                .ok_or(PaperSimulatorError::CommitLeaseScopeMismatch)?;
+            if !lease.scope.ends_with(&format!(":wallet:{source_wallet}")) {
+                return Err(PaperSimulatorError::CommitLeaseScopeMismatch);
+            }
+        }
+
+        let renewed = transaction.execute(
+            "UPDATE monitor_leases
+             SET expires_at=CAST(strftime('%s','now') AS INTEGER)+?3,
+                 updated_at=CURRENT_TIMESTAMP
+             WHERE scope=?1 AND owner=?2
+               AND expires_at>CAST(strftime('%s','now') AS INTEGER)",
+            params![lease.scope, lease.owner, PAPER_COMMIT_LEASE_SECONDS],
+        )?;
+        if renewed != 1 {
+            return Err(PaperSimulatorError::MonitorLeaseLost);
+        }
+
+        if automatic_copy {
+            let now_epoch: i64 = transaction.query_row(
+                "SELECT CAST(strftime('%s','now') AS INTEGER)", [], |row| row.get(0),
+            )?;
+            let block_time = order.details.get("source_block_time").and_then(Value::as_i64);
+            if !source_block_time_ok(block_time, now_epoch) {
+                return Err(PaperSimulatorError::SourceStale);
+            }
+        }
+        Ok(())
     }
 
     fn initialize_and_load(&mut self) -> Result<(), PaperSimulatorError> {
@@ -525,6 +619,16 @@ impl PaperSimulator {
         self.persist_with_reservation_release(order, balances, fill, false)
     }
 
+    fn persist_with_reservation_release(
+        &self,
+        order: &PaperOrder,
+        balances: Option<&BTreeMap<String, BigDecimal>>,
+        fill: Option<&PaperFill>,
+        release_reservation: bool,
+    ) -> Result<(), PaperSimulatorError> {
+        self.persist_with_reservation_release_and_commit_lease(order, balances, fill, release_reservation, None)
+    }
+
     fn persist_releasing_reservation(
         &self,
         order: &PaperOrder,
@@ -534,58 +638,47 @@ impl PaperSimulator {
         self.persist_with_reservation_release(order, balances, fill, true)
     }
 
-    fn persist_with_reservation_release(
+    fn persist_with_reservation_release_and_commit_lease(
         &self,
         order: &PaperOrder,
         balances: Option<&BTreeMap<String, BigDecimal>>,
         fill: Option<&PaperFill>,
         release_reservation: bool,
+        commit_lease: Option<&PaperCommitLease<'_>>,
     ) -> Result<(), PaperSimulatorError> {
         if self.db_path.is_none() {
+            if commit_lease.is_some() {
+                return Err(PaperSimulatorError::CommitLeaseDatabaseMismatch);
+            }
             return Ok(());
         }
         let mut connection = self.connect()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        Self::persist_order(&transaction, order)?;
-
-        if release_reservation {
-            transaction.execute(
-                "DELETE FROM simulator_reservations WHERE order_id=?1",
-                [&order.order_id],
-            )?;
+        if fill.is_some() {
+            self.validate_commit_lease_in_transaction(&transaction, order, commit_lease)?;
         }
-
+        Self::persist_order(&transaction, order)?;
+        if release_reservation {
+            transaction.execute("DELETE FROM simulator_reservations WHERE order_id=?1", [&order.order_id])?;
+        }
         if let Some(balances) = balances {
-            // Reject stale simulator snapshots. This is the final guard against
-            // two independently opened simulator instances spending the same cash.
             for (mint, amount) in balances {
                 let stored_raw: Option<String> = transaction
-                    .query_row(
-                        "SELECT amount FROM simulator_balances WHERE mint=?1",
-                        [mint],
-                        |row| row.get(0),
-                    )
+                    .query_row("SELECT amount FROM simulator_balances WHERE mint=?1", [mint], |row| row.get(0))
                     .optional()?;
-                let stored = stored_raw
-                    .as_deref()
+                let stored = stored_raw.as_deref()
                     .map(|raw| decimal_value(raw, "Persisted virtual balance", true))
                     .transpose()?
                     .unwrap_or_else(BigDecimal::zero);
-                let expected = self
-                    .balances
-                    .get(mint)
-                    .cloned()
-                    .unwrap_or_else(BigDecimal::zero);
+                let expected = self.balances.get(mint).cloned().unwrap_or_else(BigDecimal::zero);
                 if stored != expected {
                     return Err(PaperSimulatorError::ConcurrentStateConflict);
                 }
-
                 let reserved = Self::persisted_reserved_balance(&transaction, mint, None)?;
                 if amount < &reserved {
                     return Err(PaperSimulatorError::ConcurrentStateConflict);
                 }
             }
-
             for (mint, amount) in balances {
                 transaction.execute(
                     "INSERT INTO simulator_balances(mint,amount) VALUES(?1,?2)
@@ -594,7 +687,6 @@ impl PaperSimulator {
                 )?;
             }
         }
-
         if let Some(fill) = fill {
             transaction.execute(
                 "INSERT INTO simulated_fills(
@@ -603,24 +695,12 @@ impl PaperSimulator {
                     price_age_seconds,slippage_bps,created_at,base_network_fee,priority_fee
                  ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
                 params![
-                    fill.fill_id,
-                    fill.order_id,
-                    fill.asset_mint,
-                    fill.quantity,
-                    fill.reference_price,
-                    fill.execution_price,
-                    fill.gross_quote,
-                    fill.fee,
-                    fill.network_cost,
-                    fill.net_quote,
-                    fill.currency,
-                    fill.price_source,
-                    fill.price_timestamp,
-                    fill.price_age_seconds as i64,
-                    i64::from(fill.slippage_bps),
-                    fill.created_at,
-                    fill.base_network_fee,
-                    fill.priority_fee
+                    fill.fill_id, fill.order_id, fill.asset_mint, fill.quantity,
+                    fill.reference_price, fill.execution_price, fill.gross_quote, fill.fee,
+                    fill.network_cost, fill.net_quote, fill.currency, fill.price_source,
+                    fill.price_timestamp, fill.price_age_seconds as i64,
+                    i64::from(fill.slippage_bps), fill.created_at,
+                    fill.base_network_fee, fill.priority_fee
                 ],
             )?;
         }
@@ -628,12 +708,16 @@ impl PaperSimulator {
         Ok(())
     }
 
-    fn persist_new_order(
+    fn persist_new_order_with_commit_lease(
         &self,
         order: &PaperOrder,
         reservation: Option<&BalanceReservation>,
+        commit_lease: Option<&PaperCommitLease<'_>>,
     ) -> Result<bool, PaperSimulatorError> {
         if self.db_path.is_none() {
+            if commit_lease.is_some() {
+                return Err(PaperSimulatorError::CommitLeaseDatabaseMismatch);
+            }
             if let Some(reservation) = reservation {
                 if reservation.amount > self.available_balance(&reservation.mint) {
                     return Ok(false);
@@ -645,6 +729,7 @@ impl PaperSimulator {
 
         let mut connection = self.connect()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        self.validate_commit_lease_in_transaction(&transaction, order, commit_lease)?;
         if let Some(reservation) = reservation {
             let stored_raw: Option<String> = transaction
                 .query_row(
@@ -779,6 +864,22 @@ impl PaperSimulator {
         &mut self,
         request: CreateOrderRequest<'_>,
     ) -> Result<Value, PaperSimulatorError> {
+        self.create_order_inner(request, None)
+    }
+
+    pub fn create_order_with_commit_lease(
+        &mut self,
+        request: CreateOrderRequest<'_>,
+        commit_lease: &PaperCommitLease<'_>,
+    ) -> Result<Value, PaperSimulatorError> {
+        self.create_order_inner(request, Some(commit_lease))
+    }
+
+    fn create_order_inner(
+        &mut self,
+        request: CreateOrderRequest<'_>,
+        commit_lease: Option<&PaperCommitLease<'_>>,
+    ) -> Result<Value, PaperSimulatorError> {
         let CreateOrderRequest {
             signal_id,
             side,
@@ -902,7 +1003,9 @@ impl PaperSimulator {
             details: Value::Object(order_details),
         };
 
-        let reservation_created = match self.persist_new_order(&order, reservation.as_ref()) {
+        let reservation_created = match self.persist_new_order_with_commit_lease(
+            &order, reservation.as_ref(), commit_lease,
+        ) {
             Ok(created) => created,
             Err(error) => {
                 if matches!(&error, PaperSimulatorError::Database(rusqlite::Error::SqliteFailure(code, _)) if code.code == rusqlite::ErrorCode::ConstraintViolation)
@@ -1172,6 +1275,30 @@ impl PaperSimulator {
         now: &str,
         policy: &ExecutionPolicy,
         rpc_ok: bool,
+    ) -> Result<Value, PaperSimulatorError> {
+        self.execute_order_inner(order_id, market_price, now, policy, rpc_ok, None)
+    }
+
+    pub fn execute_order_with_commit_lease(
+        &mut self,
+        order_id: &str,
+        market_price: Option<&MarketPrice>,
+        now: &str,
+        policy: &ExecutionPolicy,
+        rpc_ok: bool,
+        commit_lease: &PaperCommitLease<'_>,
+    ) -> Result<Value, PaperSimulatorError> {
+        self.execute_order_inner(order_id, market_price, now, policy, rpc_ok, Some(commit_lease))
+    }
+
+    fn execute_order_inner(
+        &mut self,
+        order_id: &str,
+        market_price: Option<&MarketPrice>,
+        now: &str,
+        policy: &ExecutionPolicy,
+        rpc_ok: bool,
+        commit_lease: Option<&PaperCommitLease<'_>>,
     ) -> Result<Value, PaperSimulatorError> {
         let mut order = self
             .orders
@@ -1525,7 +1652,9 @@ impl PaperSimulator {
 
         // This single SQLite transaction commits the order, balance changes,
         // fill, and reservation release together.
-        self.persist_releasing_reservation(&order, Some(&balances), Some(&fill))?;
+        self.persist_with_reservation_release_and_commit_lease(
+            &order, Some(&balances), Some(&fill), true, commit_lease,
+        )?;
         self.reservations.remove(order_id);
         self.orders.insert(order_id.to_string(), order.clone());
         self.balances = balances;

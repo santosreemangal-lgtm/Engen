@@ -1013,10 +1013,26 @@ where
                     let _ = recorder.record("paper.copy_order_total", elapsed);
                 }
             }
+            Err(PaperSimulatorError::SourceStale) => {
+                let reason = "Source transaction became stale at the paper-fill commit boundary.";
+                let _ = simulator.cancel_order_with_reason(&order.order_id, reason);
+                outcomes.push(outcome(
+                    Some(&order.order_id), signal_id, "SOURCE_STALE", Some(reason),
+                    started.elapsed().as_secs_f64() * 1_000.0,
+                ));
+            }
+            Err(
+                PaperSimulatorError::CommitLeaseRequired
+                | PaperSimulatorError::CommitLeaseDatabaseMismatch
+                | PaperSimulatorError::CommitLeaseScopeMismatch
+                | PaperSimulatorError::MonitorLeaseLost,
+            ) => outcomes.push(outcome(
+                Some(&order.order_id), signal_id, "LEASE_UNAVAILABLE",
+                Some("A live monitor lease for this source wallet in the same SQLite database is required; no fill was committed."),
+                started.elapsed().as_secs_f64() * 1_000.0,
+            )),
             Err(_) => outcomes.push(outcome(
-                Some(&order.order_id),
-                signal_id,
-                "EXECUTION_ERROR",
+                Some(&order.order_id), signal_id, "EXECUTION_ERROR",
                 Some("Paper execution failed; no real transaction was sent."),
                 started.elapsed().as_secs_f64() * 1_000.0,
             )),

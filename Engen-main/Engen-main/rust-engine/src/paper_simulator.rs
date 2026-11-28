@@ -56,13 +56,25 @@ pub struct PaperCommitLease<'a> {
 }
 
 impl<'a> PaperCommitLease<'a> {
-    pub fn new(store: &'a SignatureStore, scope: &'a str, owner: &'a str) -> Result<Self, PaperSimulatorError> {
-        if scope.trim().is_empty() || scope.len() > 512 || owner.trim().is_empty() || owner.len() > 128 {
+    pub fn new(
+        store: &'a SignatureStore,
+        scope: &'a str,
+        owner: &'a str,
+    ) -> Result<Self, PaperSimulatorError> {
+        if scope.trim().is_empty()
+            || scope.len() > 512
+            || owner.trim().is_empty()
+            || owner.len() > 128
+        {
             return Err(PaperSimulatorError::InvalidInput(
                 "Paper commit lease scope or owner is invalid.".to_string(),
             ));
         }
-        Ok(Self { store, scope, owner })
+        Ok(Self {
+            store,
+            scope,
+            owner,
+        })
     }
 }
 
@@ -257,8 +269,8 @@ impl PaperSimulator {
         order: &PaperOrder,
         commit_lease: Option<&PaperCommitLease<'_>>,
     ) -> Result<(), PaperSimulatorError> {
-        let automatic_copy = order.details.get("origin").and_then(Value::as_str)
-            == Some("AUTOMATIC_WALLET_COPY");
+        let automatic_copy =
+            order.details.get("origin").and_then(Value::as_str) == Some("AUTOMATIC_WALLET_COPY");
         if self.db_path.is_none() {
             return if commit_lease.is_some() {
                 Err(PaperSimulatorError::CommitLeaseDatabaseMismatch)
@@ -269,9 +281,13 @@ impl PaperSimulator {
         if automatic_copy && commit_lease.is_none() {
             return Err(PaperSimulatorError::CommitLeaseRequired);
         }
-        let Some(lease) = commit_lease else { return Ok(()); };
+        let Some(lease) = commit_lease else {
+            return Ok(());
+        };
 
-        let paper_path = self.db_path.as_ref()
+        let paper_path = self
+            .db_path
+            .as_ref()
             .ok_or(PaperSimulatorError::CommitLeaseDatabaseMismatch)?;
         let paper_path = std::fs::canonicalize(paper_path)
             .map_err(|_| PaperSimulatorError::CommitLeaseDatabaseMismatch)?;
@@ -282,7 +298,10 @@ impl PaperSimulator {
         }
 
         if automatic_copy {
-            let source_wallet = order.details.get("source_wallet").and_then(Value::as_str)
+            let source_wallet = order
+                .details
+                .get("source_wallet")
+                .and_then(Value::as_str)
                 .filter(|wallet| crate::solana_validation::is_valid_solana_address(wallet))
                 .ok_or(PaperSimulatorError::CommitLeaseScopeMismatch)?;
             if !lease.scope.ends_with(&format!(":wallet:{source_wallet}")) {
@@ -304,9 +323,14 @@ impl PaperSimulator {
 
         if automatic_copy {
             let now_epoch: i64 = transaction.query_row(
-                "SELECT CAST(strftime('%s','now') AS INTEGER)", [], |row| row.get(0),
+                "SELECT CAST(strftime('%s','now') AS INTEGER)",
+                [],
+                |row| row.get(0),
             )?;
-            let block_time = order.details.get("source_block_time").and_then(Value::as_i64);
+            let block_time = order
+                .details
+                .get("source_block_time")
+                .and_then(Value::as_i64);
             if !source_block_time_ok(block_time, now_epoch) {
                 return Err(PaperSimulatorError::SourceStale);
             }
@@ -626,7 +650,13 @@ impl PaperSimulator {
         fill: Option<&PaperFill>,
         release_reservation: bool,
     ) -> Result<(), PaperSimulatorError> {
-        self.persist_with_reservation_release_and_commit_lease(order, balances, fill, release_reservation, None)
+        self.persist_with_reservation_release_and_commit_lease(
+            order,
+            balances,
+            fill,
+            release_reservation,
+            None,
+        )
     }
 
     fn persist_releasing_reservation(
@@ -659,18 +689,30 @@ impl PaperSimulator {
         }
         Self::persist_order(&transaction, order)?;
         if release_reservation {
-            transaction.execute("DELETE FROM simulator_reservations WHERE order_id=?1", [&order.order_id])?;
+            transaction.execute(
+                "DELETE FROM simulator_reservations WHERE order_id=?1",
+                [&order.order_id],
+            )?;
         }
         if let Some(balances) = balances {
             for (mint, amount) in balances {
                 let stored_raw: Option<String> = transaction
-                    .query_row("SELECT amount FROM simulator_balances WHERE mint=?1", [mint], |row| row.get(0))
+                    .query_row(
+                        "SELECT amount FROM simulator_balances WHERE mint=?1",
+                        [mint],
+                        |row| row.get(0),
+                    )
                     .optional()?;
-                let stored = stored_raw.as_deref()
+                let stored = stored_raw
+                    .as_deref()
                     .map(|raw| decimal_value(raw, "Persisted virtual balance", true))
                     .transpose()?
                     .unwrap_or_else(BigDecimal::zero);
-                let expected = self.balances.get(mint).cloned().unwrap_or_else(BigDecimal::zero);
+                let expected = self
+                    .balances
+                    .get(mint)
+                    .cloned()
+                    .unwrap_or_else(BigDecimal::zero);
                 if stored != expected {
                     return Err(PaperSimulatorError::ConcurrentStateConflict);
                 }
@@ -695,12 +737,24 @@ impl PaperSimulator {
                     price_age_seconds,slippage_bps,created_at,base_network_fee,priority_fee
                  ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
                 params![
-                    fill.fill_id, fill.order_id, fill.asset_mint, fill.quantity,
-                    fill.reference_price, fill.execution_price, fill.gross_quote, fill.fee,
-                    fill.network_cost, fill.net_quote, fill.currency, fill.price_source,
-                    fill.price_timestamp, fill.price_age_seconds as i64,
-                    i64::from(fill.slippage_bps), fill.created_at,
-                    fill.base_network_fee, fill.priority_fee
+                    fill.fill_id,
+                    fill.order_id,
+                    fill.asset_mint,
+                    fill.quantity,
+                    fill.reference_price,
+                    fill.execution_price,
+                    fill.gross_quote,
+                    fill.fee,
+                    fill.network_cost,
+                    fill.net_quote,
+                    fill.currency,
+                    fill.price_source,
+                    fill.price_timestamp,
+                    fill.price_age_seconds as i64,
+                    i64::from(fill.slippage_bps),
+                    fill.created_at,
+                    fill.base_network_fee,
+                    fill.priority_fee
                 ],
             )?;
         }
@@ -1004,7 +1058,9 @@ impl PaperSimulator {
         };
 
         let reservation_created = match self.persist_new_order_with_commit_lease(
-            &order, reservation.as_ref(), commit_lease,
+            &order,
+            reservation.as_ref(),
+            commit_lease,
         ) {
             Ok(created) => created,
             Err(error) => {
@@ -1288,7 +1344,14 @@ impl PaperSimulator {
         rpc_ok: bool,
         commit_lease: &PaperCommitLease<'_>,
     ) -> Result<Value, PaperSimulatorError> {
-        self.execute_order_inner(order_id, market_price, now, policy, rpc_ok, Some(commit_lease))
+        self.execute_order_inner(
+            order_id,
+            market_price,
+            now,
+            policy,
+            rpc_ok,
+            Some(commit_lease),
+        )
     }
 
     fn execute_order_inner(
@@ -1653,7 +1716,11 @@ impl PaperSimulator {
         // This single SQLite transaction commits the order, balance changes,
         // fill, and reservation release together.
         self.persist_with_reservation_release_and_commit_lease(
-            &order, Some(&balances), Some(&fill), true, commit_lease,
+            &order,
+            Some(&balances),
+            Some(&fill),
+            true,
+            commit_lease,
         )?;
         self.reservations.remove(order_id);
         self.orders.insert(order_id.to_string(), order.clone());
@@ -2491,15 +2558,19 @@ mod tests {
         let now_epoch = current_epoch();
         let scope = format!("profile:test:wallet:{COMMIT_TEST_WALLET}");
         let owner = "paper-worker-configured-fees";
-        assert!(store.claim_monitor_lease(&scope, owner, now_epoch, 90).unwrap());
+        assert!(store
+            .claim_monitor_lease(&scope, owner, now_epoch, 90)
+            .unwrap());
         let lease = PaperCommitLease::new(&store, &scope, owner).unwrap();
         let order_id;
         {
             let mut sim = PaperSimulator::open(&path, &virtual_cash()).unwrap();
-            let created = sim.create_order_with_commit_lease(
-                automatic_copy_order_request("configured-fee-order", now_epoch),
-                &lease,
-            ).unwrap();
+            let created = sim
+                .create_order_with_commit_lease(
+                    automatic_copy_order_request("configured-fee-order", now_epoch),
+                    &lease,
+                )
+                .unwrap();
             order_id = created["order_id"].as_str().unwrap().to_string();
             let policy = ExecutionPolicy {
                 fee_bps: 50,
@@ -2510,7 +2581,12 @@ mod tests {
 
             let result = sim
                 .execute_order_with_commit_lease(
-                    &order_id, Some(&price("TOKEN")), now(), &policy, true, &lease,
+                    &order_id,
+                    Some(&price("TOKEN")),
+                    now(),
+                    &policy,
+                    true,
+                    &lease,
                 )
                 .unwrap();
             assert_eq!(result["status"], "FILLED");
@@ -3102,15 +3178,19 @@ mod tests {
         let now_epoch = current_epoch();
         let scope = format!("profile:test:wallet:{COMMIT_TEST_WALLET}");
         let owner = "paper-worker-reservations";
-        assert!(store.claim_monitor_lease(&scope, owner, now_epoch, 90).unwrap());
+        assert!(store
+            .claim_monitor_lease(&scope, owner, now_epoch, 90)
+            .unwrap());
         let lease = PaperCommitLease::new(&store, &scope, owner).unwrap();
         let order_id;
         {
             let mut sim = PaperSimulator::open(&path, &virtual_cash()).unwrap();
-            let created = sim.create_order_with_commit_lease(
-                budget_automatic_copy_order_request("restart-reservation", "50", now_epoch),
-                &lease,
-            ).unwrap();
+            let created = sim
+                .create_order_with_commit_lease(
+                    budget_automatic_copy_order_request("restart-reservation", "50", now_epoch),
+                    &lease,
+                )
+                .unwrap();
             order_id = created["order_id"].as_str().unwrap().to_string();
             assert_eq!(sim.reserved_balance("USD"), BigDecimal::from(50));
             assert_eq!(sim.available_balance("USD"), BigDecimal::from(50));
@@ -3151,15 +3231,19 @@ mod tests {
         let now_epoch = current_epoch();
         let scope = format!("profile:test:wallet:{COMMIT_TEST_WALLET}");
         let owner = "paper-worker-reservations-race";
-        assert!(store.claim_monitor_lease(&scope, owner, now_epoch, 90).unwrap());
+        assert!(store
+            .claim_monitor_lease(&scope, owner, now_epoch, 90)
+            .unwrap());
         let lease = PaperCommitLease::new(&store, &scope, owner).unwrap();
         let mut first = PaperSimulator::open(&path, &virtual_cash()).unwrap();
         let mut second = PaperSimulator::open(&path, &BTreeMap::new()).unwrap();
 
-        let first_order = first.create_order_with_commit_lease(
-            budget_automatic_copy_order_request("instance-one-70", "70", now_epoch),
-            &lease,
-        ).unwrap();
+        let first_order = first
+            .create_order_with_commit_lease(
+                budget_automatic_copy_order_request("instance-one-70", "70", now_epoch),
+                &lease,
+            )
+            .unwrap();
         let first_id = first_order["order_id"].as_str().unwrap().to_string();
         assert_eq!(first.orders()[&first_id].status, "CREATED");
 
@@ -3201,19 +3285,29 @@ mod tests {
         let now_epoch = current_epoch();
         let scope = format!("profile:test:wallet:{COMMIT_TEST_WALLET}");
         let owner = "paper-worker-restart";
-        assert!(store.claim_monitor_lease(&scope, owner, now_epoch, 90).unwrap());
+        assert!(store
+            .claim_monitor_lease(&scope, owner, now_epoch, 90)
+            .unwrap());
         let lease = PaperCommitLease::new(&store, &scope, owner).unwrap();
         let id;
         {
             let mut sim = PaperSimulator::open(&path, &virtual_cash()).unwrap();
-            let created = sim.create_order_with_commit_lease(
-                automatic_copy_order_request("restart-signal", now_epoch),
-                &lease,
-            ).unwrap();
+            let created = sim
+                .create_order_with_commit_lease(
+                    automatic_copy_order_request("restart-signal", now_epoch),
+                    &lease,
+                )
+                .unwrap();
             id = created["order_id"].as_str().unwrap().to_string();
             sim.execute_order_with_commit_lease(
-                &id, Some(&price("TOKEN")), now(), &ExecutionPolicy::default(), true, &lease,
-            ).unwrap();
+                &id,
+                Some(&price("TOKEN")),
+                now(),
+                &ExecutionPolicy::default(),
+                true,
+                &lease,
+            )
+            .unwrap();
         }
         let sim = PaperSimulator::open(&path, &BTreeMap::new()).unwrap();
         assert_eq!(sim.orders()[&id].status, "FILLED");
@@ -3343,16 +3437,24 @@ mod tests {
         let owner = "paper-worker-a";
 
         assert!(matches!(
-            simulator.create_order(automatic_copy_order_request("copy-lease-required", now_epoch)),
+            simulator.create_order(automatic_copy_order_request(
+                "copy-lease-required",
+                now_epoch
+            )),
             Err(PaperSimulatorError::CommitLeaseRequired)
         ));
         assert!(simulator.orders().is_empty());
 
-        assert!(store.claim_monitor_lease(&scope, owner, now_epoch, 90).unwrap());
+        assert!(store
+            .claim_monitor_lease(&scope, owner, now_epoch, 90)
+            .unwrap());
         let lease = PaperCommitLease::new(&store, &scope, owner).unwrap();
-        let created = simulator.create_order_with_commit_lease(
-            automatic_copy_order_request("copy-lease-required", now_epoch), &lease,
-        ).unwrap();
+        let created = simulator
+            .create_order_with_commit_lease(
+                automatic_copy_order_request("copy-lease-required", now_epoch),
+                &lease,
+            )
+            .unwrap();
         assert_eq!(created["status"], "CREATED");
         assert_eq!(simulator.orders().len(), 1);
     }
@@ -3366,28 +3468,46 @@ mod tests {
         let now_epoch = current_epoch();
         let scope = format!("profile:test:wallet:{COMMIT_TEST_WALLET}");
         let owner = "paper-worker-a";
-        assert!(store.claim_monitor_lease(&scope, owner, now_epoch, 90).unwrap());
+        assert!(store
+            .claim_monitor_lease(&scope, owner, now_epoch, 90)
+            .unwrap());
         let lease = PaperCommitLease::new(&store, &scope, owner).unwrap();
-        let created = simulator.create_order_with_commit_lease(
-            automatic_copy_order_request("copy-fill-lease", now_epoch), &lease,
-        ).unwrap();
+        let created = simulator
+            .create_order_with_commit_lease(
+                automatic_copy_order_request("copy-fill-lease", now_epoch),
+                &lease,
+            )
+            .unwrap();
         let order_id = created["order_id"].as_str().unwrap();
         let starting_cash = simulator.balances()["USD"].clone();
 
         assert!(matches!(
-            simulator.execute_order(order_id, Some(&price("TOKEN")), now(), &ExecutionPolicy::default(), true),
+            simulator.execute_order(
+                order_id,
+                Some(&price("TOKEN")),
+                now(),
+                &ExecutionPolicy::default(),
+                true
+            ),
             Err(PaperSimulatorError::CommitLeaseRequired)
         ));
         assert!(simulator.fills().is_empty());
 
         let connection = Connection::open(&path).unwrap();
-        connection.execute(
-            "UPDATE monitor_leases SET owner='successor',expires_at=?1 WHERE scope=?2",
-            params![now_epoch + 90, scope],
-        ).unwrap();
+        connection
+            .execute(
+                "UPDATE monitor_leases SET owner='successor',expires_at=?1 WHERE scope=?2",
+                params![now_epoch + 90, scope],
+            )
+            .unwrap();
         assert!(matches!(
             simulator.execute_order_with_commit_lease(
-                order_id, Some(&price("TOKEN")), now(), &ExecutionPolicy::default(), true, &lease,
+                order_id,
+                Some(&price("TOKEN")),
+                now(),
+                &ExecutionPolicy::default(),
+                true,
+                &lease,
             ),
             Err(PaperSimulatorError::MonitorLeaseLost)
         ));
@@ -3395,18 +3515,31 @@ mod tests {
         assert_eq!(simulator.balances()["USD"], starting_cash);
         assert_eq!(simulator.orders()[order_id].status, "CREATED");
 
-        connection.execute(
-            "UPDATE monitor_leases SET owner=?1,expires_at=?2 WHERE scope=?3",
-            params![owner, current_epoch() + 20, scope],
-        ).unwrap();
-        let filled = simulator.execute_order_with_commit_lease(
-            order_id, Some(&price("TOKEN")), now(), &ExecutionPolicy::default(), true, &lease,
-        ).unwrap();
+        connection
+            .execute(
+                "UPDATE monitor_leases SET owner=?1,expires_at=?2 WHERE scope=?3",
+                params![owner, current_epoch() + 20, scope],
+            )
+            .unwrap();
+        let filled = simulator
+            .execute_order_with_commit_lease(
+                order_id,
+                Some(&price("TOKEN")),
+                now(),
+                &ExecutionPolicy::default(),
+                true,
+                &lease,
+            )
+            .unwrap();
         assert_eq!(filled["status"], "FILLED");
         assert_eq!(simulator.fills().len(), 1);
-        let expiry: i64 = connection.query_row(
-            "SELECT expires_at FROM monitor_leases WHERE scope=?1", [&scope], |row| row.get(0),
-        ).unwrap();
+        let expiry: i64 = connection
+            .query_row(
+                "SELECT expires_at FROM monitor_leases WHERE scope=?1",
+                [&scope],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert!(expiry >= current_epoch() + 80);
     }
 
@@ -3418,48 +3551,69 @@ mod tests {
         let now_epoch = current_epoch();
         let scope = format!("profile:test:wallet:{COMMIT_TEST_WALLET}");
         let owner = "paper-worker-a";
-        assert!(store.claim_monitor_lease(&scope, owner, now_epoch, 90).unwrap());
+        assert!(store
+            .claim_monitor_lease(&scope, owner, now_epoch, 90)
+            .unwrap());
         let lease = PaperCommitLease::new(&store, &scope, owner).unwrap();
         let order_id;
         {
             let mut simulator = PaperSimulator::open(&path, &virtual_cash()).unwrap();
-            let created = simulator.create_order_with_commit_lease(
-                automatic_copy_order_request("stale-at-commit", now_epoch), &lease,
-            ).unwrap();
+            let created = simulator
+                .create_order_with_commit_lease(
+                    automatic_copy_order_request("stale-at-commit", now_epoch),
+                    &lease,
+                )
+                .unwrap();
             order_id = created["order_id"].as_str().unwrap().to_string();
         }
 
         let connection = Connection::open(&path).unwrap();
-        let details_json: String = connection.query_row(
-            "SELECT details_json FROM simulated_orders WHERE order_id=?1",
-            [&order_id], |row| row.get(0),
-        ).unwrap();
+        let details_json: String = connection
+            .query_row(
+                "SELECT details_json FROM simulated_orders WHERE order_id=?1",
+                [&order_id],
+                |row| row.get(0),
+            )
+            .unwrap();
         let mut details: Value = serde_json::from_str(&details_json).unwrap();
         details["source_block_time"] = json!(now_epoch - 61);
-        connection.execute(
-            "UPDATE simulated_orders SET details_json=?1 WHERE order_id=?2",
-            params![serde_json::to_string(&details).unwrap(), order_id],
-        ).unwrap();
+        connection
+            .execute(
+                "UPDATE simulated_orders SET details_json=?1 WHERE order_id=?2",
+                params![serde_json::to_string(&details).unwrap(), order_id],
+            )
+            .unwrap();
 
         let mut simulator = PaperSimulator::open(&path, &BTreeMap::new()).unwrap();
         let lease_expiry = current_epoch() + 20;
-        connection.execute(
-            "UPDATE monitor_leases SET expires_at=?1 WHERE scope=?2",
-            params![lease_expiry, scope],
-        ).unwrap();
+        connection
+            .execute(
+                "UPDATE monitor_leases SET expires_at=?1 WHERE scope=?2",
+                params![lease_expiry, scope],
+            )
+            .unwrap();
         let starting_cash = simulator.balances()["USD"].clone();
         assert!(matches!(
             simulator.execute_order_with_commit_lease(
-                &order_id, Some(&price("TOKEN")), now(), &ExecutionPolicy::default(), true, &lease,
+                &order_id,
+                Some(&price("TOKEN")),
+                now(),
+                &ExecutionPolicy::default(),
+                true,
+                &lease,
             ),
             Err(PaperSimulatorError::SourceStale)
         ));
         assert!(simulator.fills().is_empty());
         assert_eq!(simulator.balances()["USD"], starting_cash);
         assert_eq!(simulator.orders()[&order_id].status, "CREATED");
-        let expiry: i64 = connection.query_row(
-            "SELECT expires_at FROM monitor_leases WHERE scope=?1", [&scope], |row| row.get(0),
-        ).unwrap();
+        let expiry: i64 = connection
+            .query_row(
+                "SELECT expires_at FROM monitor_leases WHERE scope=?1",
+                [&scope],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(expiry, lease_expiry);
     }
 
@@ -3473,12 +3627,15 @@ mod tests {
         let now_epoch = current_epoch();
         let scope = format!("profile:test:wallet:{COMMIT_TEST_WALLET}");
         let owner = "paper-worker-a";
-        assert!(store.claim_monitor_lease(&scope, owner, now_epoch, 90).unwrap());
+        assert!(store
+            .claim_monitor_lease(&scope, owner, now_epoch, 90)
+            .unwrap());
         let lease = PaperCommitLease::new(&store, &scope, owner).unwrap();
 
         assert!(matches!(
             simulator.create_order_with_commit_lease(
-                automatic_copy_order_request("different-db-copy", now_epoch), &lease,
+                automatic_copy_order_request("different-db-copy", now_epoch),
+                &lease,
             ),
             Err(PaperSimulatorError::CommitLeaseDatabaseMismatch)
         ));
@@ -3495,12 +3652,15 @@ mod tests {
         let other_wallet = "11111111111111111111111111111112";
         let scope = format!("profile:test:wallet:{other_wallet}");
         let owner = "paper-worker-a";
-        assert!(store.claim_monitor_lease(&scope, owner, now_epoch, 90).unwrap());
+        assert!(store
+            .claim_monitor_lease(&scope, owner, now_epoch, 90)
+            .unwrap());
         let lease = PaperCommitLease::new(&store, &scope, owner).unwrap();
 
         assert!(matches!(
             simulator.create_order_with_commit_lease(
-                automatic_copy_order_request("scope-mismatch", now_epoch), &lease,
+                automatic_copy_order_request("scope-mismatch", now_epoch),
+                &lease,
             ),
             Err(PaperSimulatorError::CommitLeaseScopeMismatch)
         ));

@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
 use thiserror::Error;
 
+use crate::paper_simulator::PaperCommitLease;
 use crate::signature_store::{SignatureStore, SignatureStoreError};
 use crate::solana_validation::is_valid_solana_address;
 use uuid::Uuid;
@@ -83,7 +84,8 @@ struct SharedState {
     wallets: BTreeMap<String, WalletState>,
 }
 
-type ScanFunction = dyn Fn(&str) -> Result<Vec<Value>, String> + Send + Sync + 'static;
+type ScanFunction =
+    dyn Fn(&str, Option<&PaperCommitLease>) -> Result<Vec<Value>, String> + Send + Sync + 'static;
 
 /// A durable per-profile/wallet lease held for the full duration of one read-only scan.
 struct MonitorLeaseGuard {
@@ -211,6 +213,7 @@ impl MonitorService {
     where
         F: Fn(&str) -> Result<Vec<Value>, String> + Send + Sync + 'static,
     {
+        let scan = move |wallet: &str, _lease: Option<&PaperCommitLease>| scan(wallet);
         Self::build(interval_seconds, None, None, scan)
     }
 
@@ -235,9 +238,36 @@ impl MonitorService {
         {
             return Err(MonitorServiceError::InvalidLeaseScope);
         }
+        let scan = move |wallet: &str, _lease: Option<&PaperCommitLease>| scan(wallet);
         Self::build(interval_seconds, Some(store), Some(scope_prefix), scan)
     }
 
+    /// Construct a monitor service whose callback receives the active profile/wallet paper lease.
+    ///
+    /// Use this constructor when the callback queues or commits persistent automatic-copy
+    /// paper orders. The same SQLite file must back SignatureStore and PaperSimulator.
+    pub fn new_with_lease_store_and_commit_context<F>(
+        interval_seconds: u64,
+        scope_prefix: impl Into<String>,
+        store: Arc<SignatureStore>,
+        scan: F,
+    ) -> Result<Self, MonitorServiceError>
+    where
+        F: Fn(&str, &PaperCommitLease) -> Result<Vec<Value>, String> + Send + Sync + 'static,
+    {
+        let scope_prefix = scope_prefix.into();
+        if scope_prefix.trim().is_empty()
+            || scope_prefix.len() > 256
+            || scope_prefix.trim() != scope_prefix.as_str()
+        {
+            return Err(MonitorServiceError::InvalidLeaseScope);
+        }
+        let scan = move |wallet: &str, lease: Option<&PaperCommitLease>| match lease {
+            Some(lease) => scan(wallet, lease),
+            None => Err("Monitor lease context is unavailable.".to_string()),
+        };
+        Self::build(interval_seconds, Some(store), Some(scope_prefix), scan)
+    }
     fn build<F>(
         interval_seconds: u64,
         lease_store: Option<Arc<SignatureStore>>,
@@ -245,7 +275,10 @@ impl MonitorService {
         scan: F,
     ) -> Result<Self, MonitorServiceError>
     where
-        F: Fn(&str) -> Result<Vec<Value>, String> + Send + Sync + 'static,
+        F: Fn(&str, Option<&PaperCommitLease>) -> Result<Vec<Value>, String>
+            + Send
+            + Sync
+            + 'static,
     {
         if interval_seconds < 30 {
             return Err(MonitorServiceError::InvalidInterval);
@@ -425,7 +458,14 @@ impl MonitorService {
                             break;
                         }
 
-                        let mut scan_result = scan(&address);
+                        let mut scan_result = if let Some(guard) = lease.as_ref() {
+                            match PaperCommitLease::new(&guard.store, &guard.scope, &guard.owner) {
+                                Ok(commit_lease) => scan(&address, Some(&commit_lease)),
+                                Err(_) => Err("Monitor lease context could not be created.".to_string()),
+                            }
+                        } else {
+                            scan(&address, None)
+                        };
                         if lease
                             .as_ref()
                             .is_some_and(|guard| !guard.renew_and_validate())
@@ -875,6 +915,38 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+        service.stop_and_wait(Duration::from_secs(2)).unwrap();
+    }
+    #[test]
+    fn commit_context_constructor_passes_exact_profile_wallet_lease() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = Arc::new(SignatureStore::open(directory.path().join("monitor.db")).unwrap());
+        let observed = Arc::new(AtomicBool::new(false));
+        let observed_in_scan = Arc::clone(&observed);
+        let service = MonitorService::new_with_lease_store_and_commit_context(
+            30,
+            "profile:commit-context",
+            Arc::clone(&store),
+            move |wallet, lease| {
+                assert_eq!(
+                    lease.scope(),
+                    format!("profile:commit-context:wallet:{wallet}")
+                );
+                observed_in_scan.store(true, Ordering::Release);
+                Ok(Vec::new())
+            },
+        )
+        .unwrap();
+
+        service.start(&[WALLET.to_string()]).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !observed.load(Ordering::Acquire) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            observed.load(Ordering::Acquire),
+            "scan callback did not receive its active paper-commit lease"
         );
         service.stop_and_wait(Duration::from_secs(2)).unwrap();
     }

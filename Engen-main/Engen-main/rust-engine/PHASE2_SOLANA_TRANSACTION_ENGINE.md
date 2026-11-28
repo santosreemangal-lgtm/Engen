@@ -203,3 +203,14 @@ The persistent PaperSimulator now has a PaperCommitLease API:
 - Regression tests use disposable SQLite databases and cover unguarded-write rejection, owner loss/recovery, commit-time staleness, different database files, and wallet-scope mismatch.
 
 The high-level paper_copy_runner still calls the unguarded methods. Therefore its persistent automatic-copy queue/fill path now fails closed until lease-aware runner entrypoints and the Rust application bootstrap pass the exact profile/wallet lease identity. This is intentional; no persistent automatic-copy runtime is enabled by this change. Phase 2 remains IN PROGRESS — NOT ACCEPTED.
+
+
+## 11. 2026-11-28 addendum — lease-aware paper-copy runner context
+
+PR #64 Run #687 (46109123852) completed SUCCESS on exact code head aafeac25763670f4c48d18f619862c1818d99636. Rust formatting, Rust unit/integration tests, public read-only RPC smoke, selected Python Phase 2/8 references, dashboard/browser syntax, and Clippy passed. Run #686 was a formatting-only failure; the 39 rustfmt changes were applied without behavior or assertion changes.
+
+The follow-up implementation makes PaperCommitLease an owned token carrying the canonical SQLite path, owner, and exact profile/wallet scope. Persistent automatic-copy orders record the scope at creation, and fill commits require exact scope equality as well as the current owner and live expiry. A lease for another profile watching the same wallet is rejected.
+
+MonitorService now has an opt-in callback constructor that passes the active lease to the callback. The paper-copy runner exposes explicit lease-aware queue and fill entrypoints; the old entrypoints remain compatible but persistent automatic-copy writes fail closed without a lease. Disposable-SQLite tests verify lease-context delivery, profile-scope rejection, and successful fill with the matching lease.
+
+This is library-level integration only. The Rust application bootstrap still needs to construct the lease-aware MonitorService, route its callback through these runner entrypoints, and ensure SignatureStore and PaperSimulator use the same SQLite file. Phase 2 remains IN PROGRESS — NOT ACCEPTED.

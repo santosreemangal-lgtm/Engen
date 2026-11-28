@@ -43,23 +43,24 @@ pub enum PaperSimulatorError {
     CommitLeaseDatabaseMismatch,
     #[error("Monitor lease is missing, expired, or owned by another worker.")]
     MonitorLeaseLost,
-    #[error("Monitor lease scope does not match the source wallet.")]
+    #[error("Monitor lease scope does not match the source wallet and profile.")]
     CommitLeaseScopeMismatch,
     #[error("Source transaction is stale at the paper persistence boundary.")]
     SourceStale,
 }
 
-pub struct PaperCommitLease<'a> {
-    store: &'a SignatureStore,
-    scope: &'a str,
-    owner: &'a str,
+#[derive(Debug, Clone)]
+pub struct PaperCommitLease {
+    database_path: PathBuf,
+    scope: String,
+    owner: String,
 }
 
-impl<'a> PaperCommitLease<'a> {
+impl PaperCommitLease {
     pub fn new(
-        store: &'a SignatureStore,
-        scope: &'a str,
-        owner: &'a str,
+        store: &SignatureStore,
+        scope: &str,
+        owner: &str,
     ) -> Result<Self, PaperSimulatorError> {
         if scope.trim().is_empty()
             || scope.len() > 512
@@ -70,14 +71,19 @@ impl<'a> PaperCommitLease<'a> {
                 "Paper commit lease scope or owner is invalid.".to_string(),
             ));
         }
+        let database_path = std::fs::canonicalize(store.path())
+            .map_err(|_| PaperSimulatorError::CommitLeaseDatabaseMismatch)?;
         Ok(Self {
-            store,
-            scope,
-            owner,
+            database_path,
+            scope: scope.to_string(),
+            owner: owner.to_string(),
         })
     }
-}
 
+    pub fn scope(&self) -> &str {
+        &self.scope
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PaperOrder {
     pub order_id: String,
@@ -267,7 +273,7 @@ impl PaperSimulator {
         &self,
         transaction: &Transaction<'_>,
         order: &PaperOrder,
-        commit_lease: Option<&PaperCommitLease<'_>>,
+        commit_lease: Option<&PaperCommitLease>,
     ) -> Result<(), PaperSimulatorError> {
         let automatic_copy =
             order.details.get("origin").and_then(Value::as_str) == Some("AUTOMATIC_WALLET_COPY");
@@ -291,9 +297,7 @@ impl PaperSimulator {
             .ok_or(PaperSimulatorError::CommitLeaseDatabaseMismatch)?;
         let paper_path = std::fs::canonicalize(paper_path)
             .map_err(|_| PaperSimulatorError::CommitLeaseDatabaseMismatch)?;
-        let lease_path = std::fs::canonicalize(lease.store.path())
-            .map_err(|_| PaperSimulatorError::CommitLeaseDatabaseMismatch)?;
-        if paper_path != lease_path {
+        if paper_path.as_path() != lease.database_path.as_path() {
             return Err(PaperSimulatorError::CommitLeaseDatabaseMismatch);
         }
 
@@ -304,7 +308,14 @@ impl PaperSimulator {
                 .and_then(Value::as_str)
                 .filter(|wallet| crate::solana_validation::is_valid_solana_address(wallet))
                 .ok_or(PaperSimulatorError::CommitLeaseScopeMismatch)?;
-            if !lease.scope.ends_with(&format!(":wallet:{source_wallet}")) {
+            let recorded_scope = order
+                .details
+                .get("monitor_lease_scope")
+                .and_then(Value::as_str)
+                .ok_or(PaperSimulatorError::CommitLeaseScopeMismatch)?;
+            if recorded_scope != lease.scope()
+                || !lease.scope().ends_with(&format!(":wallet:{source_wallet}"))
+            {
                 return Err(PaperSimulatorError::CommitLeaseScopeMismatch);
             }
         }
@@ -315,7 +326,11 @@ impl PaperSimulator {
                  updated_at=CURRENT_TIMESTAMP
              WHERE scope=?1 AND owner=?2
                AND expires_at>CAST(strftime('%s','now') AS INTEGER)",
-            params![lease.scope, lease.owner, PAPER_COMMIT_LEASE_SECONDS],
+            params![
+                lease.scope(),
+                lease.owner.as_str(),
+                PAPER_COMMIT_LEASE_SECONDS
+            ],
         )?;
         if renewed != 1 {
             return Err(PaperSimulatorError::MonitorLeaseLost);
@@ -674,7 +689,7 @@ impl PaperSimulator {
         balances: Option<&BTreeMap<String, BigDecimal>>,
         fill: Option<&PaperFill>,
         release_reservation: bool,
-        commit_lease: Option<&PaperCommitLease<'_>>,
+        commit_lease: Option<&PaperCommitLease>,
     ) -> Result<(), PaperSimulatorError> {
         if self.db_path.is_none() {
             if commit_lease.is_some() {
@@ -766,7 +781,7 @@ impl PaperSimulator {
         &self,
         order: &PaperOrder,
         reservation: Option<&BalanceReservation>,
-        commit_lease: Option<&PaperCommitLease<'_>>,
+        commit_lease: Option<&PaperCommitLease>,
     ) -> Result<bool, PaperSimulatorError> {
         if self.db_path.is_none() {
             if commit_lease.is_some() {
@@ -924,7 +939,7 @@ impl PaperSimulator {
     pub fn create_order_with_commit_lease(
         &mut self,
         request: CreateOrderRequest<'_>,
-        commit_lease: &PaperCommitLease<'_>,
+        commit_lease: &PaperCommitLease,
     ) -> Result<Value, PaperSimulatorError> {
         self.create_order_inner(request, Some(commit_lease))
     }
@@ -932,7 +947,7 @@ impl PaperSimulator {
     fn create_order_inner(
         &mut self,
         request: CreateOrderRequest<'_>,
-        commit_lease: Option<&PaperCommitLease<'_>>,
+        commit_lease: Option<&PaperCommitLease>,
     ) -> Result<Value, PaperSimulatorError> {
         let CreateOrderRequest {
             signal_id,
@@ -989,6 +1004,11 @@ impl PaperSimulator {
         if let Some(Value::Object(extra)) = details {
             for (key, value) in extra {
                 order_details.insert(key, value);
+            }
+        }
+        if order_details.get("origin").and_then(Value::as_str) == Some("AUTOMATIC_WALLET_COPY") {
+            if let Some(lease) = commit_lease {
+                order_details.insert("monitor_lease_scope".to_string(), json!(lease.scope()));
             }
         }
 
@@ -1342,7 +1362,7 @@ impl PaperSimulator {
         now: &str,
         policy: &ExecutionPolicy,
         rpc_ok: bool,
-        commit_lease: &PaperCommitLease<'_>,
+        commit_lease: &PaperCommitLease,
     ) -> Result<Value, PaperSimulatorError> {
         self.execute_order_inner(
             order_id,
@@ -1361,7 +1381,7 @@ impl PaperSimulator {
         now: &str,
         policy: &ExecutionPolicy,
         rpc_ok: bool,
-        commit_lease: Option<&PaperCommitLease<'_>>,
+        commit_lease: Option<&PaperCommitLease>,
     ) -> Result<Value, PaperSimulatorError> {
         let mut order = self
             .orders
